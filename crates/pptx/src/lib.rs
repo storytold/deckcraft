@@ -166,30 +166,204 @@ fn collect_timing_offsets(e: &craft_xml::El, offset: u32, out: &mut std::collect
     }
 }
 
-fn slide_timing_info(bytes: &[u8]) -> Vec<SlideTimingInfo> {
+fn defers_start(st: &craft_xml::El) -> bool {
+    let is_auto_begin = |c: &craft_xml::El| {
+        c.attr_local("evt") == Some("onBegin")
+            && c.attr_local("delay").map(str::trim) == Some("0")
+            && c.child(craft_xml::Local("tgtEl")).is_none()
+            && c.child(craft_xml::Local("tn")).is_none()
+            && c.child(craft_xml::Local("rtn")).is_none()
+    };
+    let has_on_begin = st.children(craft_xml::Local("cond")).any(is_auto_begin);
+    st.children(craft_xml::Local("cond"))
+        .any(|c| (c.attr_local("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr_local("delay").map(str::trim) != Some("0")))
+}
+
+fn is_main_seq_auto(st: &craft_xml::El, main_seq_id: Option<u32>) -> bool {
+    let Some(ms_id) = main_seq_id else {
+        return false;
+    };
+    let is_indefinite = |d: &craft_xml::El| {
+        d.attr_local("evt").is_none()
+            && d.attr_local("delay").map(str::trim) == Some("indefinite")
+            && d.child(craft_xml::Local("tgtEl")).is_none()
+            && d.child(craft_xml::Local("tn")).is_none()
+            && d.child(craft_xml::Local("rtn")).is_none()
+    };
+    let is_main_seq_on_begin = |d: &craft_xml::El| {
+        d.attr_local("evt") == Some("onBegin")
+            && d.attr_local("delay").map(str::trim) == Some("0")
+            && d.child(craft_xml::Local("tgtEl")).is_none()
+            && d.child(craft_xml::Local("rtn")).is_none()
+            && d.child(craft_xml::Local("tn")).and_then(|tn| tn.attr_local("val")).and_then(craft_xml::value::to_u32_lossy) == Some(ms_id)
+    };
+    st.children(craft_xml::Local("cond")).any(is_indefinite)
+        && st.children(craft_xml::Local("cond")).any(is_main_seq_on_begin)
+        && st.children(craft_xml::Local("cond")).all(|d| is_indefinite(d) || is_main_seq_on_begin(d))
+}
+
+fn collect_media_nodes<'a>(e: &'a craft_xml::El, deferred: bool, out: &mut Vec<(&'a craft_xml::El, bool)>, depth: usize) {
+    if depth > 64 || out.len() >= 10_000 {
+        return;
+    }
+    let mut deferred = deferred;
+    if e.is(craft_xml::Local("cTn"))
+        && let Some(st) = e.child(craft_xml::Local("stCondLst"))
+        && defers_start(st)
+    {
+        deferred = true;
+    }
+    if e.is(craft_xml::Local("video")) || e.is(craft_xml::Local("audio")) {
+        out.push((e, deferred));
+        return;
+    }
+    for c in e.elements() {
+        collect_media_nodes(c, deferred, out, depth + 1);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MediaPlayAt {
+    trigger: Option<u32>,
+    main_seq_id: Option<u32>,
+    offset: u32,
+    deferred: bool,
+}
+
+fn collect_media_plays<'a>(e: &'a craft_xml::El, at: MediaPlayAt, out: &mut Vec<(&'a craft_xml::El, MediaPlayAt)>, depth: usize) {
+    if depth > 64 || out.len() > 10_000 {
+        return;
+    }
+    for c in e.elements() {
+        if c.is(craft_xml::Local("cTn")) && c.attr_local("presetClass").is_some() {
+            let deferred = at.deferred || c.child(craft_xml::Local("stCondLst")).is_some_and(defers_start);
+            out.push((c, MediaPlayAt { deferred, ..at }));
+            continue;
+        }
+        let mut next = at;
+        if c.is(craft_xml::Local("seq"))
+            && let Some(ctn) = c.child(craft_xml::Local("cTn"))
+            && ctn.attr_local("nodeType") == Some("interactiveSeq")
+        {
+            next.trigger = ctn
+                .path(&[craft_xml::Local("stCondLst"), craft_xml::Local("cond"), craft_xml::Local("tgtEl"), craft_xml::Local("spTgt")])
+                .and_then(|s| s.attr_local("spid"))
+                .and_then(craft_xml::value::to_u32_lossy);
+            next.main_seq_id = None;
+        }
+        if c.is(craft_xml::Local("cTn")) {
+            let is_main_seq = c.attr_local("nodeType") == Some("mainSeq");
+            if let Some(st) = c.child(craft_xml::Local("stCondLst")) {
+                if !(!is_main_seq && !next.deferred && is_main_seq_auto(st, next.main_seq_id)) && defers_start(st) {
+                    next.deferred = true;
+                }
+                if let Some(cond) = st.child(craft_xml::Local("cond")) {
+                    if cond.attr_local("delay").map(str::trim) == Some("indefinite") {
+                        next.offset = 0;
+                    } else {
+                        next.offset = next.offset.saturating_add(timing_ms(cond, "delay").unwrap_or(0));
+                    }
+                }
+            }
+            next.main_seq_id = if is_main_seq && !next.deferred { c.attr_local("id").and_then(craft_xml::value::to_u32_lossy) } else { None };
+        }
+        collect_media_plays(c, next, out, depth + 1);
+    }
+}
+
+fn apply_media_timing(timing: &craft_xml::El, shapes: &mut [Shape]) {
+    let mut nodes = Vec::new();
+    collect_media_nodes(timing, false, &mut nodes, 0);
+    for (node, deferred) in nodes {
+        let Some(cm) = node.child(craft_xml::Local("cMediaNode")) else { continue };
+        let Some(spid) = cm
+            .path(&[craft_xml::Local("tgtEl"), craft_xml::Local("spTgt")])
+            .and_then(|t| t.attr_local("spid"))
+            .and_then(craft_xml::value::to_u32_lossy)
+        else {
+            continue;
+        };
+        let Some(ShapeKind::Media(clip)) = deckcraft_model::find_shape_mut(shapes, deckcraft_model::ShapeId(spid)).map(|s| &mut s.kind) else {
+            continue;
+        };
+        if cm.child(craft_xml::Local("cTn")).and_then(|c| c.attr_local("fill")) == Some("remove") {
+            clip.rewind = true;
+        }
+        if cm.attr_local("numSld").and_then(craft_xml::value::to_u32_lossy).is_some_and(|n| n > 1) {
+            clip.play_across_slides = true;
+        }
+        if !deferred
+            && cm
+                .path(&[craft_xml::Local("cTn"), craft_xml::Local("stCondLst"), craft_xml::Local("cond")])
+                .is_some_and(|c| c.attr_local("evt").is_none() && c.attr_local("delay").map(str::trim) == Some("0"))
+        {
+            clip.autoplay = true;
+        }
+    }
+    let root_deferred = timing
+        .path(&[craft_xml::Local("tnLst"), craft_xml::Local("par"), craft_xml::Local("cTn"), craft_xml::Local("stCondLst")])
+        .is_some_and(defers_start);
+    if !root_deferred && let Some(tn) = timing.child(craft_xml::Local("tnLst")) {
+        let mut found = Vec::new();
+        collect_media_plays(tn, MediaPlayAt { trigger: None, main_seq_id: None, offset: 0, deferred: false }, &mut found, 0);
+        for (c, f) in found.into_iter().filter(|(_, f)| f.trigger.is_none()) {
+            if c.attr_local("nodeType") == Some("clickEffect") || f.deferred {
+                break;
+            }
+            let delay = c.path(&[craft_xml::Local("stCondLst"), craft_xml::Local("cond")]).and_then(|d| timing_ms(d, "delay")).unwrap_or(0);
+            if c.attr_local("presetClass") == Some("mediacall")
+                && c.attr_local("presetID").and_then(craft_xml::value::to_u32_lossy) == Some(1)
+                && f.offset == 0
+                && delay == 0
+                && let Some(spid) = c.find(craft_xml::Local("spTgt")).and_then(|t| t.attr_local("spid")).and_then(craft_xml::value::to_u32_lossy)
+                && let Some(ShapeKind::Media(clip)) = deckcraft_model::find_shape_mut(shapes, deckcraft_model::ShapeId(spid)).map(|s| &mut s.kind)
+            {
+                clip.autoplay = true;
+            }
+        }
+    }
+}
+
+fn has_media_shapes(shapes: &[Shape]) -> bool {
+    shapes.iter().any(|s| match &s.kind {
+        ShapeKind::Media(_) => true,
+        ShapeKind::Group { children, .. } => has_media_shapes(children),
+        _ => false,
+    })
+}
+
+fn post_import_timing(bytes: &[u8], pres: &mut Presentation) {
+    let need_builds = has_unfolded_paragraph_builds(pres);
+    let need_media = pres.slides.iter().any(|s| has_media_shapes(&s.shapes));
+    if !need_builds && !need_media {
+        return;
+    }
     let Ok(mut pkg) = craft_opc::LazyPackage::open(bytes, &craft_pptx::LIMITS) else {
-        return vec![];
+        return;
     };
     let root_rels = pkg.rels("").unwrap_or_default();
     let pres_path = root_rels.first("officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "ppt/presentation.xml".into());
     let Ok(Some(pres_bytes)) = pkg.read_limited(&pres_path, craft_pptx::MAX_XML_PART as u64) else {
-        return vec![];
+        return;
     };
     let Ok(pres_el) = craft_drawingml::xmlx::parse(&pres_bytes) else {
-        return vec![];
+        return;
     };
     let pres_rels = pkg.rels(&pres_path).unwrap_or_default();
     let Some(list) = pres_el.child(craft_xml::Local("sldIdLst")) else {
-        return vec![];
+        return;
     };
-    let mut out = Vec::new();
-    for s in list.children(craft_xml::Local("sldId")).take(MAX_SLIDE_ENTRIES) {
-        let mut info = SlideTimingInfo::default();
-        if let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid))
-            && let Ok(Some(sb)) = pkg.read_limited(target, craft_pptx::MAX_XML_PART as u64)
-            && let Ok(se) = craft_drawingml::xmlx::parse(&sb)
-            && let Some(timing) = se.child(craft_xml::Local("timing"))
-        {
+    for (i, s) in list.children(craft_xml::Local("sldId")).take(MAX_SLIDE_ENTRIES).enumerate() {
+        let Some(slide_arc) = pres.slides.get_mut(i) else { break };
+        let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid)) else { continue };
+        let Ok(Some(sb)) = pkg.read_limited(target, craft_pptx::MAX_XML_PART as u64) else { continue };
+        let Ok(se) = craft_drawingml::xmlx::parse(&sb) else { continue };
+        let Some(timing) = se.child(craft_xml::Local("timing")) else { continue };
+        if need_media && has_media_shapes(&slide_arc.shapes) {
+            apply_media_timing(timing, &mut std::sync::Arc::make_mut(slide_arc).shapes);
+        }
+        if need_builds {
+            let mut info = SlideTimingInfo::default();
             collect_timing_offsets(timing, 0, &mut info.offsets, 0);
             if let Some(bld_lst) = timing.child(craft_xml::Local("bldLst")) {
                 for b in bld_lst.children(craft_xml::Local("bldP")) {
@@ -200,10 +374,9 @@ fn slide_timing_info(bytes: &[u8]) -> Vec<SlideTimingInfo> {
                     }
                 }
             }
+            fold_slide_paragraph_builds(std::sync::Arc::make_mut(slide_arc), &info);
         }
-        out.push(info);
     }
-    out
 }
 
 fn span_ms(a: &deckcraft_model::anim::Animation) -> u32 {
@@ -293,23 +466,11 @@ fn fold_slide_paragraph_builds(slide: &mut deckcraft_model::Slide, info: &SlideT
     slide.animations = folded;
 }
 
-fn fold_paragraph_builds(bytes: &[u8], pres: &mut Presentation) {
-    if !has_unfolded_paragraph_builds(pres) {
-        return;
-    }
-    let infos = slide_timing_info(bytes);
-    let empty = SlideTimingInfo::default();
-    for (i, slide) in pres.slides.iter_mut().enumerate() {
-        let info = infos.get(i).unwrap_or(&empty);
-        fold_slide_paragraph_builds(std::sync::Arc::make_mut(slide), info);
-    }
-}
-
 /// Read a `.pptx` / `.potx` / `.ppsx` package.
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     preflight_slides(bytes)?;
     let mut pres = craft_pptx::import(bytes, &DeckDefaults).map(convert::pres_from_craft)?;
-    fold_paragraph_builds(bytes, &mut pres);
+    post_import_timing(bytes, &mut pres);
     Ok(pres)
 }
 
@@ -328,7 +489,7 @@ pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<Str
     let (p, lost, warnings) = craft_pptx::import_report(bytes, &DeckDefaults)?;
     missing.extend(lost);
     let mut pres = convert::pres_from_craft(p);
-    fold_paragraph_builds(bytes, &mut pres);
+    post_import_timing(bytes, &mut pres);
     Ok((pres, missing, warnings))
 }
 
@@ -338,7 +499,7 @@ pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<Str
 pub fn import_with_chart_budget(bytes: &[u8], points: usize) -> Result<Presentation, PptxError> {
     preflight_slides(bytes)?;
     let mut pres = craft_pptx::import_with_chart_budget(bytes, &DeckDefaults, points).map(convert::pres_from_craft)?;
-    fold_paragraph_builds(bytes, &mut pres);
+    post_import_timing(bytes, &mut pres);
     Ok(pres)
 }
 
@@ -368,17 +529,171 @@ fn check_table_caps(p: &Presentation) -> Result<(), PptxError> {
     Ok(())
 }
 
+fn media_needs_timing(clip: &deckcraft_model::MediaClip) -> bool {
+    clip.autoplay
+        || (clip.volume - 1.0).abs() > 1e-6
+        || clip.hide_while_not_playing
+        || clip.loop_play
+        || clip.rewind
+        || clip.play_across_slides
+        || (clip.video && clip.full_screen)
+}
+
+fn collect_export_media<'a>(shapes: &'a [Shape]) -> Vec<(u32, &'a deckcraft_model::MediaClip)> {
+    let mut used = std::collections::HashSet::new();
+    let mut max = 1u32;
+    deckcraft_model::walk(shapes, &mut |s, _| {
+        if s.id.0 >= 2 && s.id.0 < i32::MAX as u32 {
+            max = max.max(s.id.0);
+        }
+    });
+    let mut next = max;
+    let mut media = Vec::new();
+    deckcraft_model::walk(shapes, &mut |s, _| {
+        let spid = if s.id.0 >= 2 && s.id.0 < i32::MAX as u32 && !used.contains(&s.id.0) {
+            s.id.0
+        } else {
+            next = next.saturating_add(1);
+            next
+        };
+        used.insert(spid);
+        if let ShapeKind::Media(clip) = &s.kind
+            && media_needs_timing(clip)
+        {
+            media.push((spid, clip));
+        }
+    });
+    media
+}
+
+fn write_media_node(w: &mut craft_xml::Writer, id: &mut u32, spid: u32, clip: &deckcraft_model::MediaClip) {
+    let tag = if clip.video { "p:video" } else { "p:audio" };
+    let mut t = w.tag(tag);
+    if clip.video && clip.full_screen {
+        t = t.attr("fullScrn", "1");
+    }
+    t.open();
+    let vol = (clip.volume.clamp(0.0, 1.0) * 100_000.0).round() as u32;
+    let mut cm = w.tag("p:cMediaNode").attr("vol", vol);
+    if clip.volume <= 1e-6 {
+        cm = cm.attr("mute", "1");
+    }
+    if clip.hide_while_not_playing {
+        cm = cm.attr("showWhenStopped", "0");
+    }
+    if clip.play_across_slides {
+        cm = cm.attr("numSld", "999");
+    }
+    cm.open();
+    *id = id.saturating_add(1);
+    let mut ctn = w.tag("p:cTn").attr("id", *id).attr("fill", if clip.rewind { "remove" } else { "hold" }).attr("display", "0");
+    if clip.loop_play {
+        ctn = ctn.attr("repeatCount", "indefinite");
+    }
+    ctn.open();
+    w.open("p:stCondLst", &[]);
+    w.tag("p:cond").attr("delay", if clip.autoplay { "0" } else { "indefinite" }).empty();
+    w.close();
+    w.close();
+    w.open("p:tgtEl", &[]);
+    w.tag("p:spTgt").attr("spid", spid).empty();
+    w.close();
+    w.close();
+    w.close();
+}
+
+fn max_ctn_id(e: &craft_xml::El, max_id: &mut u32, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    if e.is(craft_xml::Local("cTn"))
+        && let Some(id) = e.attr_local("id").and_then(craft_xml::value::to_u32_lossy)
+    {
+        *max_id = (*max_id).max(id);
+    }
+    for c in e.elements() {
+        max_ctn_id(c, max_id, depth + 1);
+    }
+}
+
+fn patch_slide_media_timing(xml_bytes: &[u8], media: &[(u32, &deckcraft_model::MediaClip)]) -> Vec<u8> {
+    let Ok(mut xml) = String::from_utf8(xml_bytes.to_vec()) else {
+        return xml_bytes.to_vec();
+    };
+    let mut next_id = 1u32;
+    if let Ok(el) = craft_drawingml::xmlx::parse(xml_bytes) {
+        max_ctn_id(&el, &mut next_id, 0);
+    }
+    let mut w = craft_xml::Writer::new();
+    for &(spid, clip) in media {
+        write_media_node(&mut w, &mut next_id, spid, clip);
+    }
+    let nodes = w.finish();
+    if let Some(tn_end) = xml.rfind("</p:tnLst>")
+        && let Some(pos) = xml[..tn_end].rfind("</p:childTnLst>")
+    {
+        xml.insert_str(pos, &nodes);
+    } else if let Some(pos) = xml.rfind("</p:sld>") {
+        let timing = format!(
+            r#"<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>{nodes}</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>"#
+        );
+        xml.insert_str(pos, &timing);
+    }
+    xml.into_bytes()
+}
+
+fn patch_exported_media_timing(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, PptxError> {
+    let slide_media: Vec<Vec<(u32, &deckcraft_model::MediaClip)>> = p.slides.iter().map(|s| collect_export_media(&s.shapes)).collect();
+    if slide_media.iter().all(Vec::is_empty) {
+        return Ok(bytes);
+    }
+    let pkg = craft_opc::Package::open(&bytes, &craft_pptx::LIMITS).map_err(|e| PptxError::Write(e.to_string()))?;
+    let root_rels = pkg.rels("");
+    let pres_path = root_rels.first("officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "ppt/presentation.xml".into());
+    let pres_rels = pkg.rels(&pres_path);
+    let mut patches: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+    if let Some(pres_bytes) = pkg.get(&pres_path)
+        && let Ok(pres_el) = craft_drawingml::xmlx::parse(pres_bytes)
+        && let Some(list) = pres_el.child(craft_xml::Local("sldIdLst"))
+    {
+        for (i, s) in list.children(craft_xml::Local("sldId")).enumerate() {
+            let Some(media) = slide_media.get(i) else { break };
+            if media.is_empty() {
+                continue;
+            }
+            if let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid))
+                && let Some(sb) = pkg.get(target)
+            {
+                patches.insert(target.to_string(), patch_slide_media_timing(sb, media));
+            }
+        }
+    }
+    if patches.is_empty() {
+        return Ok(bytes);
+    }
+    let entries: Vec<(String, Vec<u8>)> = pkg
+        .names()
+        .filter_map(|name| {
+            let data = patches.remove(name).or_else(|| pkg.get(name).map(<[u8]>::to_vec))?;
+            Some((name.to_string(), data))
+        })
+        .collect();
+    craft_opc::zip_entries(&entries).map_err(|e| PptxError::Write(e.to_string()))
+}
+
 /// Write a `.pptx` package.
 pub fn export(p: &Presentation) -> Result<Vec<u8>, PptxError> {
     check_table_caps(p)?;
-    craft_pptx::export(&convert::pres_to_craft(p), &DeckDefaults).map_err(Into::into)
+    let bytes = craft_pptx::export(&convert::pres_to_craft(p), &DeckDefaults)?;
+    patch_exported_media_timing(p, bytes)
 }
 
 /// Write a package for `ext`: `potx` (template) and `ppsx` (slide show) differ from `pptx` only in
 /// the main part's content type.
 pub fn export_as(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
     check_table_caps(p)?;
-    craft_pptx::export_as(&convert::pres_to_craft(p), &DeckDefaults, ext).map_err(Into::into)
+    let bytes = craft_pptx::export_as(&convert::pres_to_craft(p), &DeckDefaults, ext)?;
+    patch_exported_media_timing(p, bytes)
 }
 
 #[cfg(test)]
