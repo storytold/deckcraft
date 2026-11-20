@@ -3682,6 +3682,34 @@ fn a_picture_glow_snaps_tiles_to_screen_pixels_in_a_downsampled_mask() {
     }
 }
 
+#[test]
+fn a_picture_glow_skips_fills_a_morph_has_faded_out() {
+    // The square loses its fill over the morph: at the end the face draws none of it.
+    let bx = Xfrm::new(100.0, 100.0, 128.0, 128.0);
+    let square = |fill| Geom::Custom {
+        paths: vec![deckcraft_model::CustomPath { w: 128.0, h: 128.0, d: "M 0 0 L 128 0 L 128 128 L 0 128 Z".into(), fill, ..Default::default() }],
+    };
+    // A picture fill, and a clear picture's own fill behind it.
+    for case in ["fill", "background"] {
+        let mut p = picture_glow_deck(255, false, case == "fill", [0.0; 4], bx);
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        let mut shape = slide.shapes.remove(0);
+        shape.geom = square(deckcraft_geom::preset::FillMode::None);
+        if let ShapeKind::Picture { fill } = &mut shape.kind {
+            fill.alpha = Some(0.0);
+            shape.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 30, 20))));
+        }
+        let next = (*p.slides[0]).clone();
+        p.slides.push(std::sync::Arc::new(next));
+        let at = |t: f64| {
+            let pm = PathMorph { id: shape.id, from: square(deckcraft_geom::preset::FillMode::Norm), from_box: bx, to_box: bx, t };
+            render_blend(&p, (0, 1), t, &[(shape.clone(), false)], &[], &[pm], &RenderOpts { scale: 1.0, ..Default::default() }).pixel(232, 164)
+        };
+        assert!(at(0.0)[0] > 60, "{case}: the filled square casts its glow");
+        assert_eq!(at(1.0)[..3], [40, 110, 60], "{case}: the faded-out fill casts no glow");
+    }
+}
+
 fn upright_picture_background_alpha(gradient: bool) -> Image {
     let mut p = picture_glow_deck(255, false, false, [0.0; 4], Xfrm { rot: 90.0, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) });
     let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];

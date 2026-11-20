@@ -136,9 +136,18 @@ struct FxSource<'a> {
     picture_fill: bool,
     picture_background: bool,
     gif_time: Option<f64>,
+    /// How strongly each sub-path's fill shows while a morph fades it (empty outside a morph).
+    fades: &'a [deckcraft_geom::morph::Fade],
     m: Affine,
     w: f64,
     h: f64,
+}
+
+impl FxSource<'_> {
+    /// Whether sub-path `i` has a fill on screen: the face skips a fill a morph has faded out.
+    fn fills(&self, i: usize, sp: &SubPath) -> bool {
+        sp.fill != FillMode::None && self.fades.get(i).is_none_or(|f| f.fill > 0.0)
+    }
 }
 
 impl Renderer {
@@ -754,6 +763,7 @@ impl Renderer {
                     picture_fill: !is_pic,
                     picture_background: is_pic && s.fill.as_ref().is_some_and(|f| !f.is_none()),
                     gif_time: is_pic.then(|| d.f.opts.gif_times.iter().find(|g| g.0 == s.id).map(|g| g.1)).flatten(),
+                    fades: &d.fades,
                     m,
                     w,
                     h,
@@ -1192,7 +1202,10 @@ impl Renderer {
         if src.picture_background
             && let Some(fill) = src.fill
         {
-            for sp in src.geo.paths.iter().filter(|sp| sp.fill != FillMode::None) {
+            for (i, sp) in src.geo.paths.iter().enumerate() {
+                if !src.fills(i, sp) {
+                    continue;
+                }
                 let path = &sp.path;
                 mask.set_transform(plan.to_mask);
                 mask.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
@@ -1233,8 +1246,10 @@ impl Renderer {
         };
         if src.picture_fill {
             // A picture fill is painted per filled subpath, as in fill_geometry.
-            for sp in src.geo.paths.iter().filter(|sp| sp.fill != FillMode::None) {
-                paint_path(&sp.path, sp.even_odd);
+            for (i, sp) in src.geo.paths.iter().enumerate() {
+                if src.fills(i, sp) {
+                    paint_path(&sp.path, sp.even_odd);
+                }
             }
         } else {
             // A picture's foreground is painted once through the merged outline, as in draw_fill.
@@ -1263,11 +1278,13 @@ impl Renderer {
             picture_fill: src.picture_fill,
             picture_background: src.picture_background,
             gif_time: src.gif_time,
+            fades: src.fades,
             m: src.m,
             w: src.w,
             h: src.h,
         };
-        let FxSource { geo, fill, fill_alpha, fill_ph: _, outline, content, picture_fill: _, picture_background: _, gif_time: _, m, w, h } = src;
+        let FxSource { geo, fill, fill_alpha, fill_ph: _, outline, content, picture_fill: _, picture_background: _, gif_time: _, fades: _, m, w, h } =
+            src;
         let silhouette = {
             let mut p = BezPath::new();
             for sp in &geo.paths {
