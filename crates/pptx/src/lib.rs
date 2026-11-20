@@ -116,10 +116,129 @@ fn preflight_slides(bytes: &[u8]) -> Result<Vec<String>, PptxError> {
     Ok(lost)
 }
 
+fn has_unfolded_paragraph_builds(p: &Presentation) -> bool {
+    p.slides.iter().any(|s| s.animations.windows(2).any(|w| w[0].paragraph.is_some() && w[1].paragraph.is_some() && w[0].shape == w[1].shape))
+}
+
+fn slide_opt_out_spids(bytes: &[u8]) -> Vec<std::collections::HashSet<u32>> {
+    let Ok(mut pkg) = craft_opc::LazyPackage::open(bytes, &craft_pptx::LIMITS) else {
+        return vec![];
+    };
+    let root_rels = pkg.rels("").unwrap_or_default();
+    let pres_path = root_rels.first("officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "ppt/presentation.xml".into());
+    let Ok(Some(pres_bytes)) = pkg.read_limited(&pres_path, craft_pptx::MAX_XML_PART as u64) else {
+        return vec![];
+    };
+    let Ok(pres_el) = craft_drawingml::xmlx::parse(&pres_bytes) else {
+        return vec![];
+    };
+    let pres_rels = pkg.rels(&pres_path).unwrap_or_default();
+    let Some(list) = pres_el.child(craft_xml::Local("sldIdLst")) else {
+        return vec![];
+    };
+    let mut out = Vec::new();
+    for s in list.children(craft_xml::Local("sldId")).take(MAX_SLIDE_ENTRIES) {
+        let mut set = std::collections::HashSet::new();
+        if let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid))
+            && let Ok(Some(sb)) = pkg.read_limited(target, craft_pptx::MAX_XML_PART as u64)
+            && let Ok(se) = craft_drawingml::xmlx::parse(&sb)
+            && let Some(bld_lst) = se.path(&[craft_xml::Local("timing"), craft_xml::Local("bldLst")])
+        {
+            for b in bld_lst.children(craft_xml::Local("bldP")) {
+                if b.attr_local("build").unwrap_or("") != "p"
+                    && let Some(spid) = b.attr_local("spid").and_then(craft_xml::value::to_u32_lossy)
+                {
+                    set.insert(spid);
+                }
+            }
+        }
+        out.push(set);
+    }
+    out
+}
+
+fn span_ms(a: &deckcraft_model::anim::Animation) -> u32 {
+    let iterations = if a.repeat == u32::MAX || a.repeat <= 1 { 1 } else { a.repeat.min(1_000) };
+    a.duration_ms.saturating_mul(if a.auto_reverse { 2 } else { 1 }).saturating_mul(iterations)
+}
+
+fn plays_as_build(effects: &[&deckcraft_model::anim::Animation], text: &deckcraft_model::text::TextBody) -> bool {
+    use deckcraft_model::anim::{AnimStart, Animation, BuildRole, build_filled, paragraph_build_roles};
+    let Some(first) = effects.first() else { return false };
+    if first.start != AnimStart::OnClick && (span_ms(first) != 500 || first.delay_ms != 0) {
+        return false;
+    }
+    let roles = paragraph_build_roles(text);
+    let expected = roles.iter().enumerate().filter(|(i, r)| match r {
+        BuildRole::Top => true,
+        BuildRole::Member(_) => text.paragraphs.get(*i).is_some_and(build_filled),
+        BuildRole::Unowned => false,
+    });
+    let settings = |a: &Animation| Animation { start: AnimStart::OnClick, paragraph: None, ..a.clone() };
+    let base = settings(first);
+    let mut matched = 0;
+    for (k, (i, role)) in expected.enumerate() {
+        let Some(a) = effects.get(k) else { return false };
+        let start_ok = match role {
+            BuildRole::Top if k == 0 => true,
+            BuildRole::Top if first.start == AnimStart::OnClick => a.start == AnimStart::OnClick,
+            BuildRole::Top => a.start == AnimStart::AfterPrevious,
+            _ => a.start == AnimStart::WithPrevious,
+        };
+        if a.paragraph != u32::try_from(i).ok() || !start_ok || settings(a) != base {
+            return false;
+        }
+        matched = k + 1;
+    }
+    matched == effects.len()
+}
+
+fn fold_slide_paragraph_builds(slide: &mut deckcraft_model::Slide, opt_out: &std::collections::HashSet<u32>) {
+    use deckcraft_model::anim::{Animation, TextBuild};
+    let same = |x: &Animation, y: &Animation| {
+        x.paragraph.is_some()
+            && y.paragraph.is_some()
+            && x.text_build == TextBuild::AsOne
+            && y.text_build == TextBuild::AsOne
+            && x.shape == y.shape
+            && x.trigger == y.trigger
+            && !opt_out.contains(&x.shape.0)
+    };
+    let mut folded = Vec::with_capacity(slide.animations.len());
+    for run in slide.animations.chunk_by(same) {
+        let effects: Vec<&Animation> = run.iter().collect();
+        let text = effects.first().and_then(|a| deckcraft_model::find_shape(&slide.shapes, a.shape)).and_then(|s| s.text.as_ref());
+        if run.len() > 1
+            && let (Some(first), Some(text)) = (effects.first(), text)
+            && !opt_out.contains(&first.shape.0)
+            && plays_as_build(&effects, text)
+        {
+            folded.push(Animation { text_build: TextBuild::ByParagraph, paragraph: None, ..(*first).clone() });
+        } else {
+            folded.extend(run.iter().cloned());
+        }
+    }
+    slide.animations = folded;
+}
+
+fn fold_paragraph_builds(bytes: &[u8], pres: &mut Presentation) {
+    if !has_unfolded_paragraph_builds(pres) {
+        return;
+    }
+    let opt_outs = slide_opt_out_spids(bytes);
+    let empty = std::collections::HashSet::new();
+    for (i, slide) in pres.slides.iter_mut().enumerate() {
+        let opt_out = opt_outs.get(i).unwrap_or(&empty);
+        fold_slide_paragraph_builds(std::sync::Arc::make_mut(slide), opt_out);
+    }
+}
+
 /// Read a `.pptx` / `.potx` / `.ppsx` package.
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     preflight_slides(bytes)?;
-    craft_pptx::import(bytes, &DeckDefaults).map(convert::pres_from_craft).map_err(Into::into)
+    let mut pres = craft_pptx::import(bytes, &DeckDefaults).map(convert::pres_from_craft)?;
+    fold_paragraph_builds(bytes, &mut pres);
+    Ok(pres)
 }
 
 /// [`import`], plus the part names of slides the file lists but that couldn't be read and were
@@ -136,7 +255,9 @@ pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<Str
     let mut missing = preflight_slides(bytes)?;
     let (p, lost, warnings) = craft_pptx::import_report(bytes, &DeckDefaults)?;
     missing.extend(lost);
-    Ok((convert::pres_from_craft(p), missing, warnings))
+    let mut pres = convert::pres_from_craft(p);
+    fold_paragraph_builds(bytes, &mut pres);
+    Ok((pres, missing, warnings))
 }
 
 /// [`import`] with a lower presentation-wide chart point budget, so tests reach the over-budget
@@ -144,7 +265,9 @@ pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<Str
 #[doc(hidden)]
 pub fn import_with_chart_budget(bytes: &[u8], points: usize) -> Result<Presentation, PptxError> {
     preflight_slides(bytes)?;
-    craft_pptx::import_with_chart_budget(bytes, &DeckDefaults, points).map(convert::pres_from_craft).map_err(Into::into)
+    let mut pres = craft_pptx::import_with_chart_budget(bytes, &DeckDefaults, points).map(convert::pres_from_craft)?;
+    fold_paragraph_builds(bytes, &mut pres);
+    Ok(pres)
 }
 
 /// Read the theme of a `.thmx` file, or of a `.pptx` / `.potx`'s first master, with its media.
