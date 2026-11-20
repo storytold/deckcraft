@@ -903,6 +903,14 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
 
 [[package]]
+name = "craft-dds"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=1b4dcb4afa10659855e86052b124e9a319ec75c5#1b4dcb4afa10659855e86052b124e9a319ec75c5"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "craft-deckcraft-format"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=254e9a409b410dc93c0e06ff66cd1e767893ac32#254e9a409b410dc93c0e06ff66cd1e767893ac32"
@@ -956,8 +964,9 @@ dependencies = [
 [[package]]
 name = "craft-image-codecs"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=5689c73d#5689c73d293db85aa47419356ff7470778448d12"
+source = "git+https://github.com/storytold/craft-libs?rev=1b4dcb4afa10659855e86052b124e9a319ec75c5#1b4dcb4afa10659855e86052b124e9a319ec75c5"
 dependencies = [
+ "craft-dds",
  "craft-jpeg",
  "craft-metadata",
  "craft-tiff",
@@ -965,7 +974,6 @@ dependencies = [
  "exr",
  "flate2",
  "half",
- "hayro-jpeg2000",
  "image",
  "image-webp",
  "jpeg-encoder",
@@ -982,7 +990,7 @@ dependencies = [
 [[package]]
 name = "craft-jpeg"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=5689c73d#5689c73d293db85aa47419356ff7470778448d12"
+source = "git+https://github.com/storytold/craft-libs?rev=1b4dcb4afa10659855e86052b124e9a319ec75c5#1b4dcb4afa10659855e86052b124e9a319ec75c5"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -998,7 +1006,7 @@ dependencies = [
 [[package]]
 name = "craft-metadata"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=5689c73d#5689c73d293db85aa47419356ff7470778448d12"
+source = "git+https://github.com/storytold/craft-libs?rev=1b4dcb4afa10659855e86052b124e9a319ec75c5#1b4dcb4afa10659855e86052b124e9a319ec75c5"
 dependencies = [
  "brotli-decompressor",
  "chrono",
@@ -1060,12 +1068,14 @@ dependencies = [
 [[package]]
 name = "craft-svg"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=5689c73d#5689c73d293db85aa47419356ff7470778448d12"
+source = "git+https://github.com/storytold/craft-libs?rev=1b4dcb4afa10659855e86052b124e9a319ec75c5#1b4dcb4afa10659855e86052b124e9a319ec75c5"
 dependencies = [
  "craft-image-codecs",
- "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=5689c73d)",
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=1b4dcb4afa10659855e86052b124e9a319ec75c5)",
  "data-url",
  "flate2",
+ "gif",
+ "image-webp",
  "kurbo",
  "quick-xml 0.41.0",
  "resvg",
@@ -1079,7 +1089,7 @@ dependencies = [
 [[package]]
 name = "craft-tiff"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=5689c73d#5689c73d293db85aa47419356ff7470778448d12"
+source = "git+https://github.com/storytold/craft-libs?rev=1b4dcb4afa10659855e86052b124e9a319ec75c5#1b4dcb4afa10659855e86052b124e9a319ec75c5"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1165,7 +1175,7 @@ dependencies = [
 [[package]]
 name = "craft-xml"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=44d83fa8f635333dcb3c231f87381387a1f5631b#44d83fa8f635333dcb3c231f87381387a1f5631b"
+source = "git+https://github.com/storytold/craft-libs?rev=1b4dcb4afa10659855e86052b124e9a319ec75c5#1b4dcb4afa10659855e86052b124e9a319ec75c5"
 dependencies = [
  "quick-xml 0.41.0",
  "serde",
@@ -1175,7 +1185,7 @@ dependencies = [
 [[package]]
 name = "craft-xml"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=5689c73d#5689c73d293db85aa47419356ff7470778448d12"
+source = "git+https://github.com/storytold/craft-libs?rev=44d83fa8f635333dcb3c231f87381387a1f5631b#44d83fa8f635333dcb3c231f87381387a1f5631b"
 dependencies = [
  "quick-xml 0.41.0",
  "serde",
@@ -2509,9 +2519,6 @@ name = "hayro-jpeg2000"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c75ab947623ef4ccaa7acf0579edf7cbb5a73838e3839a7be73335e522f433a1"
-dependencies = [
- "fearless_simd",
-]
 
 [[package]]
 name = "hayro-syntax"
