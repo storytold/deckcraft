@@ -245,6 +245,7 @@ pub fn rich_deck() -> Presentation {
             adjust: PictureAdjust { brightness: 0.2, contrast: -0.1, grayscale: true, ..Default::default() },
             upright: false,
             artistic: None,
+            svg: None,
         },
     };
     let mut tiled = shape(&mut p, "Tiled", 350.0, 120.0, 200.0, 150.0);
