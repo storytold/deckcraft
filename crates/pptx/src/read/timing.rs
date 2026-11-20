@@ -244,6 +244,45 @@ fn behaviour_auto_reverses(c: &El) -> bool {
     !behaviours.is_empty() && behaviours.iter().all(|b| b.child("cTn").and_then(|t| t.bool("autoRev")).unwrap_or(false))
 }
 
+/// First finite `attr` on a behaviour's own `p:cTn` (`p:cBhvr/p:cTn`, document order).
+/// PowerPoint writes easing (`accel`/`decel`/`bounceEnd`) there instead of on the effect node.
+///
+/// The walk is bounded during traversal: it stops at the first finite value and inspects no more
+/// than 1,024 behaviours, so an effect with a huge behaviour list costs no more than that (and
+/// never allocates a list of every descendant).
+fn behaviour_f64(c: &El, attr: &str) -> Option<f64> {
+    const MAX_BEHAVIOURS: usize = 1024;
+    fn rec(e: &El, attr: &str, depth: usize, seen: &mut usize) -> Option<f64> {
+        if depth > crate::xml::MAX_DEPTH {
+            return None;
+        }
+        for child in e.elements() {
+            // A nested effect's behaviours belong to that effect, which the animation reader
+            // does not emit separately; don't lend its easing to the enclosing effect.
+            if child.is("cTn") && child.has_attr("presetClass") {
+                continue;
+            }
+            if *seen >= MAX_BEHAVIOURS {
+                return None;
+            }
+            #[cfg(test)]
+            visits::bump();
+            if child.is("cBhvr") {
+                *seen += 1;
+                if let Some(v) = child.child("cTn").and_then(|t| t.f64(attr)) {
+                    return Some(v);
+                }
+            }
+            if let Some(v) = rec(child, attr, depth + 1, seen) {
+                return Some(v);
+            }
+        }
+        None
+    }
+    let mut seen = 0;
+    rec(c, attr, 0, &mut seen)
+}
+
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
 /// Returns whether `st` (`p:stCondLst`) defers playback instead of starting immediately on slide entry.
@@ -397,9 +436,9 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
             auto_reverse: c.bool("autoRev").unwrap_or(false) || (effect != "colorPulse" && behaviour_auto_reverses(c)),
             // PowerPoint's "Rewind when done playing" is `fill="remove"` on the effect node.
             rewind: c.attr("fill") == Some("remove"),
-            smooth_start: c.f64("accel").map(|v| v / 100_000.0).unwrap_or(0.0),
-            smooth_end: c.f64("decel").map(|v| v / 100_000.0).unwrap_or(0.0),
-            bounce_end: c.f64("bounceEnd").map(|v| (v / 100_000.0).clamp(0.0, 1.0)).unwrap_or(0.0),
+            smooth_start: c.f64("accel").or_else(|| behaviour_f64(c, "accel")).map(|v| v / 100_000.0).unwrap_or(0.0),
+            smooth_end: c.f64("decel").or_else(|| behaviour_f64(c, "decel")).map(|v| v / 100_000.0).unwrap_or(0.0),
+            bounce_end: c.f64("bounceEnd").or_else(|| behaviour_f64(c, "bounceEnd")).map(|v| (v / 100_000.0).clamp(0.0, 1.0)).unwrap_or(0.0),
             ..Default::default()
         };
         a.repeat = match c.attr("repeatCount") {
@@ -490,4 +529,77 @@ fn plays_as_build(effects: &[&Animation], offsets: &[u32], text: &TextBody, expl
         matched = k + 1;
     }
     matched == effects.len()
+}
+
+/// Counts children inspected by [`behaviour_f64`]'s walk in unit tests, so the budget test can
+/// show the traversal stops instead of only observing the same return value.
+#[cfg(test)]
+mod visits {
+    use std::cell::Cell;
+    thread_local! {
+        static COUNT: Cell<usize> = const { Cell::new(0) };
+    }
+    pub(super) fn reset() {
+        COUNT.with(|c| c.set(0));
+    }
+    pub(super) fn bump() {
+        COUNT.with(|c| c.set(c.get() + 1));
+    }
+    pub(super) fn count() -> usize {
+        COUNT.with(|c| c.get())
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::xml::Node;
+
+    fn el(name: &str, children: Vec<El>) -> El {
+        El { name: name.into(), attrs: vec![], children: children.into_iter().map(Node::El).collect() }
+    }
+
+    fn behaviour(accel: Option<&str>) -> El {
+        let mut ctn = el("p:cTn", vec![]);
+        if let Some(v) = accel {
+            ctn.attrs.push(("accel".into(), v.into()));
+        }
+        el("p:cBhvr", vec![ctn])
+    }
+
+    #[test]
+    fn a_behaviour_inside_the_budget_is_read() {
+        let mut effect = el("p:cTn", vec![]);
+        for _ in 0..1023 {
+            effect.children.push(Node::El(behaviour(None)));
+        }
+        effect.children.push(Node::El(behaviour(Some("50000"))));
+        assert_eq!(behaviour_f64(&effect, "accel"), Some(50_000.0), "the 1,024th behaviour is still read");
+    }
+
+    #[test]
+    fn the_behaviour_walk_skips_a_nested_effect() {
+        let mut nested = el("p:cTn", vec![behaviour(Some("50000"))]);
+        nested.attrs.push(("presetClass".into(), "entr".into()));
+        let outer = el("p:cTn", vec![nested]);
+        assert_eq!(behaviour_f64(&outer, "accel"), None, "a nested effect's easing is not the outer effect's");
+        // A behaviour of the effect itself is still read.
+        let own = el("p:cTn", vec![behaviour(Some("50000"))]);
+        assert_eq!(behaviour_f64(&own, "accel"), Some(50_000.0));
+    }
+
+    #[test]
+    fn the_behaviour_walk_stops_after_its_budget() {
+        let mut effect = el("p:cTn", vec![]);
+        for _ in 0..1024 {
+            effect.children.push(Node::El(behaviour(None)));
+        }
+        // A wide wrapper with no behaviours: a walk that only stopped at the next `cBhvr` would
+        // visit all of it before giving up.
+        effect.children.push(Node::El(el("p:seq", (0..5_000).map(|_| el("p:child", vec![])).collect())));
+        effect.children.push(Node::El(behaviour(Some("50000"))));
+        visits::reset();
+        assert_eq!(behaviour_f64(&effect, "accel"), None, "a behaviour past the budget is not read");
+        assert!(visits::count() < 3_000, "the walk stopped at the budget, visited {}", visits::count());
+    }
 }
