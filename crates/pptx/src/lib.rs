@@ -662,6 +662,42 @@ fn patch_slide_media_timing(xml_bytes: &[u8], media: &[(u32, &deckcraft_model::M
     xml.into_bytes()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShapeOwner {
+    Sp,
+    CxnSp,
+    Pic,
+}
+
+/// Returns the owning shape kind and closing-tag byte offset for a `<p:cNvPr id="…">` at
+/// `start..after`, or `None` if it belongs to a non-shape container (`<p:grpSp>`,
+/// `<p:graphicFrame>`) or would cross into another shape.
+fn owning_shape_end(xml: &str, start: usize, after: usize) -> Option<(ShapeOwner, usize)> {
+    let before = &xml[..start];
+    let (nv_pos, owner) = [(ShapeOwner::Sp, "<p:nvSpPr>"), (ShapeOwner::CxnSp, "<p:nvCxnSpPr>"), (ShapeOwner::Pic, "<p:nvPicPr>")]
+        .into_iter()
+        .filter_map(|(owner, tag)| before.rfind(tag).map(|pos| (pos, owner)))
+        .max_by_key(|(pos, _)| *pos)?;
+    let between = &before[nv_pos..];
+    if ["<p:nvGrpSpPr>", "<p:nvGraphicFramePr>", "</p:nvSpPr>", "</p:nvCxnSpPr>", "</p:nvPicPr>"].iter().any(|t| between.contains(t)) {
+        return None;
+    }
+    let close_tag = match owner {
+        ShapeOwner::Sp => "</p:sp>",
+        ShapeOwner::CxnSp => "</p:cxnSp>",
+        ShapeOwner::Pic => "</p:pic>",
+    };
+    let end_rel = xml[after..].find(close_tag)?;
+    let span = &xml[after..after + end_rel];
+    if ["<p:sp>", "<p:sp ", "<p:cxnSp>", "<p:cxnSp ", "<p:pic>", "<p:pic ", "<p:grpSp>", "<p:grpSp ", "<p:graphicFrame>", "<p:graphicFrame "]
+        .iter()
+        .any(|t| span.contains(t))
+    {
+        return None;
+    }
+    Some((owner, after + end_rel))
+}
+
 fn patch_pic_grp_fill(xml_bytes: &[u8], spids: &std::collections::HashSet<u32>) -> Vec<u8> {
     let Ok(mut xml) = String::from_utf8(xml_bytes.to_vec()) else {
         return xml_bytes.to_vec();
@@ -674,11 +710,11 @@ fn patch_pic_grp_fill(xml_bytes: &[u8], spids: &std::collections::HashSet<u32>) 
             let after = start + needle.len();
             let boundary_ok = xml.as_bytes().get(after).is_some_and(|b| matches!(b, b' ' | b'/' | b'>'));
             if boundary_ok
-                && let Some(pic_end_rel) = xml[after..].find("</p:pic>")
-                && let Some(sp_pr_rel) = xml[after..after + pic_end_rel].find("<p:spPr>")
+                && let Some((ShapeOwner::Pic, pic_end)) = owning_shape_end(&xml, start, after)
+                && let Some(sp_pr_rel) = xml[after..pic_end].find("<p:spPr>")
             {
                 let sp_pr_start = after + sp_pr_rel + "<p:spPr>".len();
-                if let Some(sp_pr_end_rel) = xml[sp_pr_start..after + pic_end_rel].find("</p:spPr>") {
+                if let Some(sp_pr_end_rel) = xml[sp_pr_start..pic_end].find("</p:spPr>") {
                     let sp_pr_end = sp_pr_start + sp_pr_end_rel;
                     let inner = &xml[sp_pr_start..sp_pr_end];
                     if !inner.contains("<a:grpFill") {
@@ -710,12 +746,10 @@ fn collect_large_geom_adjs(shapes: &[Shape]) -> Vec<(u32, &[f64])> {
     out
 }
 
-fn patch_shape_av_lst(xml: &mut String, after: usize, adj: &[f64]) {
-    let shape_end_rel = ["</p:sp>", "</p:cxnSp>", "</p:pic>"].iter().filter_map(|t| xml[after..].find(t)).min();
-    let Some(shape_end_rel) = shape_end_rel else { return };
-    let Some(av_rel) = xml[after..after + shape_end_rel].find("<a:avLst>") else { return };
+fn patch_shape_av_lst(xml: &mut String, after: usize, shape_end: usize, adj: &[f64]) {
+    let Some(av_rel) = xml[after..shape_end].find("<a:avLst>") else { return };
     let av_start = after + av_rel + "<a:avLst>".len();
-    let Some(av_end_rel) = xml[av_start..after + shape_end_rel].find("</a:avLst>") else { return };
+    let Some(av_end_rel) = xml[av_start..shape_end].find("</a:avLst>") else { return };
     let mut av_end = av_start + av_end_rel;
     for (i, &v) in adj.iter().take(16).enumerate() {
         if !v.is_finite() || (v.round() >= -2.0e9 && v.round() <= 2.0e9) {
@@ -746,9 +780,12 @@ fn patch_large_geom_adjs(xml_bytes: &[u8], adjs: &[(u32, &[f64])]) -> Vec<u8> {
         let needle = format!(r#"<p:cNvPr id="{spid}""#);
         let mut search_from = 0;
         while let Some(rel) = xml[search_from..].find(&needle) {
-            let after = search_from + rel + needle.len();
-            if xml.as_bytes().get(after).is_some_and(|b| matches!(b, b' ' | b'/' | b'>')) {
-                patch_shape_av_lst(&mut xml, after, adj);
+            let start = search_from + rel;
+            let after = start + needle.len();
+            if xml.as_bytes().get(after).is_some_and(|b| matches!(b, b' ' | b'/' | b'>'))
+                && let Some((_, shape_end)) = owning_shape_end(&xml, start, after)
+            {
+                patch_shape_av_lst(&mut xml, after, shape_end, adj);
                 break;
             }
             search_from = after;
@@ -950,5 +987,38 @@ mod table_direction_tests {
         let shape = Shape { id: ShapeId(p_handout.alloc_id().expect("id")), kind: ShapeKind::Table(t), ..Default::default() };
         p_handout.handout_master = Some(Arc::new(deckcraft_model::Master { name: "Handout".into(), shapes: vec![shape], ..Default::default() }));
         assert!(matches!(crate::export(&p_handout), Err(crate::PptxError::Unsupported(_))));
+    }
+}
+
+#[cfg(test)]
+mod shape_owner_scoping_tests {
+    use std::collections::HashSet;
+
+    #[test]
+    fn patch_pic_grp_fill_does_not_cross_into_following_pic() {
+        let xml = concat!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="5" name="Box"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/></p:sp>"#,
+            r#"<p:pic><p:nvPicPr><p:cNvPr id="6" name="Pic"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:spPr><a:ln/></p:spPr></p:pic>"#,
+        );
+        let spids = HashSet::from([5]);
+        let out = String::from_utf8(super::patch_pic_grp_fill(xml.as_bytes(), &spids)).expect("utf8");
+        assert!(!out.contains("<a:grpFill/>"), "non-pic owner id=5 must not patch pic id=6: {out}");
+    }
+
+    #[test]
+    fn patch_large_geom_adjs_does_not_leak_from_group_into_child_shape() {
+        let xml = concat!(
+            r#"<p:grpSp><p:nvGrpSpPr><p:cNvPr id="10" name="Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>"#,
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="11" name="Child"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>"#,
+            r#"<p:spPr><a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val 2000000000"/></a:avLst></a:prstGeom></p:spPr></p:sp>"#,
+            r#"</p:grpSp>"#,
+        );
+        let adjs = [(10_u32, &[3_000_000_000.0_f64][..])];
+        let out = String::from_utf8(super::patch_large_geom_adjs(xml.as_bytes(), &adjs)).expect("utf8");
+        assert!(out.contains(r#"fmla="val 2000000000""#), "group id=10 must not patch child id=11: {out}");
+
+        let child_adjs = [(11_u32, &[3_000_000_000.0_f64][..])];
+        let patched = String::from_utf8(super::patch_large_geom_adjs(xml.as_bytes(), &child_adjs)).expect("utf8");
+        assert!(patched.contains(r#"fmla="val 3000000000""#), "child id=11 should be patched: {patched}");
     }
 }
