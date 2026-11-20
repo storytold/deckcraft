@@ -1184,6 +1184,82 @@ fn distribute_wide_middle_stays_in_selection_bounds() {
     assert!(xs.iter().all(|x| (*x - [0.0, 10.0, 110.0][xs.iter().position(|y| y == x).unwrap()]).abs() < 1e-6), "{xs:?}");
 }
 
+/// An `edge`, `dir` or `to` that the commands do not name, or no `edge` at all, is refused with
+/// the accepted values. Before, such a call reported its shapes as edited and moved nothing,
+/// aligned to the selection, or fell back to the left edge or to horizontal.
+#[test]
+fn align_and_distribute_refuse_values_they_do_not_name() {
+    let mut s = session();
+    let mut ids = vec![];
+    for (x, y) in [(10.0, 10.0), (200.0, 50.0), (500.0, 200.0)] {
+        ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 40, 40]})).unwrap()["id"].as_u64().unwrap());
+    }
+    s.execute("edit.select", &json!({"ids": ids})).unwrap();
+    let before = s.doc().unwrap().revision;
+    let edges = "`edge` must be left, center, right, top, middle or bottom";
+    let dirs = "`dir` must be horizontal or vertical";
+    let tos = "`to` must be slide or selection";
+    for (cmd, params, want) in [
+        ("arrange.align", json!({"edge": "centre"}), edges),
+        ("arrange.align", json!({"edge": "Left"}), edges),
+        ("arrange.align", json!({"edge": "hcenter"}), edges),
+        ("arrange.align", json!({}), edges),
+        ("arrange.align", json!({"ids": [ids[0]], "edge": "left", "to": "Slide"}), tos),
+        ("arrange.distribute", json!({"dir": "Vertical"}), dirs),
+        ("arrange.distribute", json!({"dir": "columns"}), dirs),
+        ("arrange.distribute", json!({"dir": "v"}), dirs),
+        ("arrange.distribute", json!({"dir": "vertical", "to": "page"}), tos),
+    ] {
+        let err = s.execute(cmd, &params).unwrap_err().to_string();
+        assert!(err.contains(want), "{cmd} {params}: {err}");
+    }
+    assert_eq!(s.doc().unwrap().revision, before, "a refused call leaves the slide as it was");
+    let pos = |s: &mut Session, id: u64, k: &str| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"][k].as_f64().unwrap();
+    s.execute("arrange.align", &json!({"ids": [ids[1]], "edge": "left", "to": "slide"})).unwrap();
+    assert!(pos(&mut s, ids[1], "x").abs() < 1e-6);
+    // Within the selection's span, 10..240: 120 pt of shapes leaves two 55 pt gaps.
+    s.execute("arrange.distribute", &json!({"ids": ids, "dir": "vertical", "to": "selection"})).unwrap();
+    assert!((pos(&mut s, ids[1], "y") - 105.0).abs() < 1e-6);
+}
+
+/// A `dir` or `to` that is present but is not a string (null, a number, a bool, an object or an
+/// array) is refused with the accepted values, and the shapes and the revision stay as they were.
+/// Before, such a value counted as left out: `dir` meant horizontal and `to` each command's
+/// default, so the call moved the selected shapes.
+#[test]
+fn align_and_distribute_refuse_dir_and_to_that_are_not_strings() {
+    let dirs = "`dir` must be horizontal or vertical";
+    let tos = "`to` must be slide or selection";
+    let mut failures = vec![];
+    for v in [json!(null), json!(123), json!(false), json!({}), json!([])] {
+        for (cmd, params, want) in [
+            ("arrange.distribute", json!({"dir": v.clone()}), dirs),
+            ("arrange.distribute", json!({"dir": "horizontal", "to": v.clone()}), tos),
+            ("arrange.align", json!({"edge": "left", "to": v.clone()}), tos),
+        ] {
+            let mut s = session();
+            let mut ids = vec![];
+            for (x, y) in [(10.0, 10.0), (200.0, 50.0), (500.0, 200.0)] {
+                ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 40, 40]})).unwrap()["id"].as_u64().unwrap());
+            }
+            s.execute("edit.select", &json!({"ids": ids})).unwrap();
+            let boxes = |s: &mut Session| -> Vec<Value> {
+                ids.iter().map(|id| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"].clone()).collect()
+            };
+            let (rev, before) = (s.doc().unwrap().revision, boxes(&mut s));
+            match s.execute(cmd, &params) {
+                Ok(_) => failures.push(format!("{cmd} {params}: accepted")),
+                Err(e) if !e.to_string().contains(want) => failures.push(format!("{cmd} {params}: {e}")),
+                Err(_) => {}
+            }
+            if s.doc().unwrap().revision != rev || boxes(&mut s) != before {
+                failures.push(format!("{cmd} {params}: moved the shapes"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[test]
 fn pointer_draw_move_resize() {
     let mut s = session();
@@ -2567,6 +2643,24 @@ fn outline_rtf_exports_and_opens_back() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// PowerPoint's outline RTF keeps an empty title and a title starting `- `, through both openers.
+#[test]
+fn outline_rtf_keeps_empty_and_dash_titles_through_file_open_and_open_bytes() {
+    let rtf = r"{\rtf1\ansi{\stylesheet{\s1\li360 heading 1;}{\s2\li1080 heading 2;}}\pard\plain\s1 Roadmap\par\pard\plain\s2 Ship\par\pard\plain\s1 {\f3 \par }\pard\plain\s1 - dash\par}";
+    let titles = |s: &Session| s.doc().unwrap().doc.slides.iter().map(|sl| sl.title()).collect::<Vec<_>>();
+    let dir = std::env::temp_dir().join(format!("deckcraft-rtf-titles-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.rtf");
+    std::fs::write(&path, rtf).unwrap();
+    let mut s = session();
+    s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
+    assert_eq!(titles(&s), ["Roadmap", "", "- dash"]);
+    let mut s = session();
+    s.execute("file.openBytes", &json!({"name": "deck.rtf", "data": crate::cmd::base64_encode(rtf.as_bytes())})).unwrap();
+    assert_eq!(titles(&s), ["Roadmap", "", "- dash"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #725: a layout with a small body placeholder ahead of its content placeholder (as Keynote
 /// exports "Title & Bullets") still gets the body in the content placeholder (`idx="1"`).
 #[test]
@@ -2669,6 +2763,13 @@ fn plain_outlines_are_unchanged() {
     }
     let p = crate::cmd::file::open_presentation("outline.txt", MD_OUTLINE.as_bytes()).unwrap();
     assert_eq!(p.slides.first().map(|s| s.title()).as_deref(), Some("# Intro"));
+}
+
+#[test]
+fn rtf_without_heading_paragraphs_opens_as_one_blank_slide() {
+    let p = crate::cmd::file::open_presentation("empty.rtf", br"{\rtf1\ansi}").unwrap();
+    assert_eq!(p.slides.len(), 1);
+    assert_eq!(p.slides[0].title(), "");
 }
 
 fn text_box_xfrm(s: &Session, id: u64) -> deckcraft_geom::Xfrm {
@@ -7406,6 +7507,45 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     s.execute("format.shrink", &json!({})).unwrap();
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
+}
+
+#[test]
+fn table_edits_past_the_cell_cap_are_refused_not_trimmed() {
+    use deckcraft_model::table::{MAX_CELLS, Row};
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    let cols = 200;
+    let rows = MAX_CELLS / cols;
+    let big = deckcraft_model::Table {
+        cols: vec![1.0; cols],
+        rows: vec![Row { height: 1.0, cells: vec![Default::default(); cols] }; rows],
+        ..Default::default()
+    };
+    for sl in std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides.iter_mut() {
+        for sh in std::sync::Arc::make_mut(sl).shapes.iter_mut() {
+            if sh.id == id {
+                sh.kind = deckcraft_model::ShapeKind::Table(big.clone());
+            }
+        }
+    }
+    for cmd in ["table.insertRowAbove", "table.insertRowBelow"] {
+        let e = s.execute(cmd, &json!({"id": id.0, "row": 0})).unwrap_err().to_string();
+        assert!(e.contains("cell limit"), "{cmd}: {e}");
+    }
+    let e = s.execute("table.insertColumnLeft", &json!({"id": id.0, "col": 0})).unwrap_err().to_string();
+    assert!(e.contains("cell limit"), "{e}");
+    assert_eq!(table_of(&s, id), big, "a refused insert leaves every row in place");
+    // A table already over the cap is refused too, not trimmed behind a success.
+    let huge = deckcraft_model::Table { rows: vec![Row { height: 1.0, cells: vec![Default::default(); cols] }; rows + 1], ..big.clone() };
+    for sl in std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides.iter_mut() {
+        for sh in std::sync::Arc::make_mut(sl).shapes.iter_mut() {
+            if sh.id == id {
+                sh.kind = deckcraft_model::ShapeKind::Table(huge.clone());
+            }
+        }
+    }
+    assert!(s.execute("table.deleteRow", &json!({"id": id.0, "row": 0})).is_err());
+    assert_eq!(table_of(&s, id).n_rows(), rows + 1);
 }
 
 /// #2059: Decrease Font Size (Ctrl+[, Cmd+Shift+,) steps down one size at a time from any size:

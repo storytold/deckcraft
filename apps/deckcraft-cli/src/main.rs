@@ -148,6 +148,9 @@ fn warn_if_damaged(path: &str, opened: &serde_json::Value) {
     if slides > 0 {
         eprintln!("deckcraft-cli: warning: {path}: {slides} slide{} couldn't be read and left out", if slides == 1 { "" } else { "s" });
     }
+    for w in opened.get("importWarnings").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|w| w.as_str()) {
+        eprintln!("deckcraft-cli: warning: {path}: {w}");
+    }
     if media > 0 {
         eprintln!("deckcraft-cli: warning: {path}: {media} picture or media file{} couldn't be read", if media == 1 { "" } else { "s" });
     }
