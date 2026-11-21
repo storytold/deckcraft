@@ -6,6 +6,7 @@
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; empty notes slides are kept through PPTX and native saves, #2025; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-09 · **Change:** minor (progress log: PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import, #239) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-07 · **Change:** trivial (progress log: text in a group whose child coordinates scale its shapes is placed for export where the slide draws it; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (application shell catalog with 87 Traditional Chinese (Taiwan) strings: ribbon tabs, File menu, title bar, quick access toolbar, status bar and Preferences; `app.language` takes `system`, `en` and `zh-Hant`, desktop follows a Traditional Chinese system locale, no CJK font is bundled, and parity scores are unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -111,12 +112,16 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English only today; no string catalog yet (Ukrainian is in review as PR #34). Detail:
-[docs/localization-parity.md](docs/localization-parity.md).
+English is complete. The application shell has an 87-key catalog and a language switch (`system`,
+`en`, `zh-Hant`); Traditional Chinese (Taiwan) fills that shell, while ribbon groups, the other
+dialogs, command ids and presentation text stay English. Detail:
+[docs/localization-parity.md](docs/localization-parity.md) and
+[docs/localization-zh-hant.md](docs/localization-zh-hant.md).
 
 | Language | Code | UI strings | Status | Hours to full |
 |---|---|---:|---|---|
 | English | en | 100% | full | 0 |
+| Traditional Chinese (Taiwan) | zh-Hant | 87 shell strings (7%) | shell only; native review pending | 3–6 |
 | Simplified Chinese | zh-Hans | 0% | none | 6–10 |
 | Spanish | es | 0% | none | 3–5 |
 | Hindi | hi | 0% | none | 4–7 |
@@ -129,8 +134,8 @@ English only today; no string catalog yet (Ukrainian is in review as PR #34). De
 | Korean | ko | 0% | none | 4–7 |
 | Vietnamese | vi | 0% | none | 3–5 |
 
-Plus 8–14 h once for the catalog infrastructure. Other languages shipped: none. PowerPoint for Mac
-ships 26.
+Plus 8–14 h once for the rest of the catalog infrastructure. Other languages shipped: Traditional
+Chinese for the shell (87 strings). PowerPoint for Mac ships 26.
 
 ## Upcoming
 
@@ -143,7 +148,8 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
    fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
    and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records,
    MicroType Express font subsets and SVG. 36–64 h.
-3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
+3. **Localization:** finish the catalog beyond the 87-string shell, add zh-Hans, es, fr, de, ja
+   with IME. 27–46 h.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
    presenter view on the right display, native macOS menu bar, Format Shape pane. 33–56 h.
@@ -165,6 +171,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-09 | PowerPoint 97–2003 `.ppt`, `.pot` and `.pps` files open (#239): a new `crates/ppt` reads the compound file, the presentation records and the OfficeArt drawings into the model (masters, title masters as layouts, slides, styled text, shapes, pictures, notes). Saving asks for a new name; a `.pps` from the system starts the show |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
 | 2026-11-07 | Text inside a group whose child coordinates scale its shapes is laid out for export as the slide draws it, at the shape's size in points, so the PDF text layer and the boxes of its text hyperlinks lie on the drawn text. SmartArt groups, whose child space equals their frame, are unchanged |
+| 2026-11-04 | Application shell catalog: 87 Taiwan Traditional Chinese strings for ribbon tabs, File menu, title bar, quick access toolbar, status bar and Preferences; `app.language` and system-locale selection; the rest of the UI stays English |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
@@ -356,6 +363,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-11 | minor | Progress log: empty notes slides preserved on PPTX/native save (#2025); parity scores unchanged |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
 | 2026-11-07 | trivial | Progress log: text in scaled groups is placed for export where it is drawn; parity scores unchanged |
+| 2026-11-04 | minor | Application shell catalog: 87 Taiwan Traditional Chinese strings for ribbon tabs, File menu, title bar, quick access toolbar, status bar and Preferences; `app.language` and system-locale selection; the rest of the UI stays English |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |

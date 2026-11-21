@@ -21,7 +21,20 @@ const MAX_FACE_BYTES: usize = 128 << 20;
 /// Aggregate bytes of every borrowed UI face. `MAX_FACE_BYTES` alone bounded one face but left
 /// `faces` unbounded; three full-size CJK collections are enough for the supported scripts.
 const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
+/// Installed faces preferred for the Traditional Chinese shell, in order. These are system
+/// fonts only: DeckCraft bundles no CJK face, per the asset policy.
+///
+/// Open faces come first. AGENTS §1.1 rules out assets taken from Microsoft, Adobe, Avid and
+/// Autodesk products, which includes the fonts those products install, so JhengHei, MingLiU and
+/// DFKai-SB are named only as a last resort after every openly licensed family has been tried.
+/// Apple's PingFang/Heiti/Songti are system faces of the operating system rather than of a
+/// creative product, so they stay ahead of the Microsoft ones but behind the open faces.
+#[cfg(not(target_arch = "wasm32"))]
+const TRADITIONAL_FAMILIES: &[&str] =
+    &["AR PL UMing TW", "WenQuanYi Zen Hei", "PingFang TC", "Heiti TC", "Songti TC", "Microsoft JhengHei", "MingLiU", "DFKai-SB"];
 
+/// Whether a face may be borrowed for the interface: not a colour face, and within the per-face
+/// byte limit.
 fn accepts_face(byte_len: usize, color: bool) -> bool {
     !color && byte_len <= MAX_FACE_BYTES
 }
@@ -75,6 +88,53 @@ pub fn faces_for_text(
 }
 
 impl UiFonts {
+    /// Put an installed Traditional Chinese face first among the borrowed interface faces. The
+    /// shell picks Taiwan's glyph forms rather than whatever CJK face the generic fallback finds
+    /// first. Nothing is bundled: with no matching installed family this does nothing and the
+    /// existing per-character fallback still applies.
+    ///
+    /// Candidates are tried in [`TRADITIONAL_FAMILIES`] order and the first usable one wins, so a
+    /// family that is installed but unusable (no Traditional glyph, colour, too large) does not
+    /// hide a later one. A face that is already borrowed but sits behind another is moved to the
+    /// front and reports a change.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn prefer_traditional(&mut self) -> bool {
+        let db = FontDb::global();
+        let total: usize = self.faces.iter().map(|f| f.data().len()).sum();
+        for family in TRADITIONAL_FAMILIES {
+            if !db.has_family(family) {
+                continue;
+            }
+            let face = db.face(family, "Regular");
+            if !face.covers('繁') {
+                continue;
+            }
+            if let Some(index) = self.faces.iter().position(|f| f.id() == face.id()) {
+                if index == 0 {
+                    return false;
+                }
+                let face = self.faces.remove(index);
+                self.faces.insert(0, face);
+                return true;
+            }
+            // The preferred face goes through the same per-face and aggregate limits as the normal
+            // per-character lookup; a large installed CJK collection is not copied into egui.
+            if !accepts_face(face.data().len(), face.is_color()) || !aggregate_accepts(total, face.data().len()) {
+                continue;
+            }
+            self.faces.insert(0, face);
+            return true;
+        }
+        false
+    }
+
+    /// The web build has no installed fonts and bundles no CJK face, so there is nothing to
+    /// prefer (and the picker keeps Traditional Chinese disabled).
+    #[cfg(target_arch = "wasm32")]
+    pub fn prefer_traditional(&mut self) -> bool {
+        false
+    }
+
     /// Look at `text` the interface is about to draw; borrow faces for what it can't draw.
     pub fn note(&mut self, ctx: &egui::Context, text: &str) {
         if !text.chars().any(|c| wanted(c) && !self.seen.contains(&c)) {
