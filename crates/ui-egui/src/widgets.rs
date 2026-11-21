@@ -388,9 +388,16 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     let t = Tokens::get(ui.ctx());
     let mut out = None;
     ui.set_min_width(220.0);
-    // A scheme with many extra colours makes a tall gallery: it scrolls past this height, while
-    // the usual ten-colour gallery is well under it and looks as before (the area shrinks to it).
-    egui::ScrollArea::vertical().max_height(GALLERY_MAX_HEIGHT).show(ui, |ui| color_grid_body(ui, &t, scheme, none_label, &mut out));
+    // A scheme with many extra colours makes a tall gallery: it scrolls past GALLERY_MAX_HEIGHT.
+    // The usual ten-colour gallery is laid out plainly, as before. It must not sit in a scroll
+    // area: a popup's size is rounded to whole points, so a gallery a fraction of a point taller
+    // than its viewport gets a scroll bar it does not need, over its last column. The height
+    // measured last frame decides; a gallery not yet measured takes the scroll area.
+    let height_id = ui.scope_id().with("gallery-height");
+    let tall = ui.data(|d| d.get_temp::<f32>(height_id)).is_none_or(|h| h > GALLERY_MAX_HEIGHT);
+    let mut body = |ui: &mut Ui| ui.scope(|ui| color_grid_body(ui, &t, scheme, none_label, &mut out)).response.rect.height();
+    let height = if tall { egui::ScrollArea::vertical().max_height(GALLERY_MAX_HEIGHT).show(ui, body).inner } else { body(ui) };
+    ui.data_mut(|d| d.insert_temp(height_id, height));
     if out.is_some() {
         ui.close();
     }
