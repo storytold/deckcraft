@@ -142,12 +142,19 @@ fn remove_background(s: &mut Session, p: &Value) -> Result<Value> {
             let Some(sh) = st.shape(*id) else { continue };
             let ShapeKind::Picture { fill } = &sh.kind else { continue };
             let Some(item) = st.doc.media(fill.media) else { continue };
-            let Ok(reader) = image::ImageReader::new(std::io::Cursor::new(item.data.as_slice())).with_guessed_format() else { continue };
-            let Ok((iw, ih)) = reader.into_dimensions() else { continue };
+            // Reject a raster picture from its header, before decoding allocates its pixels.
+            if !deckcraft_render::is_svg(&item.data)
+                && let Some((w, h)) = crate::cmd::raster_size(&item.data)
+                && u64::from(w) * u64::from(h) > MAX_PIXELS
+            {
+                return Err(bad("picture.removeBackground", format!("{w}×{h} pixels is too large; compress the picture first")));
+            }
+            // An SVG is drawn to pixels first, so the fill works on vector pictures too.
+            let Some(dynimg) = crate::cmd::picture_pixels(&item.data) else { continue };
+            let (iw, ih) = (dynimg.width(), dynimg.height());
             if u64::from(iw) * u64::from(ih) > MAX_PIXELS {
                 return Err(bad("picture.removeBackground", format!("{iw}×{ih} pixels is too large; compress the picture first")));
             }
-            let Ok(dynimg) = image::load_from_memory(&item.data) else { continue };
             let mut img = dynimg.to_rgba8();
             if matte(&mut img, tolerance) == 0 {
                 continue;
@@ -219,6 +226,25 @@ mod tests {
         let mut flat = image::RgbaImage::from_pixel(10, 10, image::Rgba([10, 200, 10, 255]));
         assert_eq!(matte(&mut flat, 20.0), 0);
         assert!(flat.pixels().all(|p| p.0[3] == 255));
+    }
+
+    #[test]
+    fn remove_background_draws_an_svg_picture_first() {
+        let svg = br#"<svg xmlns='http://www.w3.org/2000/svg' width='40' height='30'><rect width='40' height='30' fill='#ffffff'/><circle cx='20' cy='15' r='6' fill='#000000'/></svg>"#;
+        let mut s = Session::with_new();
+        let r = s.execute("insert.picture", &json!({"name": "dot.svg", "data": crate::cmd::base64_encode(svg)})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        s.execute("picture.removeBackground", &json!({"ids": [id]})).unwrap();
+        let fill = match &s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().kind {
+            ShapeKind::Picture { fill } => fill.clone(),
+            k => panic!("{k:?}"),
+        };
+        let item = s.doc().unwrap().doc.media(fill.media).unwrap().clone();
+        assert_eq!(item.content_type, "image/png", "the drawn pixels replace the vector");
+        let out = image::load_from_memory(&item.data).unwrap().to_rgba8();
+        assert_eq!(out.get_pixel(0, 0)[3], 0, "the white background is gone");
+        assert_eq!(out.dimensions(), (256, 192));
+        assert_eq!(out.get_pixel(128, 96)[3], 255, "the dot stays");
     }
 
     #[test]

@@ -2,7 +2,9 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-11-09 · Legacy `.ppt` import (#239): the row moves from M to P and lists what the import leaves out, as `docs/gaps.md` does. Files 76% → 78%.
+> **Last updated:** 2026-11-16 · SVG pictures read through the shared `craft-svg` crate; the row stays Partial for filters, masks and clip paths.
+>
+> **Previously (2026-11-14):** SVG pictures are saved with a PNG fallback beside the vector, so readers without SVG support draw them; text, real gradient ramps and markers already draw. Filters, masks and clip paths are not read, so the row stays Partial. Pictures 64%, weighted breadth unchanged.
 >
 > **Previously (2026-11-03):** Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
 >
@@ -16,13 +18,13 @@ The summary between `<!-- SUMMARY -->
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
-| P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 18 | 25 | 11 | 56% |
+| P1 | 65 | 45 | 17 | 3 | 82% |
+| P2 | 54 | 18 | 24 | 12 | 56% |
 
 | Area | Parity |
 |---|---|
 | Application shell | 81% |
-| Files | 78% |
+| Files | 76% |
 | Slides | 92% |
 | Views | 98% |
 | Masters & themes | 92% |
@@ -33,7 +35,7 @@ The summary between `<!-- SUMMARY -->
 | Tables | 97% |
 | Charts | 65% |
 | SmartArt | 50% |
-| Pictures | 60% |
+| Pictures | 64% |
 | Media | 67% |
 | Transitions | 100% |
 | Animations | 85% |
@@ -66,7 +68,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Files | Open PowerPoint .pptx | P0 | D |
 | Files | Save as PowerPoint .pptx | P0 | D |
 | Files | Open/save .potx/.ppsx/.pptm variants (.potx/.ppsx open and save with their own content types; no .pptm) | P2 | P |
-| Files | Legacy .ppt (binary) import (`crates/ppt`, .ppt/.pot/.pps, import only; no transitions, animations, hyperlinks or actions, sounds or video; tables as grouped shapes, OLE objects and charts as preview pictures, WordArt as plain text, no PICT pictures or text emboss) | P2 | P |
+| Files | Legacy .ppt (binary) import | P2 | M |
 | Files | Save as template | P1 | D |
 | Files | Autosave and crash recovery | P0 | D |
 | Files | Document properties | P2 | D |
@@ -187,7 +189,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | SmartArt | Insert SmartArt (lists, processes, cycles, hierarchy) | P1 | P |
 | SmartArt | Text pane and layout switching | P2 | P |
 | Pictures | Insert picture (PNG, JPEG, GIF, WebP, BMP, TIFF) | P0 | D |
-| Pictures | SVG pictures | P1 | M |
+| Pictures | SVG pictures (read through the shared `craft-svg` crate, which runs usvg: paths, shapes, groups, `use`, nested `svg`, text as glyph outlines, markers, gradient ramps, a PNG fallback saved beside the vector; clip paths and pattern fills stay vector, pictures that need filters or masks are composed by the shared bounded resvg draw at display size) | P1 | P |
 | Pictures | Crop (and crop to shape, aspect ratio) | P0 | P |
 | Pictures | Corrections, colour, transparency (recolor and Set Transparent Color done; sharpen/soften and colour temperature pending) | P1 | P |
 | Pictures | Artistic effects | P2 | P |
@@ -246,6 +248,10 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | SVG pictures read through the shared `craft-svg` crate (usvg behind its preflight); row stays Partial for the filters, masks and clip paths |
+| 2026-11-14 | minor | SVG pictures save a PNG fallback beside the vector; row stays Partial for the filters, masks and clip paths |
+| 2026-11-13 | minor | SVG pictures draw text, real gradient ramps and markers; row stays Partial for the filters, masks, clip paths and the missing raster fallback |
+| 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original; row Missing → Partial, Pictures 60 → 64%, weighted breadth unchanged |
 | 2026-11-02 | trivial | Reflection transform/fade serialization retained; its P score stays because rendering remains partial |
 | 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles; row remains P because other reuse behavior is still partial, summary scores unchanged |
 | 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |

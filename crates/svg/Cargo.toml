@@ -1,0 +1,16 @@
+[package]
+name = "deckcraft-svg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft SVG pictures: the shared craft-svg reader (usvg behind its bounded preflight) mapped to the bezier geometry, paints and text outlines the renderer draws"
+
+[lints]
+workspace = true
+
+[dependencies]
+craft-svg = { workspace = true }
+deckcraft-color = { workspace = true }
+deckcraft-fonts = { workspace = true }
+image = { workspace = true }
+kurbo = { workspace = true }

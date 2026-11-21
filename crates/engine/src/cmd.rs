@@ -614,7 +614,27 @@ fn param_optional(alt: &str) -> Option<bool> {
     }
 }
 
-/// Base64 (standard alphabet) for binary payloads in JSON params and results.
+/// A raster picture's size from its header, before any pixels are decoded.
+pub(crate) fn raster_size(data: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().ok()?.into_dimensions().ok()
+}
+
+/// The picture's pixels: a raster format decoded as it is, or an SVG drawn by the renderer, so
+/// effects that work on pixels also work on vector pictures. `None` for a format neither reads.
+pub(crate) fn picture_pixels(data: &[u8]) -> Option<image::DynamicImage> {
+    if deckcraft_render::is_svg(data) {
+        // Twice the picture's own size, so an effect that spreads pixels has room without
+        // drawing a 24 px icon at 2048 px.
+        const MIN_SIDE: f64 = 256.0;
+        const MAX_SIDE: f64 = 2048.0;
+        let (w, h) = deckcraft_render::svg_natural_size(data).unwrap_or((MIN_SIDE, MIN_SIDE));
+        let side = (w.max(h) * 2.0).clamp(MIN_SIDE, MAX_SIDE) as u32;
+        return deckcraft_render::rasterize_svg(data, side).map(image::DynamicImage::ImageRgba8);
+    }
+    image::load_from_memory(data).ok()
+}
+
+/// A base64 encoding, as the `data` parameter of the insert and open commands expects it.
 pub fn base64_encode(data: &[u8]) -> String {
     craft_mime::base64::STANDARD.encode(data)
 }

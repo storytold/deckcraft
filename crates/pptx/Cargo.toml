@@ -17,6 +17,7 @@ craft-drawingml.workspace = true
 deckcraft-model = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
+deckcraft-svg = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

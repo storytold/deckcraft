@@ -469,7 +469,9 @@ fn fold_slide_paragraph_builds(slide: &mut deckcraft_model::Slide, info: &SlideT
 /// Read a `.pptx` / `.potx` / `.ppsx` package.
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     preflight_slides(bytes)?;
-    let mut pres = craft_pptx::import(bytes, &DeckDefaults).map(convert::pres_from_craft)?;
+    let mut craft = craft_pptx::import(bytes, &DeckDefaults)?;
+    convert::prefer_vectors(&mut craft);
+    let mut pres = convert::pres_from_craft(craft);
     post_import_timing(bytes, &mut pres);
     Ok(pres)
 }
@@ -486,9 +488,10 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
 /// keeps its leading rows); the file still opens.
 pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<String>), PptxError> {
     let mut missing = preflight_slides(bytes)?;
-    let (p, lost, warnings) = craft_pptx::import_report(bytes, &DeckDefaults)?;
+    let (mut craft, lost, warnings) = craft_pptx::import_report(bytes, &DeckDefaults)?;
     missing.extend(lost);
-    let mut pres = convert::pres_from_craft(p);
+    convert::prefer_vectors(&mut craft);
+    let mut pres = convert::pres_from_craft(craft);
     post_import_timing(bytes, &mut pres);
     Ok((pres, missing, warnings))
 }
@@ -498,7 +501,9 @@ pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<Str
 #[doc(hidden)]
 pub fn import_with_chart_budget(bytes: &[u8], points: usize) -> Result<Presentation, PptxError> {
     preflight_slides(bytes)?;
-    let mut pres = craft_pptx::import_with_chart_budget(bytes, &DeckDefaults, points).map(convert::pres_from_craft)?;
+    let mut craft = craft_pptx::import_with_chart_budget(bytes, &DeckDefaults, points)?;
+    convert::prefer_vectors(&mut craft);
+    let mut pres = convert::pres_from_craft(craft);
     post_import_timing(bytes, &mut pres);
     Ok(pres)
 }
@@ -848,10 +853,24 @@ fn patch_exported_slides(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, Pp
     craft_opc::zip_entries(&entries).map_err(|e| PptxError::Write(e.to_string()))
 }
 
+/// Draws an SVG picture into a PNG, for the raster fallback PowerPoint keeps beside the vector.
+/// The writer has no renderer of its own (it sits below one in the layering), so the caller
+/// supplies it.
+pub type SvgFallback<'a> = &'a dyn Fn(&deckcraft_model::MediaItem) -> Option<Vec<u8>>;
+
 /// Write a `.pptx` package.
 pub fn export(p: &Presentation) -> Result<Vec<u8>, PptxError> {
     check_table_caps(p)?;
     let bytes = craft_pptx::export(&convert::pres_to_craft(p), &DeckDefaults)?;
+    patch_exported_slides(p, bytes)
+}
+
+/// [`export`] with a rasterizer for SVG pictures: each one gets a PNG part as its `r:embed` and
+/// the vector in the `asvg:svgBlip` extension, the way PowerPoint writes it, so readers without
+/// SVG support still draw the picture.
+pub fn export_with(p: &Presentation, fallback: SvgFallback<'_>) -> Result<Vec<u8>, PptxError> {
+    check_table_caps(p)?;
+    let bytes = craft_pptx::export_with(&convert::pres_to_craft(p), &DeckDefaults, &svg_raster(fallback))?;
     patch_exported_slides(p, bytes)
 }
 
@@ -862,6 +881,28 @@ pub fn export_as(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
     let ext = ext.trim_start_matches('.').to_ascii_lowercase();
     let bytes = craft_pptx::export_as(&convert::pres_to_craft(p), &DeckDefaults, &ext)?;
     patch_exported_slides(p, bytes)
+}
+
+/// [`export_as`] with a rasterizer for SVG pictures, as [`export_with`].
+pub fn export_as_with(p: &Presentation, ext: &str, fallback: SvgFallback<'_>) -> Result<Vec<u8>, PptxError> {
+    check_table_caps(p)?;
+    let ext = ext.trim_start_matches('.').to_ascii_lowercase();
+    let bytes = craft_pptx::export_as_with(&convert::pres_to_craft(p), &DeckDefaults, &ext, &svg_raster(fallback))?;
+    patch_exported_slides(p, bytes)
+}
+
+/// The caller's rasterizer, in the shared writer's terms.
+fn svg_raster<'a>(fallback: SvgFallback<'a>) -> impl Fn(&craft_pptx::MediaItem) -> Option<Vec<u8>> + 'a {
+    move |m| {
+        let item = deckcraft_model::MediaItem {
+            id: deckcraft_model::MediaId(m.id.0),
+            name: m.name.clone(),
+            content_type: m.content_type.clone(),
+            data: std::sync::Arc::clone(&m.data),
+            link: m.link.clone(),
+        };
+        fallback(&item)
+    }
 }
 
 #[cfg(test)]

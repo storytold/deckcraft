@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-21 · **Change:** minor (PPTX import and export moved to `craft-pptx`, and the SVG picture path with it: a vector picture still saves with its PNG fallback and a picture that carries only a vector is kept; also every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; empty notes slides are kept through PPTX and native saves, #2025; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-09 · **Change:** minor (progress log: PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import, #239) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-07 · **Change:** trivial (progress log: text in a group whose child coordinates scale its shapes is placed for export where the slide draws it; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -65,7 +65,7 @@ Calibration is the same as for the full number (see [docs/target-app-parity.md](
 transitions, animations, media and presenter view, export PDF), but depth, fidelity and polish
 have known gaps, and PPTX has never been tested on a corpus of real decks. Beta needs ~75% ready
 and no blocking gap in `.pptx`: the real-deck corpus, the round-trip losses (#70, #74),
-EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the beta list in
+EMF/SVG picture fidelity, the data-loss and startup-crash bugs (#60, #40, #59) and the beta list in
 [docs/roadmap.md](docs/roadmap.md).
 
 ## By dimension
@@ -99,7 +99,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | Tables | 97% | ~75% | 3–6 | [checklist](docs/parity-checklist.md) |
 | Charts | 65% | ~45% | 12–20 | [gaps](docs/gaps.md#charts-data-grid-elements-and-the-newer-chart-types) |
 | SmartArt | 50% | ~35% | 8–14 | [gaps](docs/gaps.md#smartart-editing-is-shallow) |
-| Pictures | 60% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
+| Pictures | 64% | ~45% | 8–16 | [file formats](docs/file-format-parity.md) |
 | Media | 67% | ~60% | 8–14 | [file formats](docs/file-format-parity.md) |
 | Transitions | 100% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
 | Animations | 85% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
@@ -141,8 +141,8 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
 2. **PPTX on real decks:** the owned corpus now round-trips comments, links and actions, custom
    shows, rotated groups, inherited placeholders, text effects and body layout, theme effects,
    fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
-   and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records,
-   MicroType Express font subsets and SVG. 36–64 h.
+   and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records and
+   MicroType Express font subsets. 34–60 h.
 3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
@@ -158,6 +158,13 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-21 | PPTX import and export are `craft-pptx` (`#2276`), and the SVG picture path moved with them: `craft-libs#2845` writes a PNG fallback beside a vector picture, keeps a picture that carries only a vector, and `deckcraft-pptx` supplies the renderer from above it and prefers the imported vector over the raster copy |
+| 2026-11-16 | SVG pictures read through the shared `craft-svg` crate (usvg behind its bounded preflight): the app keeps only the mapping onto its geometry, paints and text outlines, and a vector-only picture still shows when it would draw incomplete |
+| 2026-11-14 | Saved packages carry a PNG fallback beside every SVG picture, the way PowerPoint writes it: `a:blip/@r:embed` is the raster, `asvg:svgBlip` the vector, so readers without SVG support draw the picture. The writer takes the rasterizer from above it (layering), the engine draws it at twice the picture size (512–2048 px) from `crates/render/src/svg.rs` |
+| 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
+| 2026-11-13 | SVG review pass: gradients follow the element transform and resolve viewport percentages, markers cannot recurse and follow a curve's tangent, a stroked label without a fill draws, and text positions follow the nearest `tspan`. Limits unchanged (filters, masks, clip paths, export fallback) |
+| 2026-11-13 | SVG pictures draw their text (`text`/`tspan`, font family, size, weight, style, `text-anchor`, letter spacing, whitespace as SVG reads it), real gradient ramps (stops, `objectBoundingBox`/`userSpaceOnUse`, `gradientTransform`, `spreadMethod`) and markers (`marker-start`/`-mid`/`-end`, `orient`, `markerUnits`, view box). Filters, masks and clip paths are still not read. Checklist Pictures 64%, unchanged |
+| 2026-11-13 | SVG pictures: `crates/svg` reads paths, basic shapes, groups, transforms, `use` and solid or gradient fills, and `crates/render/src/svg.rs` draws them as vectors, so SVG files insert at their own size and render; import takes `asvg:svgBlip` over the PNG fallback. Export still writes no raster fallback. Checklist Pictures 60 → 64% |
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | PPTX: a slide whose notes slide has empty text retains its notesSlide part and relationship on save and reopen (#2025); empty notes slides survive native round trips |
@@ -351,6 +358,10 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | SVG pictures are parsed by the shared `craft-svg` crate; parity scores unchanged |
+| 2026-11-14 | minor | SVG pictures save a PNG fallback beside the vector; the export shortfall is closed, Pictures 64% unchanged |
+| 2026-11-13 | minor | SVG pictures draw text, real gradient ramps and markers; Pictures 64%, unchanged |
+| 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original from PowerPoint files; Pictures 60 → 64%, weighted breadth unchanged |
 | 2026-11-16 | trivial | Progress log: export all slides as PNG or JPEG from the File tab (#2019); scores unchanged |
 | 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
 | 2026-11-11 | minor | Progress log: empty notes slides preserved on PPTX/native save (#2025); parity scores unchanged |

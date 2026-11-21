@@ -12,15 +12,15 @@ repository = "https://github.com/storytold/deckcraft"
 
 [workspace.dependencies]
 # OPC part-name primitives and package reader/writer.
-craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "8048f8ef92da80fb3ce5a056d59ca591ee66faf1", version = "0.1.0" }
+craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "9236ad47038b61888be2d8b3f910ebb7541ab9c5", version = "0.1.0" }
 # Compound File Binary directory reads (password-protected deck detection).
-craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "8048f8ef92da80fb3ce5a056d59ca591ee66faf1", version = "0.1.0" }
+craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "9236ad47038b61888be2d8b3f910ebb7541ab9c5", version = "0.1.0" }
 # Bounded XML reader and writer primitives.
-craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "8048f8ef92da80fb3ce5a056d59ca591ee66faf1", version = "0.1.0" }
+craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "9236ad47038b61888be2d8b3f910ebb7541ab9c5", version = "0.1.0" }
 # DrawingML colours, themes, charts, tables and text (craft-libs#778, #792).
-craft-drawingml = { git = "https://github.com/storytold/craft-libs", rev = "8048f8ef92da80fb3ce5a056d59ca591ee66faf1", version = "0.1.0" }
+craft-drawingml = { git = "https://github.com/storytold/craft-libs", rev = "9236ad47038b61888be2d8b3f910ebb7541ab9c5", version = "0.1.0" }
 # PresentationML PPTX/POTX/PPSX reader and writer (craft-libs#778).
-craft-pptx = { git = "https://github.com/storytold/craft-libs", rev = "8048f8ef92da80fb3ce5a056d59ca591ee66faf1", version = "0.1.0" }
+craft-pptx = { git = "https://github.com/storytold/craft-libs", rev = "9236ad47038b61888be2d8b3f910ebb7541ab9c5", version = "0.1.0" }
 # Shared MCP stdio framing and protocol constants (craft-libs#778).
 craft-mcp-server = { git = "https://github.com/storytold/craft-libs", rev = "bc186ca719958fcce3b6ee24794277eabed14609", version = "0.1.0" }
 # internal
@@ -39,6 +39,7 @@ deckcraft-engine = { path = "crates/engine" }
 deckcraft-mcp = { path = "crates/mcp" }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
 deckcraft-media = { path = "crates/media" }
+deckcraft-svg = { path = "crates/svg" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
@@ -73,6 +74,8 @@ craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "010702ee
 craft-video = { git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890", version = "=0.1.0", default-features = false, features = ["h264-decode", "hevc-decode", "vp9-decode", "av1-decode", "threads"] }
 # WMF, EMF and EMF+ reader.
 craft-metafile = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
+# SVG: the shared reader (`tree` = usvg behind its bounded preflight, `tree-text` = text as outlines).
+craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "1b4dcb4afa10659855e86052b124e9a319ec75c5", version = "=0.1.0", features = ["tree", "tree-text", "tree-render"] }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # craft-update: app-specific pretend versions apply to startup and manual checks.
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "63196e66f3033a6623eb629af95a104d26986725", features = ["egui"] }

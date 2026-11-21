@@ -191,6 +191,105 @@ fn picture_fill_to(p: &dm_style::PictureFill) -> cd_style::PictureFill {
     }
 }
 
+/// Prefer the vector original of a picture over the raster fallback PowerPoint stores beside it:
+/// a picture saved as `asvg:svgBlip` next to `a:blip/@r:embed` is the vector, and the raster is
+/// only what a reader without SVG support draws. A linked vector (no bytes) and one that does not
+/// parse keep the raster.
+pub(crate) fn prefer_vectors(p: &mut craft_pptx::Presentation) {
+    let vectors: Vectors = p
+        .media
+        .iter()
+        .filter(|m| m.content_type == "image/svg+xml" && !m.data.is_empty() && deckcraft_svg::parse(&m.data).is_some())
+        .map(|m| m.id.0)
+        .collect();
+    if vectors.is_empty() {
+        return;
+    }
+    for slide in &mut p.slides {
+        let s = std::sync::Arc::make_mut(slide);
+        shapes_prefer_vectors(&mut s.shapes, &vectors);
+        background_prefer_vectors(&mut s.background, &vectors);
+    }
+    for master in &mut p.masters {
+        let m = std::sync::Arc::make_mut(master);
+        shapes_prefer_vectors(&mut m.shapes, &vectors);
+        background_prefer_vectors(&mut m.background, &vectors);
+        for layout in &mut m.layouts {
+            shapes_prefer_vectors(&mut layout.shapes, &vectors);
+            background_prefer_vectors(&mut layout.background, &vectors);
+        }
+    }
+    if let Some(master) = p.notes_master.as_mut() {
+        let m = std::sync::Arc::make_mut(master);
+        shapes_prefer_vectors(&mut m.shapes, &vectors);
+        background_prefer_vectors(&mut m.background, &vectors);
+    }
+    if let Some(master) = p.handout_master.as_mut() {
+        let m = std::sync::Arc::make_mut(master);
+        shapes_prefer_vectors(&mut m.shapes, &vectors);
+        background_prefer_vectors(&mut m.background, &vectors);
+    }
+}
+
+type Vectors = std::collections::HashSet<u32>;
+
+fn picture_prefer_vector(fill: &mut cd_style::PictureFill, vectors: &Vectors) {
+    if let Some(svg) = fill.svg
+        && vectors.contains(&svg.0)
+    {
+        fill.media = svg;
+    }
+}
+
+fn fill_prefer_vector(fill: &mut Option<cd_style::Fill>, vectors: &Vectors) {
+    if let Some(cd_style::Fill::Picture(p)) = fill {
+        picture_prefer_vector(p, vectors);
+    }
+}
+
+fn text_prefer_vectors(text: &mut Option<craft_pptx::TextBody>, vectors: &Vectors) {
+    let Some(text) = text else { return };
+    for paragraph in &mut text.paragraphs {
+        for run in &mut paragraph.runs {
+            fill_prefer_vector(&mut run.props.fill, vectors);
+        }
+    }
+}
+
+fn table_prefer_vectors(table: &mut craft_pptx::table::Table, vectors: &Vectors) {
+    for row in &mut table.rows {
+        for cell in &mut row.cells {
+            fill_prefer_vector(&mut cell.fill, vectors);
+            text_prefer_vectors(&mut Some(cell.text.clone()), vectors);
+        }
+    }
+}
+
+fn shapes_prefer_vectors(shapes: &mut [craft_pptx::Shape], vectors: &Vectors) {
+    for shape in shapes {
+        fill_prefer_vector(&mut shape.fill, vectors);
+        if let Some(line) = &mut shape.line {
+            fill_prefer_vector(&mut line.fill, vectors);
+        }
+        if let Some(overlay) = shape.effects.as_mut().and_then(|e| e.fill_overlay.as_mut()) {
+            fill_prefer_vector(&mut Some(overlay.fill.clone()), vectors);
+        }
+        text_prefer_vectors(&mut shape.text, vectors);
+        match &mut shape.kind {
+            craft_pptx::ShapeKind::Picture { fill } => picture_prefer_vector(fill, vectors),
+            craft_pptx::ShapeKind::Group { children, .. } => shapes_prefer_vectors(children, vectors),
+            craft_pptx::ShapeKind::Table(t) => table_prefer_vectors(t, vectors),
+            _ => {}
+        }
+    }
+}
+
+fn background_prefer_vectors(background: &mut Option<craft_pptx::Background>, vectors: &Vectors) {
+    if let Some(craft_pptx::Background::Fill { fill }) = background {
+        fill_prefer_vector(&mut Some(fill.clone()), vectors);
+    }
+}
+
 fn picture_fill_from(p: cd_style::PictureFill) -> dm_style::PictureFill {
     dm_style::PictureFill {
         media: media_id_from(p.media),

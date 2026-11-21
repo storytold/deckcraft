@@ -20,18 +20,17 @@ revision history.
 | 1 | PPTX corpus is only decks we author (no PowerPoint reference renders) | File format | B | 20–35 | [file-format-parity.md](file-format-parity.md) |
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media playback options (#74) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
-| 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
-| 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
-| 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
-| 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
-| 8 | Image paste fails on Windows (#1414); Linux not re-checked | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
-| 9 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
-| 10 | Animation Pane: 64 of ~190 effects, effect options (timeline and Play From done) | Feature | B (pane) | 7–13 | [animation-parity.md](animation-parity.md) |
-| 11 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
-| 12 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
-| 13 | No native macOS menu bar | UI/UX | B | 3–5 | [ui-parity.md](ui-parity.md) |
-| 14 | PDF export rasterizes slide artwork | File format | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
-| 15 | Slides rasterize on the CPU; no performance baseline | Performance / hardware | | 15–30 | [hardware-parity.md](hardware-parity.md) |
+| 4 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
+| 5 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
+| 6 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
+| 7 | Image paste fails on Windows (#1414); Linux not re-checked | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
+| 8 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
+| 9 | Animation Pane: 64 of ~190 effects, effect options (timeline and Play From done) | Feature | B (pane) | 7–13 | [animation-parity.md](animation-parity.md) |
+| 10 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
+| 11 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
+| 12 | No native macOS menu bar | UI/UX | B | 3–5 | [ui-parity.md](ui-parity.md) |
+| 13 | PDF export rasterizes slide artwork | File format | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
+| 14 | Slides rasterize on the CPU; no performance baseline | Performance / hardware | | 15–30 | [hardware-parity.md](hardware-parity.md) |
 
 ## Stability
 
@@ -102,14 +101,29 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** a deck opened and saved silently loses show behaviour.
 - **Estimate:** 2–4 h. **Beta blocker.**
 
-### SVG pictures don't render
-- **Evidence:** `crates/render/src/images.rs` decodes through `image` 0.25 (PNG, JPEG, WebP, GIF,
-  TIFF, BMP), and EMF/WMF through `deckcraft-metafile` (ported from WordCraft: paths, fills, pens,
-  pattern and hatch brushes, bitmaps and text; rectangle clip regions are applied, EMF+ only
-  pictures play their EMF+ records).
-  Nothing reads SVG; PowerPoint's Insert Icons stores SVG with a PNG fallback.
-- **Impact:** SVG icons show only their raster fallback, and SVG files can't be inserted.
-- **Estimate:** 4–8 h (an SVG renderer through `resvg`-style crates).
+### SVG pictures lose their filters, masks and clip paths
+- **Evidence:** the shared `craft-svg` reader parses SVG (usvg behind its bounded preflight), and
+`crates/svg` maps the tree onto DeckCraft geometry: paths, basic shapes, markers, gradients with
+their stops and space, and text as outline glyphs laid out with the fonts this app ships.
+`crates/render/src/svg.rs` draws the result as vectors, including `clipPath` (as clip layers the
+shapes are drawn inside) and `pattern` (as the tile's own geometry, repeated over the shape and
+clipped to it). Commands that work on pixels draw the picture first at twice its own size, at least
+256 px and at most 2048 px, so `picture.artisticEffect` and `picture.removeBackground` take an SVG
+like any raster; `picture.compress` leaves an SVG's bytes alone and only sets its crop, so the
+vector is not traded for a smaller file. SVG's `filter` and `mask` need compositing the mapping does not model; a picture
+that uses one reports it in `Svg::skipped` and is drawn whole by `craft_svg::tree::draw` (the
+shared, memory-checked resvg path) at the size on screen instead, and the vector mapping stands in
+only if that draw is refused by its budget. An embedded `image` is reported the same way, and so is
+a pattern that nests another or needs more than 4096 cells.
+- **Impact:** a picture that needs a filter or a mask is a bitmap at the size on screen, so it is as
+sharp as the display and not resolution-independent like the vector pictures around it. An extreme
+filter region, a very large embedded image or a very dense pattern can exceed what the mapping or
+the draw budget handles, and that picture then loses those effects. A group's opacity
+applies to each shape in it rather than to the composited group, and a `url(#…)` paint that resolves
+to nothing is drawn black where a browser draws nothing.
+- **Estimate:** 10–16 h (a bounded filter graph: `feGaussianBlur`, `feOffset`, `feFlood`,
+`feComposite`, `feMerge`; masks as luminance layers; clip paths through vello's clip layers;
+patterns as tiles).
 
 ### Macro-enabled variants aren't recognized
 - **Evidence:** `.pptx`, `.potx` and `.ppsx` open and save with their own main content types
