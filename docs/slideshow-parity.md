@@ -42,7 +42,7 @@ ready** (estimated), **10–16 h** to parity.
 
 | Feature | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
-| Separate presenter window with current slide, next slide, notes | yes | yes (an egui viewport, 1100×700); the notes keep their bullets, numbers, indents and bold/italic, as in the notes pane | On Linux and the BSDs it stays off if winit lists exactly one display as the show starts, as in PowerPoint: on one display it covered the show, and the hidden window stalled every frame (#1156). If winit lists none, the setting is kept. There is not yet a way to switch to Presenter View by hand during a one-display show. macOS, Windows and the browser are unchanged |
+| Separate presenter window with current slide, next slide, notes | yes | yes (an egui viewport, 1100×700); current and next previews are above a full-width notes area, with black text on white by default. The notes keep their bullets, numbers, indents and bold/italic, as in the notes pane | On Linux and the BSDs it stays off if winit lists exactly one display as the show starts, as in PowerPoint: on one display it covered the show, and the hidden window stalled every frame (#1156). If winit lists none, the setting is kept. There is not yet a way to switch to Presenter View by hand during a one-display show. macOS, Windows and the browser are unchanged |
 | Elapsed timer | yes | yes | |
 | Pause / reset timer, clock | yes | yes: Pause/Resume and Reset in presenter view (T pauses, R resets); the clock is local time, `--:--` where there is no clock | Pausing the timer does not pause the show, animations or rehearsal |
 | Slide counter, previous/next/end buttons | yes | yes | |
@@ -80,6 +80,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-21 | minor | Presenter notes run below the previews; A-/A+ use the presenter toolbar style. Short windows reserve notes height; constrained embedded hosts prioritize scrollable notes and bracket-key sizing. Native minimum: 480×280. Split from the display-placement work in #1225. |
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display; if it lists none, the setting is kept (#1156) |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |

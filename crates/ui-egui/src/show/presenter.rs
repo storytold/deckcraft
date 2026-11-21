@@ -148,7 +148,10 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     };
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
+        egui::ViewportBuilder::default()
+            .with_title("Presenter View — DeckCraft")
+            .with_inner_size([1100.0, 700.0])
+            .with_min_inner_size([480.0, 280.0]),
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;
@@ -218,9 +221,18 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     }
                     return;
                 }
-                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
-                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
-                let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
+                // An embedded/constrained host can be smaller than the native window minimum.
+                // Prioritize the scrollable notes there; bracket keys still adjust their size.
+                if avail.height() < 120.0 {
+                    notes_area(ui, notes, show.notes_px, avail);
+                    return;
+                }
+                // Keep the notes readable when the presenter window is short; the previews give
+                // up height before the notes header, padding and scroll viewport do.
+                let top = avail.min.y + (avail.height() * 0.62).min((avail.height() - 120.0).max(0.0));
+                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, top));
+                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), pos2(avail.max.x, top));
+                let cr = fit(left, doc);
                 let cr = Rect::from_min_size(left.min, cr.size());
                 if let Some(t) = &cur_tex {
                     ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -258,23 +270,21 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                         }
                     }
                 }
-                let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
+                let notes_head = Rect::from_min_size(pos2(avail.min.x, cr.max.y.max(nr.max.y) + 12.0), vec2(avail.width(), 32.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
                     ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
-                    if ui.button("A-").clicked() {
+                    if button(ui, "A-").clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }
                     ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
-                    if ui.button("A+").clicked() {
+                    if button(ui, "A+").clicked() {
                         show.nudge_notes(NOTES_STEP);
                     }
                 });
-                let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
-                egui::ScrollArea::vertical().show(&mut child, |ui| {
-                    presenter_notes(ui, notes, show.notes_px);
-                });
+                // Black on white, like a printed page, for reading at a glance.
+                let notes_rect = Rect::from_min_max(pos2(avail.min.x, notes_head.max.y + 4.0), avail.max);
+                notes_area(ui, notes, show.notes_px, notes_rect);
             });
             if ui.input(|i| i.viewport().close_requested()) {
                 show.presenter = false;
@@ -290,9 +300,20 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     }
 }
 
+/// A notes viewport whose inset stays usable even below the normal native window minimum.
+fn notes_area(ui: &mut Ui, notes: &deckcraft_model::text::TextBody, px: f32, rect: Rect) {
+    ui.painter().rect_filled(rect, CornerRadius::same(4), Color32::WHITE);
+    let inset = vec2((rect.width().max(0.0) * 0.25).min(12.0), (rect.height().max(0.0) * 0.25).min(12.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(inset)));
+    egui::ScrollArea::vertical().show(&mut child, |ui| {
+        ui.set_width(ui.available_width());
+        presenter_notes(ui, notes, px);
+    });
+}
+
 /// The current slide's notes in the presenter's notes pane, `px` for 12 pt text.
 pub(super) fn presenter_notes(ui: &mut Ui, notes: &deckcraft_model::text::TextBody, px: f32) -> egui::Response {
-    let color = Color32::from_gray(230);
+    let color = Color32::BLACK;
     if notes.text().is_empty() {
         ui.label(egui::RichText::new("No notes.").size(px).color(color))
     } else {
