@@ -246,6 +246,26 @@ fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
     Ok(json!({"slide": slide, "index": index, "text": text}))
 }
 
+/// Whether alternative text is a picture's file name and nothing else: one word ending in a
+/// picture file's extension (`IMG_2041.png`, `C:\\photos\\a.JPG`), or the name of the file the
+/// picture came from, which may have spaces (`Screenshot 2024 at 10.00.png`).
+fn is_file_name(alt: &str, file: Option<&str>) -> bool {
+    const PICTURE_EXTENSIONS: [&str; 15] =
+        ["png", "jpg", "jpeg", "jpe", "gif", "bmp", "tif", "tiff", "webp", "svg", "emf", "wmf", "heic", "avif", "ico"];
+    let alt = alt.trim();
+    let one_word = !alt.is_empty() && !alt.contains(char::is_whitespace);
+    (one_word && alt.rsplit_once('.').is_some_and(|(stem, ext)| !stem.is_empty() && PICTURE_EXTENSIONS.iter().any(|e| ext.eq_ignore_ascii_case(e))))
+        || file.is_some_and(|f| !alt.is_empty() && f.trim().eq_ignore_ascii_case(alt))
+}
+
+/// The name of the file a picture shape's picture came from, if it has one.
+fn picture_file<'a>(doc: &'a deckcraft_model::Presentation, sh: &deckcraft_model::Shape) -> Option<&'a str> {
+    match &sh.kind {
+        deckcraft_model::ShapeKind::Picture { fill } => doc.media(fill.media).map(|m| m.name.as_str()),
+        _ => None,
+    }
+}
+
 fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let mut out = vec![];
@@ -263,6 +283,10 @@ fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
             );
             if needs_alt && sh.descr.trim().is_empty() && !sh.decorative {
                 out.push(json!({"slide": i, "shape": sh.id, "name": sh.name, "issue": "Missing alternative text"}));
+            } else if needs_alt && !sh.decorative && is_file_name(&sh.descr, picture_file(&st.doc, sh)) {
+                // Insert Picture names a picture after its file, which is all a screen reader
+                // would then say (#2224).
+                out.push(json!({"slide": i, "shape": sh.id, "name": sh.name, "issue": "Alternative text is a file name"}));
             }
         });
         // Low-contrast text against the slide background.
@@ -1040,5 +1064,46 @@ mod accessibility_contrast_tests {
         }
         assert!(!contrasts.iter().any(|issue| issue["shape"] == 6), "black control warned: {issues}");
         assert!(!contrasts.iter().any(|issue| issue["shape"] == 8), "white break or spaces warned: {issues}");
+    }
+
+    /// #2224: Insert Picture's alt text is the file name, which says nothing; it is reported until
+    /// it is described or marked decorative. A description that mentions a file is fine.
+    #[test]
+    fn alt_text_that_is_a_file_name_is_reported() {
+        let png: Vec<u8> = vec![
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 8, 0, 0, 0, 8, 8, 2, 0, 0, 0, 75, 109, 41, 220, 0, 0, 0, 17, 73,
+            68, 65, 84, 120, 156, 99, 184, 163, 161, 129, 21, 49, 12, 45, 9, 0, 123, 123, 75, 1, 251, 162, 81, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174,
+            66, 96, 130,
+        ];
+        let mut s = Session::with_new();
+        let id = s.execute("insert.picture", &json!({"data": crate::cmd::base64_encode(&png), "name": "IMG_2041.png"})).unwrap()["id"].clone();
+        let named = |s: &mut Session| {
+            let issues = s.execute("review.accessibility", &json!({})).unwrap();
+            issues.as_array().unwrap().iter().filter(|i| i["shape"] == id && i["issue"] == "Alternative text is a file name").count()
+        };
+        assert_eq!(named(&mut s), 1);
+        for (text, decorative, expected) in [
+            ("photo.JPEG", false, 1),
+            ("C:\\Users\\me\\Pictures\\holiday.png", false, 1),
+            ("A red square", false, 0),
+            ("A red square, from IMG_2041.png", false, 0),
+            ("IMG_2041.png", true, 0),
+        ] {
+            s.execute("shape.altText", &json!({"text": text, "decorative": decorative, "ids": [id]})).unwrap();
+            assert_eq!(named(&mut s), expected, "{text:?} decorative {decorative}");
+        }
+        // A file name with spaces is reported when it is the picture's own file's.
+        let mut s = Session::with_new();
+        let id =
+            s.execute("insert.picture", &json!({"data": crate::cmd::base64_encode(&png), "name": "Screenshot 2024 at 10.00.png"})).unwrap()["id"]
+                .clone();
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        assert!(issues.as_array().unwrap().iter().any(|i| i["shape"] == id && i["issue"] == "Alternative text is a file name"), "{issues}");
+        assert!(!is_file_name("Version 2.0", None), "a version number is not a picture's extension");
+        assert!(!is_file_name(".png", None));
+        assert!(!is_file_name("A red square, from IMG_2041.png", None));
+        // The picture's own file name counts, spaces and all.
+        assert!(is_file_name("Screenshot 2024 at 10.00.png", Some("Screenshot 2024 at 10.00.png")));
+        assert!(!is_file_name("Screenshot 2024 at 10.00.png", None));
     }
 }
