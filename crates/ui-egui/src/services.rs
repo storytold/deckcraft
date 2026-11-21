@@ -71,6 +71,46 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
-    /// How many displays are connected, when the host can tell: Presenter View needs a second.
-    pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
+    /// The screens the computer shows to, read when a slide show starts. Without it (the web,
+    /// tests) the show stays where the window is.
+    pub screens: Option<Box<dyn FnMut() -> Option<Screens>>>,
+}
+
+/// The screens connected, numbered as the windowing system lists them (the numbers a window is
+/// sent to with `ViewportCommand::SetMonitor`). Wayland can list a screen more than once: `list`
+/// holds one number per screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Screens {
+    pub list: Vec<usize>,
+    /// The screen DeckCraft's window is on, when known.
+    pub current: Option<usize>,
+    /// The system's main screen, when known (Wayland doesn't say).
+    pub primary: Option<usize>,
+}
+
+impl Screens {
+    /// Where a slide show with Presenter View goes, as in PowerPoint: the slides full screen on
+    /// another screen and Presenter View on the presenter's (the one DeckCraft is on). `None`
+    /// with one screen: there, PowerPoint shows only the slides. Returns (slides, presenter).
+    pub fn for_presenter_view(&self) -> Option<(usize, usize)> {
+        self.for_presenter_view_on(None)
+    }
+
+    /// As [`for_presenter_view`](Self::for_presenter_view), with the slides on `chosen` when that
+    /// screen is connected. Presenter View then goes to the screen DeckCraft is on, or when that
+    /// is `chosen` too, to the main screen or the first other one.
+    pub fn for_presenter_view_on(&self, chosen: Option<usize>) -> Option<(usize, usize)> {
+        if self.list.len() < 2 {
+            return None;
+        }
+        let listed = |i: &usize| self.list.contains(i);
+        let Some(slides) = chosen.filter(listed) else {
+            let presenter = self.current.filter(listed).or(self.primary.filter(listed)).or_else(|| self.list.first().copied())?;
+            let slides = self.list.iter().copied().find(|i| *i != presenter)?;
+            return Some((slides, presenter));
+        };
+        let presenter = [self.current, self.primary].into_iter().flatten().find(|i| listed(i) && *i != slides);
+        let presenter = presenter.or_else(|| self.list.iter().copied().find(|i| *i != slides))?;
+        Some((slides, presenter))
+    }
 }

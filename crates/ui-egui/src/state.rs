@@ -76,6 +76,9 @@ pub struct UiState {
     pub sorter_zoom: f32,
     pub recent: Vec<String>,
     pub presenter_view: bool,
+    /// Set Up Slide Show ▸ Slide show monitor: the screen (as the windowing system numbers it)
+    /// the slides go to when Presenter View is on. `None` = automatic. Per machine.
+    pub show_display: Option<usize>,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows never hide a still pointer,
     /// for decks with clickable choices (#1445).
     pub show_keep_cursor: bool,
@@ -118,6 +121,7 @@ impl Default for UiState {
             sorter_zoom: 1.0,
             recent: vec![],
             presenter_view: true,
+            show_display: None,
             show_keep_cursor: false,
             ui_scale: 1.0,
             format_tab: "fill".into(),
@@ -156,6 +160,7 @@ impl UiState {
             self.format_tab = d.format_tab;
         }
         self.pane = self.pane.filter(short);
+        self.show_display = self.show_display.filter(|&d| d < 64);
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);
