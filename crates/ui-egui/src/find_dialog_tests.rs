@@ -41,3 +41,25 @@ fn ctrl_f_puts_the_caret_in_find_what() {
     let typed = h.state().dialog.as_ref().and_then(|d| d.fields.get("text").cloned());
     assert_eq!(typed.as_deref(), Some("there!"));
 }
+
+/// Replace is Ctrl+H, on macOS too, where Cmd+H hides the app and opens nothing.
+#[test]
+fn ctrl_h_replaces_and_mac_cmd_h_does_not() {
+    let app = SlideApp::new(Session::with_new(), Services::default());
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    // What egui reports for the Mac's Cmd key.
+    h.key_press_modifiers(egui::Modifiers { mac_cmd: true, command: true, ..Default::default() }, egui::Key::H);
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none(), "Cmd+H opened {:?}", h.state().dialog.as_ref().map(|d| &d.id));
+    h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::H);
+    h.run_steps(3);
+    let d = h.state().dialog.as_ref();
+    assert_eq!(d.map(|d| (d.id.as_str(), d.fields.get("replace").map(String::as_str))), Some(("find", Some("1"))));
+}

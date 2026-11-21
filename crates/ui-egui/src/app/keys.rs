@@ -188,7 +188,9 @@ impl SlideApp {
                         continue;
                     }
                     let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
-                    if !self.session.tool.drawing_freeform() && menus::ui_shortcut(self, key, mods) {
+                    // macOS: Cmd+H hides the app; Replace is Ctrl+H there.
+                    let mac_hide = key == egui::Key::H && modifiers.mac_cmd;
+                    if !self.session.tool.drawing_freeform() && !mac_hide && menus::ui_shortcut(self, key, mods) {
                         continue;
                     }
                     let name = key_name(key);

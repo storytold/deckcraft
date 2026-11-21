@@ -23,6 +23,8 @@ mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
+#[cfg(target_os = "macos")]
+mod native_menu;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
 
@@ -34,12 +36,19 @@ struct App(
     /// Files opened from Finder and quit requests (see `apple_events`).
     #[cfg(target_os = "macos")]
     fmv_macos_events::Inbox,
+    /// The menu bar (`None` in tests).
+    #[cfg(target_os = "macos")]
+    Option<native_menu::NativeMenu>,
 );
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
         apple_events::poll(&self.1, &mut self.0, ctx);
+        #[cfg(target_os = "macos")]
+        if let Some(m) = &mut self.2 {
+            m.poll(&mut self.0, ctx);
+        }
         self.0.logic(ctx);
     }
     /// Forward native raw input to the wrapped application once per pass.
@@ -48,6 +57,10 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
+        #[cfg(target_os = "macos")]
+        if let Some(m) = &mut self.2 {
+            m.refresh(&self.0, ui.ctx());
+        }
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
@@ -323,10 +336,14 @@ fn main() -> eframe::Result {
             if show {
                 app.start_show(0, false);
             }
+            #[cfg(target_os = "macos")]
+            let menu = native_menu::NativeMenu::install(&cc.egui_ctx, &app);
             Ok(Box::new(App(
                 app,
                 #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
+                #[cfg(target_os = "macos")]
+                Some(menu),
             )))
         }),
     )
@@ -345,6 +362,8 @@ mod tests {
                 SlideApp::new(Session::new(), Services::default()),
                 #[cfg(target_os = "macos")]
                 fmv_macos_events::Inbox::default(),
+                #[cfg(target_os = "macos")]
+                None,
             );
             println!("calling on_exit");
             eframe::App::on_exit(&mut app);
