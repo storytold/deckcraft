@@ -6062,14 +6062,56 @@ fn table_cell_commands_reject_an_invalid_cell_and_name_the_registered_command() 
 }
 
 #[test]
-fn table_column_width_of_a_huge_column_is_ignored() {
+fn table_resizing_rejects_out_of_range_indices_without_changing_state() {
     let mut s = session();
     let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
-    for keep_total in [true, false] {
-        let r = s.execute("table.columnWidth", &json!({"id": id.0, "col": u64::MAX, "width": 50.0, "keepTotal": keep_total}));
-        assert!(r.is_ok(), "columnWidth must ignore a huge col (keepTotal {keep_total}), got {r:?}");
-        assert_eq!(table_of(&s, id).cols, vec![100.0, 100.0], "no column changes");
+    s.execute("table.selectCells", &json!({"id": id.0, "from": [1, 1], "to": [1, 1]})).unwrap();
+    s.execute("table.rowHeight", &json!({"id": id.0, "row": 0, "height": 60.0})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    let st = s.doc().unwrap();
+    let before = st.doc.clone();
+    let selection = st.selection.clone();
+    let revision = st.revision;
+    let history = (st.history.undo.len(), st.history.redo.len());
+    assert!(history.0 > 0 && history.1 > 0, "both history stacks must be populated");
+    for index in [json!(2), json!(99), json!(u64::MAX)] {
+        for (command, params) in [
+            ("table.rowHeight", json!({"id": id.0, "row": index, "height": 50.0})),
+            ("table.columnWidth", json!({"id": id.0, "col": index, "width": 50.0, "keepTotal": true})),
+            ("table.columnWidth", json!({"id": id.0, "col": index, "width": 50.0, "keepTotal": false})),
+        ] {
+            let err = s.execute(command, &params).unwrap_err();
+            assert!(matches!(err, crate::EngineError::BadParams { .. }), "{command} {params}: {err:?}");
+            let st = s.doc().unwrap();
+            assert!(std::sync::Arc::ptr_eq(&st.doc, &before), "preserve the deck for {command} {params}");
+            assert_eq!(st.selection, selection, "preserve the selection for {command} {params}");
+            assert_eq!(st.revision, revision, "no revision change for {command} {params}");
+            assert_eq!((st.history.undo.len(), st.history.redo.len()), history, "preserve undo and redo for {command} {params}");
+        }
     }
+}
+
+#[test]
+fn table_resizing_keeps_selected_indices_null_defaults_and_explicit_indices() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    s.execute("table.selectCells", &json!({"id": id.0, "from": [1, 1], "to": [1, 1]})).unwrap();
+    s.execute("table.rowHeight", &json!({"height": 50.0})).unwrap();
+    s.execute("table.rowHeight", &json!({"row": null, "height": 60.0})).unwrap();
+    assert_eq!(table_of(&s, id).rows.iter().map(|row| row.height).collect::<Vec<_>>(), vec![40.0, 60.0]);
+    s.execute("table.columnWidth", &json!({"width": 130.0})).unwrap();
+    s.execute("table.columnWidth", &json!({"col": null, "width": 140.0})).unwrap();
+    assert_eq!(table_of(&s, id).cols, vec![100.0, 140.0]);
+    let before = s.doc().unwrap().doc.clone();
+    let undo = s.doc().unwrap().history.undo.len();
+    s.execute("table.rowHeight", &json!({"row": 0, "height": 55.0})).unwrap();
+    assert_eq!(table_of(&s, id).rows.iter().map(|row| row.height).collect::<Vec<_>>(), vec![55.0, 60.0]);
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1);
+    let after = s.doc().unwrap().doc.clone();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before);
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, after);
 }
 
 /// Slides imported from an outline join the section of the slide they follow, like `slide.new`.
