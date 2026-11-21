@@ -22,6 +22,9 @@ serde_json = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+craft-window = { workspace = true }
+
 [build-dependencies]
 # Icon + VERSIONINFO for deckcraft.exe; build.rs only uses it when the target is Windows.
 winresource = "0.1"

@@ -270,6 +270,14 @@ fn main() -> eframe::Result {
     let native_wayland = !x11 && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|w| !w.is_empty());
     #[cfg(not(all(unix, not(target_os = "macos"))))]
     let native_wayland = false;
+    #[cfg(target_os = "linux")]
+    let linux_frame = {
+        use craft_window::{Prefix, policy};
+        let backend = if x11 { policy::Backend::X11 } else { policy::Backend::from_env() };
+        let decision = policy::decide_for(Prefix::new("DECKCRAFT"), backend, policy::TitleBarPref::Integrated);
+        options.viewport = policy::apply(options.viewport, &decision.frame);
+        (decision.frame, decision.desktop.icon_theme)
+    };
     #[cfg(all(unix, not(target_os = "macos")))]
     if x11 {
         options.event_loop_builder = Some(Box::new(|b| {
@@ -309,6 +317,11 @@ fn main() -> eframe::Result {
                 }
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
+            #[cfg(target_os = "linux")]
+            if let (craft_window::policy::Frame::Integrated(captions), icon_theme) = linux_frame {
+                app.captions = Some(captions);
+                app.caption_icon_theme = icon_theme;
+            }
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);

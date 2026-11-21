@@ -20,6 +20,8 @@ mod draw;
 mod galleries;
 mod home;
 mod insert;
+#[cfg(target_os = "linux")]
+mod linux_caption;
 mod masters;
 mod picture_format;
 mod playback;
@@ -29,6 +31,8 @@ mod slide_show;
 mod smartart;
 mod table;
 mod title_bar;
+#[cfg(target_os = "linux")]
+pub(crate) use title_bar::linux::resize_edges;
 mod transitions;
 mod view;
 
@@ -446,6 +450,35 @@ mod align_tests;
 #[cfg(test)]
 mod title_bar_tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn integrated_captions_share_the_action_row_and_send_close() {
+        use craft_window::{
+            Layout,
+            policy::{CaptionFamily, Captions},
+        };
+        use egui_kittest::{Harness, kittest::Queryable as _};
+        for (family, layout, close_on_left) in [(CaptionFamily::Adwaita, ":close", false), (CaptionFamily::Breeze, "close:minimize,maximize", true)] {
+            let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+            app.captions = Some(Captions { family, layout: Layout::parse(layout) });
+            let mut h = Harness::builder()
+                .with_context_setup(theme::install_fonts)
+                .with_size(vec2(900.0, 560.0))
+                .build_ui_state(|ui, app| title_bar(app, ui), app);
+            h.run_steps(3);
+            let action = h.get_by_label("Customize Quick Access Toolbar").rect();
+            let close = h.get_by_role_and_label(egui::accesskit::Role::Button, "Close").rect();
+            assert!(close.y_range().contains(action.center().y));
+            assert!(if close_on_left { close.right() < action.left() } else { close.left() > action.right() });
+            assert_eq!(h.query_by_label("Minimize").is_some(), close_on_left);
+            h.get_by_label("Close").click();
+            assert!((0..3).any(|_| {
+                h.step();
+                h.output().viewport_output.values().any(|v| v.commands.contains(&egui::ViewportCommand::Close))
+            }));
+        }
+    }
 
     #[test]
     fn mac_title_bar_centres_and_clears_the_traffic_lights() {
