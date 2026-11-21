@@ -12,7 +12,7 @@ use crate::{Services, SlideApp};
 fn harness() -> Harness<'static, SlideApp> {
     let mut app = SlideApp::new(Session::with_new(), Services::default());
     app.ui.tab = "Insert".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
+    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).allow_missing_glyphs().build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -64,6 +64,59 @@ fn insert_opens_the_dialog_and_ok_inserts_one_field() {
     h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
     h.run_steps(1);
     assert!(date_run(&h).is_none());
+}
+
+#[test]
+fn choosing_japanese_lists_and_inserts_a_japanese_date() {
+    let mut h = harness();
+    h.get_by_label("Date & Time").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Language").click();
+    h.run_steps(2);
+    h.get_by_label("Japanese").click();
+    h.run_steps(2);
+    // `datetime2` is the system long date even in Japanese (measured: en-US Windows showed
+    // "Tuesday, October 27, 2026"), so pick the Gregorian Japanese date.
+    let now = deckcraft_text::datetime::DateTime::now_local().unwrap();
+    let sample = deckcraft_text::datetime::field_text("datetime4", Some("ja-JP"), now).unwrap();
+    assert!(sample.ends_with('日'), "the dialog lists the Japanese date: {sample}");
+    h.get_by_label(&sample).click();
+    h.run_steps(1);
+    h.get_by_label("OK").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    let run = date_run(&h).unwrap();
+    assert!(matches!(run.kind, RunKind::Field { ref field } if field == "datetime4"), "{run:?}");
+    assert_eq!(run.text, sample);
+    assert_eq!(run.props.lang.as_deref(), Some("ja-JP"));
+}
+
+#[test]
+fn japanese_formats_are_listed_and_distinct() {
+    let mut h = harness();
+    h.get_by_label("Date & Time").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Language").click();
+    h.run_steps(2);
+    h.get_by_label("Japanese").click();
+    h.run_steps(2);
+    // The measured Japanese list has no two kinds reading the same text: the era, the Gregorian
+    // date and the English-style `27-Oct-26` all differ, so no row needs its kind appended.
+    let now = deckcraft_text::datetime::DateTime::now_local().unwrap();
+    let samples: Vec<String> =
+        deckcraft_text::datetime::DATE_KINDS.iter().map(|k| deckcraft_text::datetime::field_text(k, Some("ja-JP"), now).unwrap()).collect();
+    let mut seen = std::collections::HashSet::new();
+    for sample in &samples {
+        assert!(seen.insert(sample.as_str()), "two Japanese kinds read the same: {sample}");
+    }
+    let kanji = deckcraft_text::datetime::field_text("datetime7", Some("ja-JP"), now).unwrap();
+    assert!(kanji.starts_with("令和") && kanji.ends_with('日'), "the dialog lists the kanji era date: {kanji}");
+    h.get_by_label(&kanji).click();
+    h.run_steps(1);
+    h.get_by_label("OK").click();
+    h.run_steps(2);
+    let run = date_run(&h).unwrap();
+    assert!(matches!(run.kind, RunKind::Field { ref field } if field == "datetime7"), "{run:?}");
 }
 
 #[test]
