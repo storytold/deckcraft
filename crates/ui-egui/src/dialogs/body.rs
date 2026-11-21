@@ -1401,9 +1401,44 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         // unnamed input in egui 0.37's accessibility tree.
         let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);
     });
+    embedding_options(app, ui, d);
     let (ok, cancel) = buttons(ui, "Done");
     if cancel {
         restore_preferences(app, d);
     }
+    if ok {
+        apply_embedding_options(app, d);
+    }
     ok || cancel
+}
+
+/// Save ▸ Embed fonts in the file, for the active presentation. Unlike the app settings above it
+/// changes the presentation, so the choice waits in the dialog and Done applies it.
+fn embedding_options(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) {
+    let Some((title, on_now, all_now)) = app.session.active().map(|x| (x.title(), x.doc.embed_fonts, x.doc.embed_all_characters)) else { return };
+    let staged = |k: &str, now: bool| d.fields.get(k).map_or(now, |v| v == "1");
+    let (mut on, mut all) = (staged("embedFonts", on_now), staged("embedAll", all_now));
+    ui.label(egui::RichText::new("Save").font(theme::bold(13.0)));
+    ui.label(format!("For “{title}”, when it is saved as a PowerPoint file:"));
+    if ui.checkbox(&mut on, "Embed fonts in the file").changed() {
+        d.fields.insert("embedFonts".into(), if on { "1" } else { "0" }.into());
+    }
+    ui.add_enabled_ui(on, |ui| {
+        ui.indent("embed_characters", |ui| {
+            let used = ui.radio_value(&mut all, false, "Only the characters used (a smaller file)").changed();
+            let every = ui.radio_value(&mut all, true, "All characters (others can edit the text)").changed();
+            if used || every {
+                d.fields.insert("embedAll".into(), if all { "1" } else { "0" }.into());
+            }
+        });
+    });
+}
+
+fn apply_embedding_options(app: &mut SlideApp, d: &Dialog) {
+    let Some((on_now, all_now)) = app.session.active().map(|x| (x.doc.embed_fonts, x.doc.embed_all_characters)) else { return };
+    let on = d.fields.get("embedFonts").map_or(on_now, |v| v == "1");
+    let all = d.fields.get("embedAll").map_or(all_now, |v| v == "1");
+    if (on, all) != (on_now, all_now) {
+        let _ = app.run("file.embedFonts", json!({"on": on, "characters": if all { "all" } else { "used" }}));
+    }
 }

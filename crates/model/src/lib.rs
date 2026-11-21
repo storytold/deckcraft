@@ -1000,6 +1000,14 @@ pub struct Presentation {
     pub next_id: u32,
     /// Embedded fonts. The face bytes live in [`Self::media`].
     pub embedded_fonts: Vec<EmbeddedFont>,
+    /// Embed the fonts the deck uses when it is saved as a PowerPoint file (File ▸ Options ▸
+    /// Save ▸ Embed fonts in the file; `embedTrueTypeFonts`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub embed_fonts: bool,
+    /// With [`Self::embed_fonts`], embed every character of each font instead of only the ones
+    /// the deck uses (`saveSubsetFonts` off).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub embed_all_characters: bool,
     /// Table styles defined in the file (`ppt/tableStyles.xml`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub table_styles: Vec<table::TableStyleDef>,
