@@ -1,7 +1,37 @@
 use super::keys::keyboard;
 use super::render::{fit, next_rect};
 use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
-use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
+use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, show_fills_screen, theme, vec2};
+
+pub(super) const PRESENTER_SIZE: [f32; 2] = [1100.0, 700.0];
+
+/// How long after Presenter View's window opens it is moved to its place.
+pub(super) const MOVE_AFTER_SECS: f64 = 0.25;
+
+/// The longest Presenter View waits for the show to fill its display ([`show_settled`]).
+pub(super) const SETTLE_SECS: f64 = 3.0;
+
+/// Whether the show fills its display, so Presenter View can open or move. On macOS, a window
+/// that is open while another window of the app enters full screen is moved to that window's
+/// display when the full-screen Space appears: Presenter View placed on another display before
+/// then ends up over the show (#2004). True with no display chosen, and after
+/// [`SETTLE_SECS`] where the system never reports it (a display with a notch, Wayland).
+pub(super) fn show_settled(ctx: &egui::Context, show: &Show, displays: &crate::displays::Displays, now: f64) -> bool {
+    let Some(d) = show.display else { return true };
+    if show.show_move.is_some() {
+        return false;
+    }
+    let root = ctx.input(|i| i.raw.viewports.get(&egui::ViewportId::ROOT).cloned());
+    let fills = root.is_some_and(|v| {
+        let ppp = v.native_pixels_per_point.filter(|p| p.is_finite() && *p > 0.0).unwrap_or(1.0);
+        let px = |v: f32| (v * ppp).round() as i32;
+        match (v.fullscreen, v.outer_rect, v.inner_rect) {
+            (Some(true), Some(outer), Some(inner)) => displays.fills(d, [px(outer.min.x), px(outer.min.y)], [px(inner.width()), px(inner.height())]),
+            _ => false,
+        }
+    });
+    fills || !(0.0..SETTLE_SECS).contains(&(now - show.settle_from))
+}
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -75,6 +105,57 @@ pub(super) fn wall_clock() -> String {
     }
 }
 
+/// Moves Presenter View's window to `show.presenter_place` once the show fills its display
+/// ([`show_settled`]; one frame to move it, the next to size it at the new display's scale), else
+/// notes where it is (`show.presenter_at`). Runs in its viewport.
+fn place_presenter(ctx: &egui::Context, show: &mut Show, displays: &crate::displays::Displays, now: f64) {
+    let ppp = ctx.pixels_per_point();
+    let points = |px: i32| px as f32 / ppp;
+    match show.presenter_place {
+        Some((_, false)) if !show_settled(ctx, show, displays, now) || show.presenter_open.is_some_and(|t| now - t < MOVE_AFTER_SECS) => {
+            ctx.request_repaint();
+        }
+        Some((r, false)) => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(points(r[0]), points(r[1]))));
+            show.presenter_place = Some((r, true));
+            ctx.request_repaint();
+        }
+        Some((r, true)) => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(points(r[2]), points(r[3]))));
+            show.presenter_place = None;
+            show.presenter_at = Some(r);
+        }
+        None => {
+            let at = ctx.input(|i| {
+                let v = i.viewport();
+                // A minimized window sits far off screen.
+                if v.minimized == Some(true) || v.fullscreen == Some(true) {
+                    return None;
+                }
+                let (outer, inner) = (v.outer_rect?, v.inner_rect?);
+                let px = |v: f32| (v * ppp).round() as i32;
+                Some([px(outer.min.x), px(outer.min.y), px(inner.width()), px(inner.height())])
+            });
+            if at.is_some() {
+                show.presenter_at = at;
+            }
+        }
+    }
+}
+
+/// Presenter View's window level: on top of a show that fills the screen it shares, else an
+/// ordinary window. On a display of its own (`apart`) it would otherwise cover other apps' windows
+/// there (#2004).
+pub(super) fn presenter_level(reading: bool, show_type: &str, apart: bool) -> egui::WindowLevel {
+    if show_fills_screen(reading, show_type) && !apart { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal }
+}
+
+/// Whether Presenter View is, or is being placed, on a display other than the show's.
+pub(super) fn presenter_apart(show: &Show, displays: &crate::displays::Displays) -> bool {
+    let at = show.presenter_place.map(|(r, _)| r).or(show.presenter_at);
+    displays.list.len() > 1 && show.display.zip(at).is_some_and(|(d, r)| !displays.on(d, r))
+}
+
 /// The Presenter View's preview of slide `n`, `size` pixels.
 fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) -> egui::ColorImage {
     let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
@@ -82,7 +163,14 @@ fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) 
 }
 
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
-pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, keep: &mut bool) {
+pub(super) fn presenter_window(
+    ctx: &egui::Context,
+    show: &mut Show,
+    doc: &std::sync::Arc<Presentation>,
+    displays: &crate::displays::Displays,
+    now: f64,
+    keep: &mut bool,
+) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
     let cur_tex = show.tex.as_ref().map(|(_, t)| t.clone());
@@ -148,11 +236,20 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     };
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
+        // On top of a full-screen show, which would otherwise hide it when they share a display. On
+        // another display, and beside a show browsed in a window, it is an ordinary window.
+        // On Wayland, set_outer_position and set_window_level are unsupported: the
+        // compositor chooses Presenter View's display and stacking order instead.
+        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size(PRESENTER_SIZE).with_window_level(presenter_level(
+            show.reading,
+            &doc.show.show_type,
+            presenter_apart(show, displays),
+        )),
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;
             }
+            place_presenter(ui.ctx(), show, displays, now);
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
             let elapsed = show.timer.elapsed(now);
             let paused = show.timer.paused();
@@ -197,6 +294,19 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     }
                     if button(ui, show.zoom_label()).clicked() {
                         show.zoom_key();
+                    }
+                    // Swap Displays (PowerPoint's Display Settings), with more than one display.
+                    if show_fills_screen(show.reading, &doc.show.show_type)
+                        && let Some(d) = show.display
+                        && button(ui, "Swap Displays").clicked()
+                        && let Some((to, r)) = show.presenter_at.and_then(|at| displays.swap(d, at))
+                    {
+                        // The show window leaves full screen before it moves ([`crate::displays::ShowMove`]).
+                        show.show_move = Some(crate::displays::ShowMove::new(to));
+                        show.settle_from = now;
+                        ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
+                        show.display = Some(to);
+                        show.presenter_place = Some((r, false));
                     }
                 });
                 ui.add_space(8.0);

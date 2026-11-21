@@ -69,8 +69,11 @@ pub struct Services {
     pub clipboard_html: Option<Box<dyn FnMut() -> Option<String>>>,
     /// Put HTML and its plain-text alternative on the system clipboard. `true` when it landed.
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
+    /// The displays, read by [`crate::SlideApp::refresh_displays`] when Set Up Slide Show opens and
+    /// when a show starts (desktop). `None` from it, or no reader, keeps the last list.
+    pub displays: Option<Box<dyn FnMut() -> Option<crate::displays::Displays>>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
     /// How many displays are connected, when the host can tell: Presenter View needs a second.
-    pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
+    pub display_count: Option<Box<dyn FnMut() -> Option<usize>>>,
 }

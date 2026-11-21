@@ -76,6 +76,15 @@ pub struct UiState {
     pub sorter_zoom: f32,
     pub recent: Vec<String>,
     pub presenter_view: bool,
+    /// Where Presenter View's window was left: outer position and inner size in physical pixels.
+    pub presenter_window: Option<[i32; 4]>,
+    /// The slide show display selected in Set Up Slide Show (also updated by Swap Displays): its
+    /// index in the display list then, and the display itself (`show_display_id`), which finds it
+    /// again after displays are re-plugged or reordered ([`crate::displays::Displays::find`]).
+    /// Files saved before `show_display_id` existed have the index only, which is still used.
+    pub show_display: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_display_id: Option<crate::displays::Display>,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows never hide a still pointer,
     /// for decks with clickable choices (#1445).
     pub show_keep_cursor: bool,
@@ -118,6 +127,9 @@ impl Default for UiState {
             sorter_zoom: 1.0,
             recent: vec![],
             presenter_view: true,
+            presenter_window: None,
+            show_display: None,
+            show_display_id: None,
             show_keep_cursor: false,
             ui_scale: 1.0,
             format_tab: "fill".into(),
@@ -135,6 +147,12 @@ impl Default for UiState {
 pub const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.1..=4.0;
 
 impl UiState {
+    /// Save display `display` of `displays` (`None`: Automatic) as the slide show display.
+    pub(crate) fn set_show_display(&mut self, display: Option<usize>, displays: &crate::displays::Displays) {
+        self.show_display = display;
+        self.show_display_id = display.and_then(|i| displays.list.get(i).cloned());
+    }
+
     /// The state with every value usable: `ui.json` is a file on disk, and a damaged or
     /// hand-edited one must not stop the window from opening. A zoom of 10,000 % asked the
     /// renderer for a texture larger than memory at start-up; panel sizes, scales and names are
@@ -156,6 +174,9 @@ impl UiState {
             self.format_tab = d.format_tab;
         }
         self.pane = self.pane.filter(short);
+        self.presenter_window = self.presenter_window.filter(|r| (200..=20_000).contains(&r[2]) && (150..=20_000).contains(&r[3]));
+        self.show_display = self.show_display.filter(|&d| d < 16);
+        self.show_display_id = self.show_display_id.filter(|d| d.w > 0 && d.h > 0 && d.name.as_ref().is_none_or(|n| n.len() <= 256));
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);

@@ -34,8 +34,8 @@ because it mostly follows from hardware use.
 
 | Feature | PowerPoint | DeckCraft |
 |---|---|---|
-| Detect the projector, show on it, presenter view on the laptop | yes | **no**: the show goes full screen on the current display; presenter view opens as a normal window (egui viewport). On Linux and the BSDs, when winit lists exactly one display, the show opens without Presenter View, as in PowerPoint; if it lists none, the setting is kept (#1156) |
-| Swap displays, choose the monitor in Set Up Show | yes | no |
+| Detect the projector, show on it, presenter view on the laptop | yes | partly: no projector detection; Automatic shows on a display other than the editor's (#2004). A display chosen in Set Up Slide Show is used for full-screen shows (a disconnected one falls back to the primary display), Presenter View restores its saved placement or uses another display, and the editor window returns to its place after the show. On Wayland, the compositor controls placement. On Linux and the BSDs, when winit lists exactly one display, the show opens without Presenter View, as in PowerPoint; if it lists none, the setting is kept (#1156) |
+| Swap displays, choose the monitor in Set Up Show | yes | yes: Set Up Slide Show ▸ Slide show monitor (saved per machine in `ui.json`); Swap Displays moves the show and Presenter View and saves the choice |
 | Mirroring-aware behaviour | yes | no |
 
 ## Input devices
@@ -61,7 +61,7 @@ alignment runs once per transition (#67), and the decoders run in software.
 
 | Work | Hours |
 |---|---|
-| Presenter view on the right display, choose monitor, swap | 3–5 |
+| Projector detection for Automatic; display placement checked on real projectors | 3–5 |
 | GPU slide rasterization (vello's GPU/hybrid path) | 12–20 |
 | Hardware video decode (copy FilmCraft's VideoToolbox / Media Foundation / VA-API paths) | 8–14 |
 | Windows GPU startup robustness: backend probing, software fallback (#40, #59) | 4–8 (counted under Stability) |
@@ -73,6 +73,7 @@ alignment runs once per transition (#67), and the decoders run in software.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | trivial | Slide show monitor choice in Set Up Slide Show, Swap Displays and Presenter View placement (#1225); projector detection stays open; estimates unchanged |
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display: the presenter window covered the show and stalled it. If winit lists none, the setting is kept (#1156) |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
