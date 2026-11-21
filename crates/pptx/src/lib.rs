@@ -1022,3 +1022,72 @@ mod shape_owner_scoping_tests {
         assert!(patched.contains(r#"fmla="val 3000000000""#), "child id=11 should be patched: {patched}");
     }
 }
+
+#[cfg(test)]
+mod group_fill_roundtrip_tests {
+    use std::io::Read;
+
+    use deckcraft_model::style::{Fill, PictureFill, PictureMode};
+    use deckcraft_model::{Shape, ShapeId, ShapeKind, Xfrm, defaults};
+    use std::sync::Arc;
+
+    #[test]
+    fn group_picture_fill_survives_a_pptx_round_trip() {
+        // Regression coverage for #1798: the group's own picture fill (a:blipFill in its p:grpSpPr)
+        // and its members' grpFill markers (a:grpFill in each member's p:spPr) must survive a
+        // save/reload unchanged. The media bytes are opaque to the round trip; the PNG signature
+        // is enough for the content type.
+        let mut p = defaults::new_presentation(None);
+        let png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let media = p.add_media("t.png", "image/png", png.clone()).expect("media");
+        let member =
+            |id: u32, x: f64| Shape { id: ShapeId(id), xfrm: Some(Xfrm::new(x, 0.0, 120.0, 60.0)), fill: Some(Fill::Group), ..Default::default() };
+        let group = Shape {
+            id: ShapeId(21),
+            xfrm: Some(Xfrm::new(100.0, 100.0, 240.0, 60.0)),
+            fill: Some(Fill::Picture(PictureFill { media, mode: PictureMode::Stretch { fill_rect: [0.0; 4] }, ..Default::default() })),
+            kind: ShapeKind::Group { children: vec![member(22, 0.0), member(23, 120.0)], child: Xfrm::new(0.0, 0.0, 240.0, 60.0) },
+            ..Default::default()
+        };
+        Arc::make_mut(&mut p.slides[0]).shapes.push(group);
+        let bytes = crate::export(&p).expect("export");
+        // The markers themselves must be in the exported slide XML, not only in the
+        // reimported model: an exporter writing a:noFill for the members could still
+        // pass the round trip below if the importer reconstructed Fill::Group for them.
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).expect("exported package");
+        let mut xml = String::new();
+        z.by_name("ppt/slides/slide1.xml").expect("slide part").read_to_string(&mut xml).expect("slide xml");
+        // Inspect the markers through the parsed XML tree, scoped to the group's
+        // direct children: string splitting on exact tag spellings would miss a
+        // member whose p:sp tag gained an attribute, and a slice running to the
+        // end of the slide would count a later sibling shape as a member. The
+        // slide's own root grpSpPr and its layout placeholders are not inside
+        // the group element, so they cannot be mistaken for its fills.
+        let doc = crate::parse_xml(xml.as_bytes()).expect("the slide XML parses");
+        let sp_tree = doc.root.find("spTree").expect("the slide has a spTree");
+        let grp = sp_tree.children_named("grpSp").next().expect("the group is written as a grpSp child of the spTree");
+        let grp_sp_pr = grp.child("grpSpPr").expect("the group's grpSpPr");
+        assert!(grp_sp_pr.child("blipFill").is_some(), "the group's picture fill is a:blipFill in its grpSpPr: {}", grp_sp_pr.to_xml());
+        assert!(grp_sp_pr.child("grpFill").is_none(), "the group's grpSpPr carries no a:grpFill: {}", grp_sp_pr.to_xml());
+        let members: Vec<_> = grp.children_named("sp").collect();
+        assert_eq!(members.len(), 2, "both members are direct p:sp children of the group: {xml}");
+        for m in &members {
+            let sp_pr = m.child("spPr").expect("a member's spPr");
+            assert!(sp_pr.child("grpFill").is_some(), "each member's spPr carries a:grpFill: {}", sp_pr.to_xml());
+        }
+        let rt = crate::import(&bytes).expect("import");
+        let g = rt.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Group { .. })).expect("the group survives");
+        let Some(Fill::Picture(pic)) = &g.fill else { panic!("the group keeps its picture fill, got {:?}", g.fill) };
+        assert!(matches!(pic.mode, PictureMode::Stretch { .. }), "the fill stays a stretch, not a tile");
+        let item = rt.media.iter().find(|m| m.id == pic.media).expect("the media the fill names");
+        assert_eq!(*item.data, png, "the media bytes survive the round trip");
+        if let ShapeKind::Group { children, .. } = &g.kind {
+            assert_eq!(children.len(), 2, "both members survive");
+            assert!(
+                children.iter().all(|c| c.fill == Some(Fill::Group)),
+                "the members keep grpFill: {:?}",
+                children.iter().map(|c| &c.fill).collect::<Vec<_>>()
+            );
+        }
+    }
+}
