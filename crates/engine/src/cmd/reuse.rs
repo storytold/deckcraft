@@ -1,8 +1,9 @@
 //! Home ▸ New Slide ▸ Reuse Slides: insert slides from another presentation.
 //!
-//! The slides take the destination's look by default (each one moves to the destination layout
-//! with the same name, else the same kind); with `keepFormatting` the source master and its
-//! layouts come along. Pictures, media and sounds are copied under fresh ids, and shape ids are
+//! The slides take the destination's look by default: each one goes on the destination layout that
+//! has the same placeholders (type, idx and orientation; the one of the same name when several do),
+//! else a copy of its own layout joins the destination's master, as PowerPoint does (named `1_L2` when `L2` is taken); with `keepFormatting` the source
+//! master and its layouts come along. Pictures, media and sounds are copied under fresh ids, and shape ids are
 //! renumbered with animations, triggers and connector ends following them. Links to another
 //! reused slide follow its copy.
 
@@ -11,7 +12,7 @@ use std::sync::Arc;
 
 use deckcraft_model::table::TableStyleDef;
 use deckcraft_model::text::{Action, Hyperlink, ListStyle, RunProps, Spacing, TextBody};
-use deckcraft_model::{LayoutId, Master, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
+use deckcraft_model::{Layout, LayoutId, Master, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, has_doc, usize_param};
@@ -280,6 +281,62 @@ fn renumber(cmd: &str, doc: &mut Presentation, shapes: &mut [deckcraft_model::Sh
     Ok(map)
 }
 
+/// What PowerPoint compares when a slide comes into another presentation: the type, idx and
+/// orientation of each placeholder of its layout, not where its placeholders sit. (The built-in
+/// vertical text layouts have the type and idx of "Section Header" and are kept apart by the
+/// orientation: all eleven built-in layouts went to the layout of their own name.)
+fn placeholder_signature(l: &Layout) -> Vec<String> {
+    let mut v: Vec<String> = l.shapes.iter().filter_map(|s| s.ph.as_ref()).map(|p| format!("{:?}/{}/{}", p.kind, p.idx, p.vertical)).collect();
+    v.sort();
+    v
+}
+
+/// The layout of `m` with the same placeholders as `like`, if it has one: the one of the same name
+/// when there are several, else the first (observed in PowerPoint with two such layouts in either
+/// order).
+pub(crate) fn find_layout(m: &Master, like: &Layout) -> Option<LayoutId> {
+    let want = placeholder_signature(like);
+    let same = || m.layouts.iter().filter(|l| placeholder_signature(l) == want);
+    same().find(|l| l.name.eq_ignore_ascii_case(&like.name)).or_else(|| same().next()).map(|l| l.id)
+}
+
+/// `name` if `m` has no layout of that name, else `1_name`, `2_name`…
+fn free_layout_name(m: &Master, name: &str) -> String {
+    let taken = |n: &str| m.layouts.iter().any(|l| l.name.eq_ignore_ascii_case(n));
+    if !taken(name) {
+        return name.to_string();
+    }
+    (1u32..).map(|k| format!("{k}_{name}")).find(|n| !taken(n)).unwrap_or_else(|| name.to_string())
+}
+
+/// The index of the master the slide before `at` is on (the first when there is none).
+pub(crate) fn master_before(doc: &Presentation, at: usize) -> usize {
+    at.checked_sub(1).and_then(|i| doc.slides.get(i)).and_then(|s| doc.masters.iter().position(|m| m.layout(s.layout).is_some())).unwrap_or(0)
+}
+
+/// A copy of `l` joins master `mi` of `doc` under a free name, with fresh ids, its shapes scaled by
+/// `scale` and its media ids through `remap_media`. The caller has brought the media in.
+pub(crate) fn import_layout(
+    cmd: &str,
+    doc: &mut Presentation,
+    mi: usize,
+    l: &Layout,
+    scale: (f64, f64),
+    mut remap_media: impl FnMut(&mut MediaId),
+) -> Result<LayoutId> {
+    let mut copy = l.clone();
+    copy.id = LayoutId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+    media_refs::visit_mut::layout(&mut copy, &mut remap_media);
+    renumber(cmd, doc, &mut copy.shapes)?;
+    scale_shapes(&mut copy.shapes, scale.0, scale.1, 0);
+    let master = doc.masters.get_mut(mi).ok_or_else(|| bad(cmd, "there is no master to bring the layout into"))?;
+    let master = Arc::make_mut(master);
+    copy.name = free_layout_name(master, &l.name);
+    let id = copy.id;
+    master.layouts.push(copy);
+    Ok(id)
+}
+
 /// The destination layout a reused slide moves to: same name, else same kind, else the first.
 fn matching_layout(doc: &Presentation, name: &str, kind: deckcraft_model::LayoutType) -> LayoutId {
     let all = || doc.masters.iter().flat_map(|m| m.layouts.iter());
@@ -433,6 +490,8 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
                 doc.masters.push(Arc::new(m));
             }
         }
+        // Source layout → the destination layout its slides take (found or brought along).
+        let mut brought: HashMap<LayoutId, LayoutId> = HashMap::new();
         let mut copies: Vec<Slide> = vec![];
         // Source slide → its copy, so links between reused slides follow (forward ones too).
         let mut slide_map: HashMap<SlideId, SlideId> = HashMap::new();
@@ -451,11 +510,24 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
             }
             sl.layout = match layout_map.get(&sl.layout) {
                 Some(l) => *l,
-                None => {
-                    let (lname, kind) =
-                        src.layout(from.layout).map(|(_, l)| (l.name.clone(), l.kind)).unwrap_or_else(|| (String::new(), Default::default()));
-                    matching_layout(doc, &lname, kind)
-                }
+                None => match (brought.get(&from.layout), src.layout(from.layout)) {
+                    (Some(l), _) => *l,
+                    (None, Some((_, src_layout))) => {
+                        let mi = master_before(doc, at);
+                        let id = match doc.masters.get(mi).and_then(|m| find_layout(m, src_layout)) {
+                            Some(id) => id,
+                            None => {
+                                let mut used = vec![];
+                                media_refs::visit::layout(src_layout, &mut |id: &MediaId| used.push(*id));
+                                copy_media("slide.reuse", doc, &src, &used, &mut media_map)?;
+                                import_layout("slide.reuse", doc, mi, src_layout, (sx, sy), remap(&media_map))?
+                            }
+                        };
+                        brought.insert(from.layout, id);
+                        id
+                    }
+                    (None, None) => matching_layout(doc, "", Default::default()),
+                },
             };
             slide_map.insert(from.id, sl.id);
             copies.push(sl);
@@ -892,5 +964,272 @@ mod tests {
         let titles: Vec<String> = s.doc().expect("doc").doc.slides.iter().map(|x| x.title()).collect();
         assert!(titles.iter().any(|t| t == "Alpha") && titles.iter().any(|t| t == "Gamma"));
         assert!(!titles.iter().any(|t| t == "Beta"), "a slide that was not picked stays out");
+    }
+
+    // ---- which layout a slide brought into another deck is on (observed in PowerPoint) ----
+
+    fn frame(x: f64) -> Xfrm {
+        Xfrm::new(x, 150.0, 405.0, 320.0)
+    }
+
+    /// A layout with a title and one content placeholder per `(idx, frame)`, added to the first master.
+    fn add_layout(p: &mut Presentation, name: &str, contents: &[(u32, Xfrm)]) -> LayoutId {
+        use deckcraft_model::{PhType, Placeholder};
+        let id = LayoutId(p.alloc_id().expect("layout id"));
+        let mut shapes = vec![Shape {
+            id: ShapeId(p.alloc_id().expect("title id")),
+            ph: Some(Placeholder { kind: PhType::Title, idx: 0, ..Default::default() }),
+            ..Default::default()
+        }];
+        for (idx, xfrm) in contents {
+            let ph = Some(Placeholder { kind: PhType::Obj, idx: *idx, ..Default::default() });
+            shapes.push(Shape { id: ShapeId(p.alloc_id().expect("content id")), ph, xfrm: Some(*xfrm), ..Default::default() });
+        }
+        let layout = deckcraft_model::Layout { id, name: name.into(), shapes, show_master_shapes: true, ..Default::default() };
+        if let Some(m) = p.masters.first_mut() {
+            Arc::make_mut(m).layouts.push(layout);
+        }
+        id
+    }
+
+    /// A one-slide deck whose slide ("A", "B", "C") is on a layout "L2" with two contents, idx 10 and 11.
+    fn source_with_l2() -> Presentation {
+        use deckcraft_model::{PhType, Placeholder};
+        let mut p = defaults::new_presentation(None);
+        let l2 = add_layout(&mut p, "L2", &[(10, frame(60.0)), (11, frame(495.0))]);
+        let ph = |idx, kind| Some(Placeholder { kind, idx, ..Default::default() });
+        let mut shapes = vec![];
+        for (text, idx, kind) in [("A", 0, PhType::Title), ("B", 10, PhType::Obj), ("C", 11, PhType::Obj)] {
+            let id = ShapeId(p.alloc_id().expect("shape id"));
+            shapes.push(Shape { id, ph: ph(idx, kind), text: Some(TextBody::from_text(text)), ..Default::default() });
+        }
+        if let Some(slide) = p.slides.first_mut().map(Arc::make_mut) {
+            slide.layout = l2;
+            slide.shapes = shapes;
+        }
+        p
+    }
+
+    fn reuse_into(dest: &mut Session, src: &Presentation) {
+        let bytes = deckcraft_format::save(src).expect("save source");
+        dest.execute("slide.reuse", &json!({"data": super::super::base64_encode(&bytes), "name": "source.deckcraft", "slides": [0]})).expect("reuse");
+    }
+
+    fn layout_names(p: &Presentation) -> Vec<String> {
+        p.masters.iter().flat_map(|m| m.layouts.iter().map(|l| l.name.clone())).collect()
+    }
+
+    fn layout_name_of(p: &Presentation, slide: usize) -> String {
+        p.slides.get(slide).and_then(|s| p.layout(s.layout)).map(|(_, l)| l.name.clone()).expect("the slide's layout")
+    }
+
+    /// Where the slide's placeholder with this text is drawn, if a layout placeholder gives it its frame.
+    fn frame_of(p: &Presentation, slide: usize, text: &str) -> Option<Xfrm> {
+        use deckcraft_model::resolve::{Ctx, parents, xfrm};
+        let slide = p.slides.get(slide)?;
+        let ctx = Ctx::for_slide(p, slide)?;
+        let shape = slide.shapes.iter().find(|s| s.text.as_ref().is_some_and(|t| t.text() == text))?;
+        parents(&ctx, shape).0.map(|_| xfrm(&ctx, shape))
+    }
+
+    #[test]
+    fn a_reused_slide_takes_the_destination_layout_with_the_same_placeholders_whatever_its_name_or_frames() {
+        let src = source_with_l2();
+        // Same name and placeholders, other frames: the destination's layout, with its frames.
+        let mut same_name = Session::with_new();
+        same_name
+            .edit(|doc, _| {
+                add_layout(doc, "L2", &[(10, frame(70.0)), (11, frame(505.0))]);
+                Ok(())
+            })
+            .expect("seed");
+        let before = layout_names(&same_name.doc().expect("doc").doc);
+        reuse_into(&mut same_name, &src);
+        let doc = &same_name.doc().expect("doc").doc;
+        assert_eq!(layout_names(doc), before, "no layout was brought along");
+        assert_eq!(layout_name_of(doc, 1), "L2");
+        assert_eq!(frame_of(doc, 1, "C").map(|x| x.x), Some(505.0));
+        // Another name with the same placeholders: that layout.
+        let mut other_name = Session::with_new();
+        other_name
+            .edit(|doc, _| {
+                add_layout(doc, "L7", &[(10, frame(60.0)), (11, frame(495.0))]);
+                Ok(())
+            })
+            .expect("seed");
+        reuse_into(&mut other_name, &src);
+        let doc = &other_name.doc().expect("doc").doc;
+        assert_eq!(layout_name_of(doc, 1), "L7");
+    }
+
+    #[test]
+    fn a_reused_slide_brings_its_layout_along_when_no_destination_layout_has_its_placeholders() {
+        let src = source_with_l2();
+        // The destination's L2 has one content: the source's L2 joins as 1_L2 and C stays paired.
+        let mut one_content = Session::with_new();
+        one_content
+            .edit(|doc, _| {
+                add_layout(doc, "L2", &[(10, frame(60.0))]);
+                Ok(())
+            })
+            .expect("seed");
+        let before = layout_names(&one_content.doc().expect("doc").doc).len();
+        reuse_into(&mut one_content, &src);
+        let doc = &one_content.doc().expect("doc").doc;
+        assert_eq!(layout_names(doc).len(), before + 1);
+        assert_eq!(layout_name_of(doc, 1), "1_L2");
+        assert_eq!(frame_of(doc, 1, "C").map(|x| x.x), Some(495.0), "C takes its frame from the layout that came along");
+        assert_eq!(frame_of(doc, 1, "B").map(|x| x.x), Some(60.0));
+        // No L2 at all (and no built-in layout has idx 10 and 11): it joins under its own name.
+        let mut none = Session::with_new();
+        reuse_into(&mut none, &src);
+        let doc = &none.doc().expect("doc").doc;
+        assert_eq!(layout_name_of(doc, 1), "L2");
+        assert_eq!(frame_of(doc, 1, "C").map(|x| x.x), Some(495.0));
+        // A second reuse finds the layout that came along instead of adding another.
+        let count = layout_names(doc).len();
+        reuse_into(&mut none, &src);
+        assert_eq!(layout_names(&none.doc().expect("doc").doc).len(), count);
+    }
+
+    #[test]
+    fn a_pasted_slide_takes_or_brings_its_layout_like_a_reused_one() {
+        let src = source_with_l2();
+        let mut a = Session::with_new();
+        a.edit(|doc, _| {
+            *doc = src.clone();
+            Ok(())
+        })
+        .expect("source deck");
+        a.execute("edit.copy", &json!({"scope": "slides"})).expect("copy");
+        // A destination whose L2 has one content: the layout joins as 1_L2 and C keeps its frame.
+        let mut b = Session::with_new();
+        b.edit(|doc, _| {
+            add_layout(doc, "L2", &[(10, frame(60.0))]);
+            Ok(())
+        })
+        .expect("seed");
+        b.clipboard = a.clipboard.clone();
+        b.execute("edit.paste", &json!({"scope": "slides"})).expect("paste");
+        let doc = &b.doc().expect("doc").doc;
+        assert_eq!(layout_name_of(doc, 1), "1_L2");
+        assert_eq!(frame_of(doc, 1, "C").map(|x| x.x), Some(495.0));
+        // A destination with the same placeholders under another name: that layout, nothing added.
+        let mut c = Session::with_new();
+        c.edit(|doc, _| {
+            add_layout(doc, "L7", &[(10, frame(60.0)), (11, frame(495.0))]);
+            Ok(())
+        })
+        .expect("seed");
+        let before = layout_names(&c.doc().expect("doc").doc).len();
+        c.clipboard = a.clipboard.clone();
+        c.execute("edit.paste", &json!({"scope": "slides"})).expect("paste");
+        let doc = &c.doc().expect("doc").doc;
+        assert_eq!((layout_name_of(doc, 1), layout_names(doc).len()), ("L7".to_string(), before));
+        // Pasting in the deck it was copied from keeps the slide on its own layout.
+        a.execute("edit.paste", &json!({"scope": "slides"})).expect("paste in the source");
+        let doc = &a.doc().expect("doc").doc;
+        assert_eq!(doc.slides.len(), 2);
+        assert_eq!(doc.slides[0].layout, doc.slides[1].layout);
+    }
+
+    #[test]
+    fn every_built_in_layout_goes_to_the_layout_of_its_own_name_vertical_text_ones_included() {
+        // Observed in PowerPoint: a slide on each of the eleven built-in layouts, inserted or pasted into
+        // a new presentation, went to the layout of the same name and nothing was added.
+        let mut src = defaults::new_presentation(None);
+        let layouts: Vec<(LayoutId, String)> = src.masters.iter().flat_map(|m| m.layouts.iter().map(|l| (l.id, l.name.clone()))).collect();
+        assert!(layouts.iter().any(|(_, n)| n.contains("Vertical")), "the built-in vertical layouts exist: {layouts:?}");
+        for (k, (id, _)) in layouts.iter().enumerate() {
+            let slide = if k == 0 {
+                src.slides.first().cloned()
+            } else {
+                src.slides
+                    .first()
+                    .cloned()
+                    .map(|s| Arc::new(deckcraft_model::Slide { id: SlideId(src.alloc_id().expect("slide id")), ..(*s).clone() }))
+            };
+            if let Some(mut slide) = slide {
+                Arc::make_mut(&mut slide).layout = *id;
+                if k == 0 {
+                    src.slides[0] = slide;
+                } else {
+                    src.slides.push(slide);
+                }
+            }
+        }
+        let mut dest = Session::with_new();
+        let before = layout_names(&dest.doc().expect("doc").doc);
+        let bytes = deckcraft_format::save(&src).expect("save source");
+        let all: Vec<usize> = (0..layouts.len()).collect();
+        dest.execute("slide.reuse", &json!({"data": super::super::base64_encode(&bytes), "name": "source.deckcraft", "slides": all})).expect("reuse");
+        let doc = &dest.doc().expect("doc").doc;
+        assert_eq!(layout_names(doc), before, "no layout was brought along");
+        for (k, (_, name)) in layouts.iter().enumerate() {
+            assert_eq!(&layout_name_of(doc, k + 1), name, "the slide on {name}");
+        }
+    }
+
+    #[test]
+    fn with_several_destination_layouts_of_the_same_placeholders_the_one_of_the_same_name_then_the_first() {
+        // Observed in PowerPoint: destination layouts TB_A and TB_B alike; a slide on TB_B went to TB_B,
+        // a slide on TB_C to the first of them, whichever order they were in.
+        let place = |name: &str, order: [&str; 2]| {
+            let mut dest = Session::with_new();
+            dest.edit(|doc, _| {
+                for n in order {
+                    add_layout(doc, n, &[(10, frame(60.0)), (11, frame(495.0))]);
+                }
+                Ok(())
+            })
+            .expect("seed");
+            let mut src = defaults::new_presentation(None);
+            let l = add_layout(&mut src, name, &[(10, frame(60.0)), (11, frame(495.0))]);
+            if let Some(slide) = src.slides.first_mut().map(Arc::make_mut) {
+                slide.layout = l;
+            }
+            reuse_into(&mut dest, &src);
+            layout_name_of(&dest.doc().expect("doc").doc, 1)
+        };
+        assert_eq!(place("TB_B", ["TB_A", "TB_B"]), "TB_B");
+        assert_eq!(place("TB_C", ["TB_A", "TB_B"]), "TB_A");
+        assert_eq!(place("TB_C", ["TB_B", "TB_A"]), "TB_B");
+    }
+
+    #[test]
+    fn a_pasted_slide_brings_the_media_of_its_layout_only_when_the_layout_comes_along() {
+        use deckcraft_model::style::{Fill, PictureFill};
+        let mut src = source_with_l2();
+        let media = src.add_media("pic.png", "image/png", vec![1, 2, 3, 4]).expect("media id");
+        if let Some(m) = src.masters.first_mut().map(Arc::make_mut)
+            && let Some(l) = m.layouts.iter_mut().find(|l| l.name == "L2")
+            && let Some(sh) = l.shapes.first_mut()
+        {
+            sh.fill = Some(Fill::Picture(PictureFill { media, ..Default::default() }));
+        }
+        let mut a = Session::with_new();
+        a.edit(|doc, _| {
+            *doc = src.clone();
+            Ok(())
+        })
+        .expect("source deck");
+        a.execute("edit.copy", &json!({"scope": "slides"})).expect("copy");
+        // A destination that has the layout: the picture of the layout is not brought.
+        let mut has = Session::with_new();
+        has.edit(|doc, _| {
+            add_layout(doc, "L2", &[(10, frame(60.0)), (11, frame(495.0))]);
+            Ok(())
+        })
+        .expect("seed");
+        let before = has.doc().expect("doc").doc.media.len();
+        has.clipboard = a.clipboard.clone();
+        has.execute("edit.paste", &json!({"scope": "slides"})).expect("paste");
+        assert_eq!(has.doc().expect("doc").doc.media.len(), before, "no picture was added");
+        // A destination without it: the layout and its picture come along.
+        let mut lacks = Session::with_new();
+        let before = lacks.doc().expect("doc").doc.media.len();
+        lacks.clipboard = a.clipboard.clone();
+        lacks.execute("edit.paste", &json!({"scope": "slides"})).expect("paste");
+        assert_eq!(lacks.doc().expect("doc").doc.media.len(), before + 1);
     }
 }
