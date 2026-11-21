@@ -80,7 +80,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-21 | minor | Presenter notes run below the previews; A-/A+ use the presenter toolbar style. Split from the display-placement work in #1225. |
+| 2026-11-21 | minor | Presenter notes run below the previews; A-/A+ use the presenter toolbar style. Short windows reserve notes height; constrained embedded hosts prioritize scrollable notes and bracket-key sizing. Native minimum: 480×280. Split from the display-placement work in #1225. |
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display; if it lists none, the setting is kept (#1156) |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |

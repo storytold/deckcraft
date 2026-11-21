@@ -72,3 +72,26 @@ fn presenter_view_keeps_a_portrait_next_slide_in_its_column() {
     let px = img.get_pixel(600, 650).0;
     assert!(px[0] > 240 && px[1] > 240 && px[2] > 240, "the notes area is white: {px:?}");
 }
+
+/// Resizing the presenter used to spend the available height on previews and their header,
+/// leaving less than the notes padding and an inverted scroll viewport.
+#[test]
+fn presenter_notes_still_have_a_readable_viewport_in_a_short_window() {
+    let _gpu = crate::gpu_lock::gpu_lock();
+    for height in [220.0, 280.0] {
+        let mut h = harness(tall_deck(), egui::vec2(800.0, height));
+        h.run_steps(3);
+        h.state_mut().run("show.presenter", json!({"on": true})).unwrap();
+        h.state_mut().run("show.start", json!({"from": 0})).unwrap();
+        h.run_steps(4);
+        let img = h.render().unwrap();
+        let (mut run, mut longest) = (0, 0);
+        for y in 0..img.height() {
+            let p = img.get_pixel(400, y).0;
+            run = if p[0] > 240 && p[1] > 240 && p[2] > 240 { run + 1 } else { 0 };
+            longest = longest.max(run);
+        }
+        // A line of text and its padding must fit, rather than only a thin white strip.
+        assert!(longest >= 48, "notes have no usable scroll viewport at height {height}: {longest}px");
+    }
+}
