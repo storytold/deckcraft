@@ -1,5 +1,5 @@
 //! Media probing: container, duration, audio and video stream parameters — without decoding
-//! (except for audio files whose container doesn't state a length).
+//! (audio files whose container doesn't state a length are demuxed, not decoded).
 
 use crate::video::{codec_name, mkv_codec_name};
 use crate::{ASF_HEADER, Bytes, Container, MediaError, Result};
@@ -50,9 +50,10 @@ fn ms(secs: f64) -> u64 {
 pub fn probe(bytes: &Bytes) -> Result<MediaInfo> {
     let mut info = probe_headers(bytes)?;
     if info.duration_ms == 0 && info.audio.as_ref().is_some_and(|a| a.decodable) && info.video.is_none() {
-        // No length in the header (raw MP3 / ADTS without an index): decode to measure.
-        if let Ok(pcm) = crate::audio::decode(bytes) {
-            info.duration_ms = ms(pcm.duration());
+        // No length in the header (raw MP3 / ADTS without an index): add up the packet
+        // lengths. This only demuxes, so a long file neither allocates its PCM nor stalls the caller.
+        if let Some(d) = crate::audio::demux_duration_ms(bytes, Container::sniff(bytes).name()) {
+            info.duration_ms = d;
         }
     }
     Ok(info)
