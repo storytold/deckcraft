@@ -218,9 +218,10 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     }
                     return;
                 }
-                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
-                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
-                let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
+                let top = avail.min.y + avail.height() * 0.62;
+                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, top));
+                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), pos2(avail.max.x, top));
+                let cr = fit(left, doc);
                 let cr = Rect::from_min_size(left.min, cr.size());
                 if let Some(t) = &cur_tex {
                     ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -258,21 +259,24 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                         }
                     }
                 }
-                let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
+                let notes_head = Rect::from_min_size(pos2(avail.min.x, cr.max.y.max(nr.max.y) + 12.0), vec2(avail.width(), 32.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
                     ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
-                    if ui.button("A-").clicked() {
+                    if button(ui, "A-").clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }
                     ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
-                    if ui.button("A+").clicked() {
+                    if button(ui, "A+").clicked() {
                         show.nudge_notes(NOTES_STEP);
                     }
                 });
-                let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
+                // Black on white, like a printed page, for reading at a glance.
+                let notes_rect = Rect::from_min_max(pos2(avail.min.x, notes_head.max.y + 4.0), avail.max);
+                ui.painter().rect_filled(notes_rect, CornerRadius::same(4), Color32::WHITE);
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect.shrink(12.0)));
                 egui::ScrollArea::vertical().show(&mut child, |ui| {
+                    ui.set_width(ui.available_width());
                     presenter_notes(ui, notes, show.notes_px);
                 });
             });
@@ -292,7 +296,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
 
 /// The current slide's notes in the presenter's notes pane, `px` for 12 pt text.
 pub(super) fn presenter_notes(ui: &mut Ui, notes: &deckcraft_model::text::TextBody, px: f32) -> egui::Response {
-    let color = Color32::from_gray(230);
+    let color = Color32::BLACK;
     if notes.text().is_empty() {
         ui.label(egui::RichText::new("No notes.").size(px).color(color))
     } else {
