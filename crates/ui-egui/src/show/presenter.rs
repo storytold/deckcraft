@@ -171,7 +171,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                         if button(ui, "End Show").clicked() {
                             *keep = false;
                         }
-                        if button(ui, "Next ▶").clicked() {
+                        if button(ui, "Next ▶").clicked() && !show.finish_transition(now) {
                             actions.push(show.state.next(doc));
                         }
                         if button(ui, "◀ Previous").clicked() {

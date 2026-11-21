@@ -1078,6 +1078,62 @@ fn the_next_preview_fits_its_column_whatever_the_slide_shape() {
     assert_eq!(next_rect(right, &doc).width(), 400.0);
 }
 
+/// #2084: a click or →/Space while the slide's transition plays finishes the transition and
+/// does not start the slide's first On Click animation; the next one does.
+#[test]
+fn a_click_during_a_transition_only_finishes_it() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("transition.set", &json!({"kind": "fade", "index": 1, "duration": 3000})).unwrap();
+    let id = session.active().unwrap().doc.slides[1].shapes[0].id;
+    session.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "onClick", "duration": 500})).unwrap();
+    let app = SlideApp::new(session, crate::Services::default());
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(2);
+    let state = |h: &egui_kittest::Harness<'_, SlideApp>| {
+        let show = h.state().show.as_ref().unwrap();
+        (show.state.slide, show.state.step, show.state.playing, show.trans.is_some())
+    };
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run_steps(1);
+    assert_eq!(state(&harness), (1, 0, false, true), "slide 2 comes in with its 3 s fade");
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run_steps(1);
+    assert_eq!(state(&harness), (1, 0, false, false), "→ finishes the fade, the animation waits");
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run_steps(1);
+    assert_eq!(state(&harness), (1, 0, true, false), "the next → plays the animation");
+
+    // A mouse click does the same.
+    for _ in 0..3 {
+        harness.key_press(egui::Key::ArrowLeft);
+        harness.run_steps(2);
+    }
+    assert_eq!(state(&harness).0, 0);
+    // Back played slide 2's fade reversed; let it end (a frame is 0.25 s).
+    harness.run_steps(16);
+    assert!(!state(&harness).3);
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run_steps(1);
+    assert_eq!(state(&harness), (1, 0, false, true));
+    let center = egui::pos2(500.0, 350.0);
+    harness.hover_at(center);
+    harness.run_steps(1);
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton { pos: center, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        harness.run_steps(1);
+    }
+    assert_eq!(state(&harness), (1, 0, false, false), "a click finishes the fade, the animation waits");
+}
+
 #[test]
 fn back_leaves_a_slide_whose_first_animation_is_with_previous() {
     // #844: Back on such a slide undid its first step, and the next frame played that step
