@@ -3404,3 +3404,458 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     quad.paths[0].path = path;
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }
+
+/// Original alpha-only test art, rendered over a colored slide so a rectangular wash is visible.
+fn picture_glow_deck(alpha: u8, ring: bool, as_fill: bool, crop: [f64; 4], xfrm: Xfrm) -> Presentation {
+    let png = {
+        let image = image::RgbaImage::from_fn(64, 64, |x, y| {
+            let dx = x as f64 + 0.5 - 32.0;
+            let dy = y as f64 + 0.5 - 32.0;
+            let covered = if ring { (12.0..20.0).contains(&dx.hypot(dy)) } else { x >= 32 };
+            image::Rgba([220, 30, 20, if covered { alpha } else { 0 }])
+        });
+        let mut bytes = std::io::Cursor::new(vec![]);
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        bytes.into_inner()
+    };
+    let mut p = Presentation::default();
+    let media = p.add_media("original-alpha-art.png", "image/png", png).unwrap();
+    let pf = deckcraft_model::style::PictureFill { media, crop, ..Default::default() };
+    let mut shape = Shape {
+        id: ShapeId(1597),
+        xfrm: Some(xfrm),
+        fill: Some(Fill::None),
+        line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
+        effects: Some(deckcraft_model::Effects {
+            glow: Some(deckcraft_model::style::Glow { color: ColorRef::rgb(Rgba::rgb(255, 0, 0).with_alpha(153)), radius: 10.0 }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    if as_fill {
+        shape.fill = Some(Fill::Picture(pf));
+    } else {
+        shape.kind = ShapeKind::Picture { fill: pf };
+    }
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    slide.background = Some(deckcraft_model::Background::Fill { fill: Fill::solid(ColorRef::rgb(Rgba::rgb(40, 110, 60))) });
+    slide.shapes = vec![shape];
+    p
+}
+
+fn glow_sample(image: &Image, point: Point, scale: f64) -> [u8; 4] {
+    image.pixel((point.x * scale).round() as u32, (point.y * scale).round() as u32)
+}
+
+#[test]
+fn a_picture_glow_follows_alpha_instead_of_its_rectangle() {
+    for as_fill in [false, true] {
+        for scale in [1.0, 2.0] {
+            let p = picture_glow_deck(255, true, as_fill, [0.0; 4], Xfrm::new(100.0, 100.0, 128.0, 128.0));
+            let image = render_slide(&p, 0, &RenderOpts { scale, ..Default::default() });
+            // An opt-in artifact is only for local visual review; ordinary tests create no files.
+            if !as_fill
+                && scale == 1.0
+                && let Ok(dir) = std::env::var("DECKCRAFT_GLOW_QA")
+            {
+                std::fs::create_dir_all(&dir).unwrap();
+                use std::io::Write as _;
+                let mut file =
+                    std::fs::OpenOptions::new().write(true).create_new(true).open(std::path::Path::new(&dir).join("picture-glow.png")).unwrap();
+                file.write_all(&image.to_png()).unwrap();
+            }
+            assert_eq!(glow_sample(&image, Point::new(108.0, 108.0), scale)[..3], [40, 110, 60], "clear picture bounds ({as_fill}, scale {scale})");
+            assert_eq!(glow_sample(&image, Point::new(164.0, 164.0), scale)[..3], [40, 110, 60], "clear alpha hole ({as_fill}, scale {scale})");
+            assert_eq!(glow_sample(&image, Point::new(198.0, 164.0), scale)[..3], [220, 30, 20], "opaque image pixels retain their color");
+            assert!(glow_sample(&image, Point::new(208.0, 164.0), scale)[0] > 60, "glow follows the opaque ring outside its pixels");
+        }
+    }
+}
+
+#[test]
+fn a_picture_glow_preserves_fractional_alpha() {
+    let draw = |alpha| {
+        let p = picture_glow_deck(alpha, true, false, [0.0; 4], Xfrm::new(100.0, 100.0, 128.0, 128.0));
+        render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let opaque = draw(255).pixel(208, 164)[0] as i32 - 40;
+    let half = draw(128).pixel(208, 164)[0] as i32 - 40;
+    assert!(opaque > 20, "visible halo: {opaque}");
+    assert!((2 * half - opaque).abs() <= 6, "half source alpha retains half glow coverage: {half} vs {opaque}");
+}
+
+#[test]
+fn a_picture_glow_honors_crop_rotation_and_flip() {
+    for crop in [[0.0; 4], [0.0, 0.0, 0.5, 0.0]] {
+        let xfrm = Xfrm { rot: 30.0, flip_h: true, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) };
+        let p = picture_glow_deck(255, false, false, crop, xfrm);
+        let image = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let sample = |x, y| glow_sample(&image, xfrm.affine() * Point::new(x, y), 1.0);
+        assert_eq!(sample(32.0, 80.0)[..3], [40, 110, 60], "transparent pixels follow the picture transform");
+        if crop[2] == 0.0 {
+            assert!(sample(76.0, 80.0)[0] > 60, "halo lies beside the transformed opaque pixels");
+        } else {
+            assert_eq!(sample(76.0, 80.0)[..3], [40, 110, 60], "cropped-away pixels do not cast a glow");
+        }
+    }
+}
+
+#[test]
+fn an_opaque_picture_glow_keeps_its_radius_and_corners() {
+    let mut picture = picture_glow_deck(255, false, false, [0.0; 4], Xfrm::new(100.0, 100.0, 160.0, 160.0));
+    let mut bytes = std::io::Cursor::new(vec![]);
+    image::RgbaImage::from_pixel(16, 16, image::Rgba([20, 160, 20, 255])).write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+    let media = picture.add_media("original-opaque-art.png", "image/png", bytes.into_inner()).unwrap();
+    std::sync::Arc::make_mut(&mut picture.slides[0]).shapes[0].kind =
+        ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } };
+    let mut vector = picture.clone();
+    let sh = &mut std::sync::Arc::make_mut(&mut vector.slides[0]).shapes[0];
+    sh.kind = Shape::default().kind;
+    sh.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(20, 160, 20))));
+    let draw = |p: &Presentation| render_slide(p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    let (image, control) = (draw(&picture), draw(&vector));
+    // The bounded raster mask approximates the vector's round stroke within a raster pixel.
+    for (x, y) in [(99, 180), (95, 180), (97, 97), (95, 95), (90, 180)] {
+        let (a, b) = (image.pixel(x, y), control.pixel(x, y));
+        assert!((a[0] as i32 - b[0] as i32).abs() <= 32, "glow profile at {x},{y}: {a:?} vs {b:?}");
+    }
+    assert!(image.pixel(99, 180)[0] > 120, "opaque picture still casts its glow");
+    assert!(image.pixel(90, 180)[0] < 45, "glow ends by its requested radius");
+    let grouped = |mut p: Presentation| {
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        slide.shapes = vec![Shape {
+            id: ShapeId(1598),
+            xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)),
+            kind: ShapeKind::Group { children: std::mem::take(&mut slide.shapes), child: Xfrm::new(0.0, 0.0, 480.0, 1080.0) },
+            ..Default::default()
+        }];
+        draw(&p)
+    };
+    let (image, control) = (grouped(picture), grouped(vector));
+    for (x, y) in [(198, 90), (190, 90), (194, 49), (190, 48), (180, 90)] {
+        let (a, b) = (image.pixel(x, y), control.pixel(x, y));
+        assert!((a[0] as i32 - b[0] as i32).abs() <= 35, "nonuniform group profile at {x},{y}: {a:?} vs {b:?}");
+    }
+}
+
+#[test]
+fn a_picture_glow_includes_an_explicit_fill_behind_transparency() {
+    let mut p = picture_glow_deck(255, true, false, [0.0; 4], Xfrm::new(100.0, 100.0, 128.0, 128.0));
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0].fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(20, 160, 20))));
+    let image = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    assert!(image.pixel(97, 164)[0] > 90, "the picture's explicit fill also casts a glow");
+    assert_eq!(image.pixel(108, 108)[..3], [20, 160, 20], "the actual fill covers the halo within the picture");
+}
+
+#[test]
+fn a_picture_glow_uses_group_background_and_picture_fills() {
+    let opts = RenderOpts { scale: 1.0, ..Default::default() };
+    for group in [false, true] {
+        let mut p = picture_glow_deck(0, true, false, [0.0; 4], Xfrm::new(100.0, 100.0, 128.0, 128.0));
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        slide.shapes[0].fill = Some(if group { Fill::Group } else { Fill::Background });
+        if group {
+            slide.shapes = vec![Shape {
+                id: ShapeId(1598),
+                xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)),
+                fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(20, 160, 20)))),
+                kind: ShapeKind::Group { children: std::mem::take(&mut slide.shapes), child: Xfrm::new(0.0, 0.0, 960.0, 540.0) },
+                ..Default::default()
+            }];
+        }
+        assert!(render_slide(&p, 0, &opts).pixel(97, 164)[0] > 90, "resolved background casts the glow ({group})");
+    }
+    let mut p = picture_glow_deck(255, true, false, [0.0; 4], Xfrm::new(100.0, 100.0, 128.0, 128.0));
+    let control = render_slide(&p, 0, &opts);
+    let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
+    let ShapeKind::Picture { fill } = &shape.kind else { panic!("picture fixture") };
+    shape.fill = Some(Fill::Picture(deckcraft_model::style::PictureFill { alpha: Some(0.05), ..fill.clone() }));
+    let image = render_slide(&p, 0, &opts);
+    for (x, y) in [(208, 164), (108, 108), (164, 164)] {
+        let (a, b) = (image.pixel(x, y), control.pixel(x, y));
+        assert!(
+            a.iter().zip(b).all(|(a, b)| (*a as i32 - b as i32).abs() <= 2),
+            "picture background retains the foreground clip at {x},{y}: {a:?} vs {b:?}"
+        );
+    }
+}
+
+#[test]
+fn a_picture_glow_paints_overlapping_geometry_only_once() {
+    let mut p = picture_glow_deck(128, true, false, [0.0; 4], Xfrm::new(100.0, 100.0, 128.0, 128.0));
+    let opts = RenderOpts { scale: 1.0, ..Default::default() };
+    let control = render_slide(&p, 0, &opts);
+    let path = deckcraft_model::CustomPath { w: 128.0, h: 128.0, d: "M 0 0 L 128 0 L 128 128 L 0 128 Z".into(), ..Default::default() };
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0].geom = Geom::Custom { paths: vec![path.clone(), path] };
+    let image = render_slide(&p, 0, &opts);
+    assert_eq!(image.pixel(208, 164), control.pixel(208, 164), "merged picture clip does not multiply fractional alpha");
+}
+
+#[test]
+fn a_picture_glow_honors_picture_opacity_and_color_key() {
+    let mut p = picture_glow_deck(255, true, false, [0.0; 4], Xfrm::new(100.0, 100.0, 128.0, 128.0));
+    let opts = RenderOpts { scale: 1.0, ..Default::default() };
+    let opaque = render_slide(&p, 0, &opts).pixel(208, 164)[0] as i32 - 40;
+    let ShapeKind::Picture { fill } = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("picture fixture") };
+    fill.alpha = Some(0.5);
+    let half = render_slide(&p, 0, &opts).pixel(208, 164)[0] as i32 - 40;
+    assert!((2 * half - opaque).abs() <= 6, "picture opacity modulates glow coverage: {half} vs {opaque}");
+    let ShapeKind::Picture { fill } = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("picture fixture") };
+    fill.adjust.clear_color = Some(Rgba::rgb(220, 30, 20));
+    assert_eq!(render_slide(&p, 0, &opts).pixel(208, 164)[..3], [40, 110, 60], "keyed-out pixels cast no glow");
+}
+
+#[test]
+fn a_picture_glow_matches_upright_picture_fill_mapping() {
+    for as_fill in [false, true] {
+        let mut p = picture_glow_deck(255, false, as_fill, [0.0; 4], Xfrm { rot: 90.0, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) });
+        let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
+        let fill = if let Some(Fill::Picture(fill)) = &mut shape.fill {
+            fill
+        } else if let ShapeKind::Picture { fill } = &mut shape.kind {
+            fill
+        } else {
+            panic!("picture fixture")
+        };
+        fill.upright = true;
+        let image = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        if as_fill {
+            assert!(image.pixel(176, 140)[0] > 60, "upright fill keeps its glow beside the device-axis alpha edge");
+        } else {
+            assert_eq!(image.pixel(176, 140)[..3], [40, 110, 60], "picture shape keeps its foreground's rotated mapping");
+        }
+    }
+}
+
+#[test]
+fn a_picture_glow_sizes_an_upright_tiled_fill_like_its_face() {
+    // A 64 px tile at twice its size is 96 pt wide; its right half is opaque. The square is
+    // turned a quarter, so the upright fill is drawn in device pixels, at 2x here.
+    let mut p = picture_glow_deck(255, false, true, [0.0; 4], Xfrm { rot: 90.0, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) });
+    let Some(Fill::Picture(fill)) = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0].fill else { panic!("picture fill fixture") };
+    fill.upright = true;
+    fill.mode = deckcraft_model::style::PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 2.0, sy: 2.0, flip: "none".into(), align: "tl".into() };
+    let image = render_slide(&p, 0, &RenderOpts { scale: 2.0, ..Default::default() });
+    let at = |x: f64, y: f64| glow_sample(&image, Point::new(x, y), 2.0);
+    // The face: opaque from 148 to 196 pt across, clear from 196 to 244.
+    assert_eq!(at(172.0, 180.0)[..3], [220, 30, 20], "the face's tile is 96 pt wide");
+    assert!(at(199.0, 180.0)[0] > 60, "the opaque column casts its glow");
+    // A tile sized in shape units on the device-pixel mask would be half as wide and opaque here.
+    assert_eq!(at(226.0, 180.0)[..3], [40, 110, 60], "the clear column far from the opaque ones casts no glow");
+}
+
+#[test]
+fn a_picture_glow_snaps_tiles_to_screen_pixels_in_a_downsampled_mask() {
+    // A 2400 pt picture at 2x needs a downsampled mask (0.85 px per pt). Its 52.5 pt tiles are 105
+    // whole screen pixels, but 44.5 mask pixels: rounded there, each tile would drift by half a
+    // point, 44 tiles drift by a whole column, and an opaque stripe of the mask would sit in the
+    // middle of a clear stretch of the picture on screen.
+    let stripes = {
+        let image = image::RgbaImage::from_fn(64, 64, |x, _| image::Rgba([220, 30, 20, if x < 8 { 255 } else { 0 }]));
+        let mut bytes = std::io::Cursor::new(vec![]);
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        bytes.into_inner()
+    };
+    let tile = deckcraft_model::style::PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 1.09375, sy: 1.09375, flip: "none".into(), align: "tl".into() };
+    // A picture, a shape's picture fill, and a picture's own fill behind its (clear) pixels.
+    for case in ["picture", "fill", "background"] {
+        let mut p = picture_glow_deck(255, false, case == "fill", [0.0; 4], Xfrm::new(-1500.0, 200.0, 2400.0, 100.0));
+        assert!(p.slide_size.width >= 880.0);
+        let media = p.add_media("original-stripes.png", "image/png", stripes.clone()).unwrap();
+        let tiled = deckcraft_model::style::PictureFill { media, mode: tile.clone(), ..Default::default() };
+        let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
+        match case {
+            "fill" => shape.fill = Some(Fill::Picture(tiled)),
+            "picture" => shape.kind = ShapeKind::Picture { fill: tiled },
+            _ => {
+                let ShapeKind::Picture { fill } = &mut shape.kind else { panic!("picture fixture") };
+                fill.alpha = Some(0.0);
+                shape.fill = Some(Fill::Picture(tiled));
+            }
+        }
+        let image = render_slide(&p, 0, &RenderOpts { scale: 2.0, ..Default::default() });
+        let at = |x: f64| glow_sample(&image, Point::new(x, 250.0), 2.0);
+        // The 45th tile's stripe covers 810 to 816.6 pt on the slide.
+        assert_eq!(at(813.0)[..3], [220, 30, 20], "{case}: the stripe is where the face draws it");
+        assert!(at(819.5)[0] > 60, "{case}: the stripe casts its glow");
+        assert_eq!(at(838.5)[..3], [40, 110, 60], "{case}: 22 pt from any stripe, the picture casts no glow");
+    }
+}
+
+#[test]
+fn a_picture_glow_skips_fills_a_morph_has_faded_out() {
+    // The square loses its fill over the morph: at the end the face draws none of it.
+    let bx = Xfrm::new(100.0, 100.0, 128.0, 128.0);
+    let square = |fill| Geom::Custom {
+        paths: vec![deckcraft_model::CustomPath { w: 128.0, h: 128.0, d: "M 0 0 L 128 0 L 128 128 L 0 128 Z".into(), fill, ..Default::default() }],
+    };
+    // A picture fill, and a clear picture's own fill behind it.
+    for case in ["fill", "background"] {
+        let mut p = picture_glow_deck(255, false, case == "fill", [0.0; 4], bx);
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        let mut shape = slide.shapes.remove(0);
+        shape.geom = square(deckcraft_geom::preset::FillMode::None);
+        if let ShapeKind::Picture { fill } = &mut shape.kind {
+            fill.alpha = Some(0.0);
+            shape.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 30, 20))));
+        }
+        let next = (*p.slides[0]).clone();
+        p.slides.push(std::sync::Arc::new(next));
+        let at = |t: f64| {
+            let pm = PathMorph { id: shape.id, from: square(deckcraft_geom::preset::FillMode::Norm), from_box: bx, to_box: bx, t };
+            render_blend(&p, (0, 1), t, &[(shape.clone(), false)], &[], &[pm], &RenderOpts { scale: 1.0, ..Default::default() }).pixel(232, 164)
+        };
+        assert!(at(0.0)[0] > 60, "{case}: the filled square casts its glow");
+        assert_eq!(at(1.0)[..3], [40, 110, 60], "{case}: the faded-out fill casts no glow");
+    }
+}
+
+#[test]
+fn a_picture_glow_casts_from_a_fill_its_placeholder_sets() {
+    // A picture that sets neither a fill nor a style shows its layout placeholder's fill behind its
+    // clear left half (#2068), so the glow follows that fill too. A style of its own keeps the
+    // fill undrawn, and the glow stays off the clear half.
+    let ph = || Some(Placeholder { kind: PhType::Picture, idx: 11, ..Default::default() });
+    let bx = Xfrm::new(100.0, 100.0, 128.0, 128.0);
+    let orange = Fill::solid(ColorRef::rgb(Rgba::rgb(255, 153, 0)));
+    // (layout fill, picture's own style, glow left of the clear half)
+    let cases = [
+        (Some(orange.clone()), None, true),
+        (None, None, false),
+        (Some(orange), Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)), false),
+    ];
+    for (i, (layout_fill, own_style, glows)) in cases.into_iter().enumerate() {
+        let mut p = picture_glow_deck(255, false, false, [0.0; 4], bx);
+        let lid = p.slides[0].layout;
+        let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+        let layout = m.layouts.iter_mut().find(|l| l.id == lid).expect("layout");
+        layout.shapes.push(Shape { id: ShapeId(2), ph: ph(), xfrm: Some(bx), fill: layout_fill, ..Default::default() });
+        let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
+        shape.ph = ph();
+        shape.fill = None;
+        shape.style = own_style;
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let left = img.pixel(96, 164);
+        if glows {
+            assert!(img.pixel(120, 164)[..3] == [255, 153, 0], "case {i}: the layout's fill shows behind the clear half");
+            assert!(left[0] > 60, "case {i}: the placeholder's fill casts the glow: {left:?}");
+        } else {
+            assert_eq!(left[..3], [40, 110, 60], "case {i}: the clear half casts no glow");
+        }
+    }
+}
+
+#[test]
+fn a_picture_glow_fades_with_a_morphs_partial_fill_fade() {
+    // Halfway through the morph the square's fill shows at half strength, on the face and in
+    // its glow: a picture fill, and a clear picture's own fill behind it.
+    let bx = Xfrm::new(100.0, 100.0, 128.0, 128.0);
+    let square = |fill| Geom::Custom {
+        paths: vec![deckcraft_model::CustomPath { w: 128.0, h: 128.0, d: "M 0 0 L 128 0 L 128 128 L 0 128 Z".into(), fill, ..Default::default() }],
+    };
+    for case in ["fill", "background"] {
+        let mut p = picture_glow_deck(255, false, case == "fill", [0.0; 4], bx);
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        let mut shape = slide.shapes.remove(0);
+        shape.geom = square(deckcraft_geom::preset::FillMode::None);
+        if let ShapeKind::Picture { fill } = &mut shape.kind {
+            fill.alpha = Some(0.0);
+            shape.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 30, 20))));
+        }
+        let next = (*p.slides[0]).clone();
+        p.slides.push(std::sync::Arc::new(next));
+        let at = |t: f64, x: u32| {
+            let pm = PathMorph { id: shape.id, from: square(deckcraft_geom::preset::FillMode::Norm), from_box: bx, to_box: bx, t };
+            render_blend(&p, (0, 1), t, &[(shape.clone(), false)], &[], &[pm], &RenderOpts { scale: 1.0, ..Default::default() }).pixel(x, 164)
+        };
+        assert_eq!(at(0.0, 200)[..3], [220, 30, 20], "{case}: the filled face at the start");
+        let face = at(0.5, 200);
+        assert!(face[0] < 200 && face[1] > 50, "{case}: the half-faded face shows the slide through it: {face:?}");
+        let (full, half) = (at(0.0, 232)[0], at(0.5, 232)[0]);
+        assert!(half > 50 && half + 10 < full, "{case}: the glow fades with the fill: {half} at half, {full} at the start");
+    }
+}
+
+#[test]
+fn a_picture_glow_sizes_its_tiled_background_in_a_stretched_group_like_its_face() {
+    // A clear picture's tiled fill in a group whose child space halves it across: the face keeps
+    // each 96 pt tile (64 px at twice its size, right half opaque) 96 pt wide on the slide, so
+    // the fill is clear from 196 to 244 pt across. A tile left in shape units would be half that
+    // and opaque from 220 to 244.
+    let mut p = picture_glow_deck(255, false, false, [0.0; 4], Xfrm::new(0.0, 0.0, 320.0, 160.0));
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    let mut pic = slide.shapes.remove(0);
+    let ShapeKind::Picture { fill } = &mut pic.kind else { panic!("picture fixture") };
+    let tile = deckcraft_model::style::PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 2.0, sy: 2.0, flip: "none".into(), align: "tl".into() };
+    pic.fill = Some(Fill::Picture(deckcraft_model::style::PictureFill { mode: tile, ..fill.clone() }));
+    fill.alpha = Some(0.0);
+    slide.shapes = vec![Shape {
+        id: ShapeId(1598),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 160.0, 160.0)),
+        kind: ShapeKind::Group { children: vec![pic], child: Xfrm::new(0.0, 0.0, 320.0, 160.0) },
+        ..Default::default()
+    }];
+    let image = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    assert_eq!(image.pixel(172, 180)[..3], [220, 30, 20], "the face's opaque column runs from 148 to 196 pt");
+    assert_eq!(image.pixel(222, 180)[..3], [40, 110, 60], "22 pt from the opaque columns, the clear one casts no glow");
+}
+
+fn upright_picture_background_alpha(gradient: bool) -> Image {
+    let mut p = picture_glow_deck(255, false, false, [0.0; 4], Xfrm { rot: 90.0, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) });
+    let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
+    let ShapeKind::Picture { fill } = &mut shape.kind else { panic!("picture fixture") };
+    let background = if gradient {
+        use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
+        let stop = |pos, alpha| GradientStop { pos, color: ColorRef::rgb(Rgba::rgb(20, 160, 20).with_alpha(alpha)) };
+        Fill::Gradient(Gradient {
+            stops: vec![stop(0.0, 0), stop(0.49, 0), stop(0.51, 255), stop(1.0, 255)],
+            flip: None,
+            shape: GradientShape::Linear { angle: 0.0, scaled: false },
+            tile: [0.0; 4],
+            rotate_with_shape: false,
+        })
+    } else {
+        Fill::Picture(deckcraft_model::style::PictureFill { upright: true, ..fill.clone() })
+    };
+    fill.alpha = Some(0.0);
+    shape.fill = Some(background);
+    render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() })
+}
+
+#[test]
+fn picture_glow_upright_background_picture_keeps_its_alpha_orientation() {
+    let image = upright_picture_background_alpha(false);
+    assert_eq!(image.pixel(140, 176)[..3], [40, 110, 60], "clear background does not cast a rotated halo");
+    assert!(image.pixel(176, 140)[0] > 60, "halo follows the actual upright background's alpha edge");
+}
+
+#[test]
+fn picture_glow_upright_background_gradient_keeps_its_alpha_orientation() {
+    let image = upright_picture_background_alpha(true);
+    assert_eq!(image.pixel(140, 176)[..3], [40, 110, 60], "clear gradient side does not cast a rotated halo");
+    assert!(image.pixel(176, 140)[0] > 60, "halo follows the actual upright gradient's alpha edge");
+}
+
+#[test]
+fn picture_glow_follows_the_current_animated_gif_alpha() {
+    let mut p = picture_glow_deck(255, true, false, [0.0; 4], Xfrm::new(100.0, 100.0, 128.0, 128.0));
+    let frame = |left| {
+        let art = image::RgbaImage::from_fn(64, 64, |x, y| {
+            image::Rgba([220, 30, 20, if (left..left + 16).contains(&x) && (16..48).contains(&y) { 255 } else { 0 }])
+        });
+        image::Frame::from_parts(art, 0, 0, image::Delay::from_numer_denom_ms(100, 1))
+    };
+    let mut gif = Vec::new();
+    image::codecs::gif::GifEncoder::new(&mut gif).encode_frames([frame(8), frame(40)]).unwrap();
+    let media = p.add_media("original-moving-alpha.gif", "image/gif", gif).unwrap();
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0].kind =
+        ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } };
+    let at = |time| render_slide(&p, 0, &RenderOpts { scale: 1.0, gif_times: &[(ShapeId(1597), time)], ..Default::default() });
+    let (first, second) = (at(0.05), at(0.15));
+    assert_eq!(first.pixel(132, 164)[..3], [220, 30, 20]);
+    assert_eq!(second.pixel(196, 164)[..3], [220, 30, 20], "foreground advances to the second frame");
+    assert!(first.pixel(112, 164)[0] > 60, "first alpha block casts its halo");
+    assert_eq!(first.pixel(176, 164)[..3], [40, 110, 60]);
+    assert_eq!(second.pixel(112, 164)[..3], [40, 110, 60], "the previous alpha block no longer casts a halo");
+    assert!(second.pixel(176, 164)[0] > 60, "second frame's alpha block casts its halo");
+}
