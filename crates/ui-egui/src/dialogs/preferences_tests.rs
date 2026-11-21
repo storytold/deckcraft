@@ -36,7 +36,7 @@ fn open_options(h: &mut Harness<'_, SlideApp>) {
 }
 
 fn dark(app: &SlideApp) -> bool {
-    app.ui.brightness == Brightness::Dark
+    app.shown_brightness == Brightness::Dark
 }
 
 /// The interface size slider has a visible label, not just a bare "1.00" beside it.
@@ -111,9 +111,14 @@ fn options_cancel_puts_the_appearance_and_scale_back() {
     let (dark_before, scale_before) = (dark(h.state()), h.state().ui.ui_scale);
     open_options(&mut h);
 
-    h.query_by_label("Dark appearance").expect("the checkbox is there").click();
+    let next_theme = if dark(h.state()) { "light" } else { "dark" };
+    h.state_mut().run("view.theme", json!({"value": next_theme})).expect("change display theme");
     h.run_steps(2);
-    assert!(dark(h.state()), "the appearance applies as it is toggled");
+    assert_eq!(
+        h.state().ui.brightness,
+        Some(if next_theme == "dark" { Brightness::Dark } else { Brightness::Light }),
+        "the appearance choice applies immediately"
+    );
 
     // Clicking the slider's middle sets it near the middle of its range, away from the default.
     interface_size(&h).click();
