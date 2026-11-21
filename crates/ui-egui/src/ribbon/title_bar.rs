@@ -40,6 +40,7 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         drag.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Window, true, "Window title bar"));
         if drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            super::handed_to_os(ui.ctx());
         }
         if drag.double_clicked() {
             let max = ui.input(|i| i.viewport().maximized.unwrap_or(false));
@@ -57,10 +58,11 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         let title =
             app.session.active().map(|d| format!("{}{}", d.title(), if dirty { " — Edited" } else { "" })).unwrap_or_else(|| "DeckCraft".into());
         ui.painter().text(rect.center(), Align2::CENTER_CENTER, title, theme::font(13.0), t.text);
-        // Right side.
+        // Right side, left of the window controls `window_frame` draws.
+        let right_x = rect.max.x - 10.0 - if app.window_controls { 3.0 * super::CONTROL_W } else { 0.0 };
         let mut right = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(Rect::from_min_max(pos2(rect.max.x - 320.0, rect.min.y), pos2(rect.max.x - 10.0, rect.max.y)))
+                .max_rect(Rect::from_min_max(pos2(right_x - 310.0, rect.min.y), pos2(right_x, rect.max.y)))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         right.spacing_mut().item_spacing.x = 6.0;
