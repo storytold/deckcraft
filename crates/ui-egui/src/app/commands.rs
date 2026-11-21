@@ -18,6 +18,23 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // A picture copied elsewhere (a browser's "Copy image", a screenshot) pastes from the
+        // context menu and the ribbon the way it does with Ctrl+V (#53). Slides keep their own
+        // paste (`scope`).
+        if id == "edit.paste"
+            && params.get("scope").is_none()
+            && params.get("text").is_none()
+            && params.get("html").is_none()
+            && let Some(png) = self.services.clipboard_image.as_mut().and_then(|f| f())
+        {
+            let data = deckcraft_engine::cmd::base64_encode(&png);
+            let r = self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": data})).map_err(|e| e.to_string());
+            if let Err(e) = &r {
+                self.set_status(e.clone());
+            }
+            self.drain_requests();
+            return r;
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
