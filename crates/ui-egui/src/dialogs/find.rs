@@ -50,7 +50,15 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
                 let mut p = q.clone();
                 p["with"] = json!(d.get("with", ""));
                 let msg = match app.session.execute("text.replace", &p) {
-                    Ok(v) => format!("Replaced {} occurrence(s).", v.get("replaced").and_then(Value::as_u64).unwrap_or(0)),
+                    Ok(v) => {
+                        let n = v.get("replaced").and_then(Value::as_u64).unwrap_or(0);
+                        // The dialog searches hidden slides and shapes, so the replacement can
+                        // land where the user sees nothing: name it.
+                        match v.get("hidden").and_then(Value::as_u64).unwrap_or(0) {
+                            0 => format!("Replaced {n} occurrence(s)."),
+                            h => format!("Replaced {n} occurrence(s), {h} of them on hidden slides or shapes."),
+                        }
+                    }
                     Err(_) => format!("DeckCraft can't find “{text}”."),
                 };
                 d.fields.insert("status".into(), msg);

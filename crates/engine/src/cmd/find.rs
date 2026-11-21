@@ -25,7 +25,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Replace",
             ["Home", "Editing"],
             None,
-            "{text, with, matchCase?, wholeWords?, includeHidden?: bool (default false: hidden slides and shapes are skipped), at?: a text.find match (replace just that one; default: replace all)} → {replaced}",
+            "{text, with, matchCase?, wholeWords?, includeHidden?: bool (default false: hidden slides and shapes are skipped), at?: a text.find match (replace just that one; default: replace all)} → {replaced, hidden (of those, on hidden slides or shapes; 0 without includeHidden)}",
             has_doc,
             replace
         ),
@@ -39,10 +39,12 @@ struct Loc {
     cell: Option<(usize, usize)>,
 }
 
-/// Visit the visible text bodies on a slide: shapes depth-first (groups, table cells), then the
-/// notes. Hidden shapes are skipped unless `include_hidden`, as `pptx` and the outline export do.
-fn bodies(slide: &mut Slide, include_hidden: bool, f: &mut dyn FnMut(Loc, &mut TextBody)) {
-    fn rec(shapes: &mut [Shape], depth: usize, include_hidden: bool, f: &mut dyn FnMut(Loc, &mut TextBody)) {
+/// Visit the text bodies on a slide: shapes depth-first (groups, table cells), then the
+/// notes. Hidden shapes are skipped unless `include_hidden`, as `pptx` and the outline export
+/// do. The callback is told whether the body sits on a hidden shape (only possible with
+/// `include_hidden`); a hidden slide's bodies are told by the caller's own slide check.
+fn bodies(slide: &mut Slide, include_hidden: bool, f: &mut dyn FnMut(Loc, bool, &mut TextBody)) {
+    fn rec(shapes: &mut [Shape], depth: usize, include_hidden: bool, f: &mut dyn FnMut(Loc, bool, &mut TextBody)) {
         if depth > 64 {
             return;
         }
@@ -52,13 +54,13 @@ fn bodies(slide: &mut Slide, include_hidden: bool, f: &mut dyn FnMut(Loc, &mut T
             }
             let id = Some(u64::from(sh.id.0));
             if let Some(t) = &mut sh.text {
-                f(Loc { shape: id, cell: None }, t);
+                f(Loc { shape: id, cell: None }, sh.hidden, t);
             }
             match &mut sh.kind {
                 ShapeKind::Table(t) => {
                     for (r, row) in t.rows.iter_mut().enumerate() {
                         for (c, cell) in row.cells.iter_mut().enumerate() {
-                            f(Loc { shape: id, cell: Some((r, c)) }, &mut cell.text);
+                            f(Loc { shape: id, cell: Some((r, c)) }, sh.hidden, &mut cell.text);
                         }
                     }
                 }
@@ -68,7 +70,7 @@ fn bodies(slide: &mut Slide, include_hidden: bool, f: &mut dyn FnMut(Loc, &mut T
         }
     }
     rec(&mut slide.shapes, 0, include_hidden, f);
-    f(Loc { shape: None, cell: None }, &mut slide.notes);
+    f(Loc { shape: None, cell: None }, false, &mut slide.notes);
 }
 
 struct Opts {
@@ -164,7 +166,7 @@ fn find(s: &mut Session, p: &Value) -> Result<Value> {
             continue;
         }
         let mut sl = (**sl).clone();
-        bodies(&mut sl, o.include_hidden, &mut |loc, t| {
+        bodies(&mut sl, o.include_hidden, &mut |loc, _on_hidden, t| {
             for (pi, para) in t.paragraphs.iter().enumerate() {
                 for (a, b) in para_matches(para, &o) {
                     out.push(json!({"slide": i, "shape": loc.shape, "cell": loc.cell.map(|(r, c)| [r, c]), "para": pi, "start": a, "end": b}));
@@ -184,8 +186,9 @@ fn replace(s: &mut Session, p: &Value) -> Result<Value> {
         Ok((n("slide")?, Loc { shape: v.get("shape").and_then(Value::as_u64), cell }, n("para")?, n("start")?))
     });
     let at = at.transpose()?;
-    let count = s.edit(|doc, _| {
+    let (count, hidden) = s.edit(|doc, _| {
         let mut count = 0;
+        let mut hidden = 0;
         for (i, slp) in doc.slides.iter_mut().enumerate() {
             if at.is_some_and(|a| a.0 != i) {
                 continue;
@@ -194,12 +197,14 @@ fn replace(s: &mut Session, p: &Value) -> Result<Value> {
             if slp.hidden && !o.include_hidden {
                 continue;
             }
+            let slide_hidden = slp.hidden;
             let mut sl = (**slp).clone();
             let mut changed = 0;
-            bodies(&mut sl, o.include_hidden, &mut |loc, t| {
+            bodies(&mut sl, o.include_hidden, &mut |loc, on_hidden_shape, t| {
                 if at.is_some_and(|a| a.1 != loc) {
                     return;
                 }
+                let mut body_changed = 0;
                 for (pi, para) in t.paragraphs.iter_mut().enumerate() {
                     if at.is_some_and(|a| a.2 != pi) {
                         continue;
@@ -209,8 +214,14 @@ fn replace(s: &mut Session, p: &Value) -> Result<Value> {
                             continue;
                         }
                         splice(para, a, b, &with);
-                        changed += 1;
+                        body_changed += 1;
                     }
+                }
+                // The dialog asks for hidden slides and shapes (as PowerPoint's search does);
+                // naming how much of the replacement landed there keeps the mutation honest.
+                changed += body_changed;
+                if slide_hidden || on_hidden_shape {
+                    hidden += body_changed;
                 }
             });
             if changed > 0 {
@@ -221,9 +232,9 @@ fn replace(s: &mut Session, p: &Value) -> Result<Value> {
         if count == 0 {
             return Err(bad("text.replace", "no matches"));
         }
-        Ok(count)
+        Ok((count, hidden))
     })?;
-    Ok(json!({"replaced": count}))
+    Ok(json!({"replaced": count, "hidden": hidden}))
 }
 
 #[cfg(test)]
@@ -322,7 +333,16 @@ mod tests {
         assert!(s.execute("text.replace", &json!({"text": "ecret", "with": "X"})).is_err());
         let out = s.execute("text.replace", &json!({"text": "ecret", "with": "X", "includeHidden": true})).unwrap();
         assert_eq!(out.get("replaced").and_then(Value::as_u64), Some(1), "{out}");
+        // The replacement landed on a hidden shape: the response names it, so a caller (the
+        // editor dialog, an agent) can tell the user the edit is not visible in the show.
+        assert_eq!(out.get("hidden").and_then(Value::as_u64), Some(1), "{out}");
         let hits = s.execute("text.find", &json!({"text": "X", "includeHidden": true})).unwrap();
         assert_eq!(hits.as_array().map(Vec::len), Some(1), "{hits}");
+        // A replacement on a hidden slide counts as hidden too.
+        let out = s.execute("text.replace", &json!({"text": "idden deck", "with": "Seen deck", "includeHidden": true})).unwrap();
+        assert_eq!(out.get("hidden").and_then(Value::as_u64), Some(1), "{out}");
+        // A replacement on the shown slide is not hidden.
+        let out = s.execute("text.replace", &json!({"text": "Shown", "with": "Visible"})).unwrap();
+        assert_eq!(out.get("hidden").and_then(Value::as_u64), Some(0), "{out}");
     }
 }
