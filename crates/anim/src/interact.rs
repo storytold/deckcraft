@@ -9,7 +9,8 @@
 //! - a shape with a link and a triggered animation follows the link at once. The animation's clock
 //!   runs only while its slide is shown, so it goes on where it stopped when the show returns;
 //! - with "advance on click" off a click never leaves the slide, but it still plays animation steps;
-//! - a slide the show returns to (link or arrow keys) looks as it was left.
+//! - a slide the show returns to by a link or by going back looks as it was left; going forward
+//!   to a slide starts it over (#2090).
 
 use deckcraft_model::text::Action;
 use deckcraft_model::{Presentation, ShapeId};

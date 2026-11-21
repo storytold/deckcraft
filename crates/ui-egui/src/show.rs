@@ -568,7 +568,8 @@ impl Show {
         true
     }
 
-    /// On entering a slide: auto-play its first step when it begins With/After Previous.
+    /// On entering a slide: auto-play its first step when it begins With/After Previous, once the
+    /// slide's transition is over.
     /// `ShowState` already starts such a step when it enters the slide (#631: asking it for the
     /// next step again finished the step at once, so the slide appeared fully built), so only
     /// its clock starts here. Autoplay previews start an On Click first step themselves.
@@ -584,7 +585,9 @@ impl Show {
             None
         };
         if let Some(k) = started {
-            self.step_start = now;
+            // The slide's transition plays first; its animations start when it has finished, as
+            // in PowerPoint (#2089).
+            self.step_start = self.trans.as_ref().map_or(now, |t| now.max(t.start + t.dur));
             self.media_clock = Some((k, f64::NEG_INFINITY));
         }
     }
