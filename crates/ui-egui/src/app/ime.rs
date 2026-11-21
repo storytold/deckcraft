@@ -486,11 +486,20 @@ impl SlideApp {
             egui::ImeEvent::Preedit { text, active_range_chars } => {
                 self.session.compose_text(text, active_range_chars.as_ref().map(|r| (r.start, r.end)))
             }
-            // A commit only replaces text that is being edited. It must never start editing a
-            // merely selected shape: without a tracked pre-edit, a stale platform commit would
-            // replace that shape's whole text.
+            // A commit replaces edited text, or starts editing one selected non-line shape on a
+            // fresh direct commit (such as macOS Korean inline KIM) when no prior composition is
+            // active or pending cancellation.
             egui::ImeEvent::Commit(text) => {
-                if self.session.active().is_some_and(|d| d.selection.text.is_some()) {
+                let can_start_on_shape = self.ime_terminal_pending.is_none()
+                    && self.ime_composition.is_none()
+                    && self.ime_cancelled.is_none()
+                    && !text.is_empty()
+                    && self.session.active().is_some_and(|d| {
+                        d.selection.text.is_none()
+                            && d.selection.shapes.len() == 1
+                            && d.selection.shapes.first().and_then(|&id| d.shape(id)).is_some_and(|s| !s.is_line())
+                    });
+                if self.session.active().is_some_and(|d| d.selection.text.is_some()) || can_start_on_shape {
                     self.session.commit_text(text)
                 } else {
                     Ok(Value::Null)

@@ -326,6 +326,22 @@ fn composing_on_a_selected_shape_starts_editing_it() {
     assert_eq!(v["text"], "新しい");
 }
 
+/// A direct commit with no pre-edit (an input method that commits each step) on a selected shape starts editing it too.
+#[test]
+fn a_direct_commit_on_a_selected_shape_starts_editing_it() {
+    let mut h = harness(Session::with_new());
+    let r = h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "Old"})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    h.state_mut().run("text.exit", json!({})).unwrap();
+    h.run_steps(2);
+    assert!(h.state().session.active().unwrap().selection.text.is_none());
+    h.event(Event::Ime(ImeEvent::Commit("ㅎ".into())));
+    h.run_steps(2);
+    assert!(h.state().session.active().unwrap().selection.text.is_some(), "the commit started editing");
+    let v = h.state_mut().session.execute("text.get", &json!({"id": id})).unwrap();
+    assert_eq!(v["text"], "ㅎ");
+}
+
 /// The notes pane is an egui text field: composition shows in it and replaces each preedit, the
 /// candidate window is at its caret, and the notes are one undo step when it loses focus.
 #[test]
