@@ -546,10 +546,10 @@ mod tests {
         assert_eq!(rtf_to_outline(r"{\rtf1\pard Year\_end review\par}"), "Year\u{2011}end review\n");
     }
 
-    /// A hostile `\li` near `i64::MAX` overflowed the rounding addend in debug builds.
+    /// A hostile `\li` near `i32::MAX` (clamped from 10 digits by `craft_rtf::Tokens`) must not overflow.
     #[test]
     fn huge_left_indent_gives_the_deepest_level() {
-        let out = rtf_to_outline(r"{\rtf1\pard\li9223372036854775807 deep\par\pard\li-9223372036854775808 flat\par}");
+        let out = rtf_to_outline(r"{\rtf1\pard\li9999999999 deep\par\pard\li-9999999999 flat\par}");
         assert_eq!(out, format!("{}deep\nflat\n", "\t".repeat(9)));
     }
 
