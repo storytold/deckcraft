@@ -64,7 +64,24 @@ pub fn apply(effect: &str, img: &RgbaImage) -> Option<RgbaImage> {
     let scale = ((w * w + h * h) as f32).sqrt() / 1000.0;
     let alpha = |x: u32, y: u32| img.get_pixel(x, y)[3];
     let out = match effect {
-        "artisticBlur" => image::imageops::blur(img, (6.0 * scale).max(1.0)),
+        "artisticBlur" => {
+            // Premultiply before filtering so hidden RGB cannot darken or tint visible pixels.
+            // Floating-point channels retain precision even at very low alpha.
+            let blurred = {
+                let premultiplied = image::Rgba32FImage::from_fn(w, h, |x, y| {
+                    let p = img.get_pixel(x, y);
+                    let a = f32::from(p[3]) / 255.0;
+                    Rgba([f32::from(p[0]) * a, f32::from(p[1]) * a, f32::from(p[2]) * a, a])
+                });
+                image::imageops::blur(&premultiplied, (6.0 * scale).max(1.0))
+            };
+            RgbaImage::from_fn(w, h, |x, y| {
+                let p = blurred.get_pixel(x, y);
+                let c = |v: f32| if p[3] > 0.0 { (v / p[3]).round().clamp(0.0, 255.0) as u8 } else { 0 };
+                // Artistic effects keep the original transparency mask, not the blurred alpha.
+                Rgba([c(p[0]), c(p[1]), c(p[2]), alpha(x, y)])
+            })
+        }
         "artisticPencilGrayscale" | "artisticLineDrawing" | "artisticPhotocopy" => {
             let soft = image::imageops::blur(&gray(img), (0.8 * scale).max(0.5));
             let e = edges(&soft);
@@ -199,4 +216,72 @@ fn artistic_effect(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     Ok(json!({"effect": effect}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn artistic_blur_keeps_source_alpha_and_blurs_color() {
+        let img = RgbaImage::from_fn(8, 4, |x, y| {
+            let v = if x < 4 { 32 } else { 224 };
+            let alpha = [0, 64, 128, 255][((x + y) % 4) as usize];
+            Rgba([v, 255 - v, (x * 31) as u8, alpha])
+        });
+        let blurred = apply("artisticBlur", &img).expect("blur effect");
+        assert_eq!(blurred.dimensions(), img.dimensions());
+        for (out, source) in blurred.pixels().zip(img.pixels()) {
+            assert_eq!(out[3], source[3], "each pixel keeps its transparency");
+        }
+        assert!(blurred.pixels().zip(img.pixels()).any(|(out, source)| out.0[..3] != source.0[..3]), "the colors still blur");
+    }
+
+    #[test]
+    fn artistic_blur_ignores_hidden_color_at_transparent_edges() {
+        let white_on = |hidden| RgbaImage::from_fn(7, 5, |x, y| if x == 3 && y == 2 { Rgba([255, 255, 255, 255]) } else { Rgba(hidden) });
+        let black = apply("artisticBlur", &white_on([0, 0, 0, 0])).expect("blur effect");
+        let red = apply("artisticBlur", &white_on([255, 0, 0, 0])).expect("blur effect");
+        assert_eq!(black, red, "hidden RGB must not affect the blur");
+        assert_eq!(black.get_pixel(3, 2), &Rgba([255, 255, 255, 255]), "opaque white must not acquire a dark fringe");
+    }
+
+    #[test]
+    fn artistic_blur_retains_color_at_low_and_partial_alpha() {
+        for a in [1, 64, 128, 255] {
+            let img = RgbaImage::from_fn(7, 5, |x, y| if x == 3 && y == 2 { Rgba([201, 89, 37, a]) } else { Rgba([0, 0, 0, 0]) });
+            let blurred = apply("artisticBlur", &img).expect("blur effect");
+            assert_eq!(blurred.get_pixel(3, 2), img.get_pixel(3, 2), "source color and alpha survive even at alpha {a}");
+        }
+    }
+
+    #[test]
+    fn artistic_blur_weights_visible_color_by_alpha() {
+        let img = RgbaImage::from_fn(5, 3, |x, y| match (x, y) {
+            (2, 1) => Rgba([255, 0, 0, 255]),
+            (3, 1) => Rgba([0, 0, 255, 1]),
+            _ => Rgba([0, 0, 0, 0]),
+        });
+        let blurred = apply("artisticBlur", &img).expect("blur effect");
+        let red = blurred.get_pixel(2, 1);
+        assert!(red[0] > 250 && red[2] < 5, "nearly transparent blue must not overpower opaque red");
+        assert_eq!(red[3], 255);
+        assert_eq!(blurred.get_pixel(3, 1)[3], 1);
+    }
+
+    #[test]
+    fn artistic_blur_still_blends_fully_opaque_colors() {
+        let img = RgbaImage::from_fn(8, 4, |x, _| if x < 4 { Rgba([255, 0, 0, 255]) } else { Rgba([0, 0, 255, 255]) });
+        let blurred = apply("artisticBlur", &img).expect("blur effect");
+        assert!(blurred.pixels().all(|p| p[3] == 255 && p[1] == 0));
+        let edge = blurred.get_pixel(3, 2);
+        assert!(edge[0] > 0 && edge[0] < 255 && edge[2] > 0 && edge[2] < 255, "opaque colors still blend at the boundary");
+    }
+
+    #[test]
+    fn artistic_blur_handles_fully_transparent_color() {
+        let img = RgbaImage::from_pixel(4, 3, Rgba([201, 89, 37, 0]));
+        let blurred = apply("artisticBlur", &img).expect("blur effect");
+        assert_eq!(blurred.dimensions(), img.dimensions());
+        assert!(blurred.pixels().all(|p| p.0 == [0, 0, 0, 0]));
+    }
 }
