@@ -186,6 +186,8 @@ pub fn install_fonts_with(ctx: &egui::Context, extra: &[std::sync::Arc<deckcraft
 pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> FontDefinitions {
     let mut defs = FontDefinitions::default();
     let mut names = vec![];
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut embedded = vec![];
     for (i, f) in deckcraft_fonts::CRAFT_FONTS.iter().enumerate() {
         let wanted = (f.family == "Inter" && (f.style == "Regular" || f.style == "SemiBold" || f.style == "Bold"))
             || (f.family == "BIZ UDPGothic" && f.style == "Regular")
@@ -200,6 +202,8 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
         if !wanted {
             continue;
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        embedded.push(f);
         let name = format!("craft-{i}-{}-{}", f.family, f.style);
         defs.font_data.insert(name.clone(), std::sync::Arc::new(FontData::from_static(f.bytes)));
         names.push((f.family, f.style, name));
@@ -220,6 +224,45 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
         for chain in defs.families.values_mut() {
             if !chain.iter().any(|name| name == "Hack") {
                 chain.push("Hack".into());
+            }
+        }
+    }
+    // When the active language uses CJK script and the embedded interface faces leave any of its
+    // characters without a glyph (e.g. a build without craft-fonts or with faces lacking characters
+    // the catalogs use), place an installed CJK font after them so menus don't show boxes.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let lang = crate::i18n::current();
+        if lang.uses_cjk() {
+            let mut texts = lang.catalog_text();
+            let lang_name = lang.name();
+            if !lang_name.is_empty() {
+                texts.push(lang_name);
+            }
+            let uncovered = deckcraft_fonts::ui_uncovered_cjk(&texts, &embedded);
+            if !uncovered.is_empty() {
+                let mode = if lang.prefers_hans() {
+                    deckcraft_fonts::UiCjk::Hans
+                } else if lang.prefers_hant() {
+                    deckcraft_fonts::UiCjk::Hant
+                } else if lang.prefers_korean() {
+                    deckcraft_fonts::UiCjk::Korean
+                } else {
+                    deckcraft_fonts::UiCjk::Other
+                };
+                let extra_bytes: usize = extra.iter().map(|f| f.data().len()).sum();
+                if let Some(f) = system_cjk_font(mode, &uncovered, extra_bytes) {
+                    let name = format!("system-cjk-{}", f.family);
+                    if !defs.font_data.contains_key(&name) {
+                        let data = FontData::from_blob(f.bytes.clone(), f.index);
+                        defs.font_data.insert(name.clone(), std::sync::Arc::new(data));
+                        for list in defs.families.values_mut() {
+                            if !list.contains(&name) {
+                                list.push(name.clone());
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -251,6 +294,48 @@ pub fn add_fallback_faces(defs: &mut FontDefinitions, faces: &[std::sync::Arc<de
             list.push(name.clone());
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct SystemCjkCache {
+    by_path: std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<u8>>>,
+    by_mode: std::collections::HashMap<(deckcraft_fonts::UiCjk, Vec<char>), Option<deckcraft_fonts::SystemUiFont>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn system_cjk_cache() -> &'static std::sync::Mutex<SystemCjkCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<SystemCjkCache>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+/// Bytes held in the shared system CJK interface font cache, counted in `UiFonts`'s aggregate budget.
+pub(crate) fn system_cjk_cache_bytes() -> usize {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let guard = system_cjk_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.by_path.values().map(|b| b.len()).sum()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+}
+
+/// The installed CJK interface font for `mode` covering `needed`, sharing one path-keyed file cache
+/// and staying within `UiFonts`'s aggregate memory budget.
+#[cfg(not(target_arch = "wasm32"))]
+fn system_cjk_font(mode: deckcraft_fonts::UiCjk, needed: &[char], extra_bytes: usize) -> Option<deckcraft_fonts::SystemUiFont> {
+    let mut guard = system_cjk_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let key = (mode, needed.to_vec());
+    if let Some(cached) = guard.by_mode.get(&key) {
+        return cached.clone();
+    }
+    let used: usize = guard.by_path.values().map(|b| b.len()).sum();
+    let budget_left = crate::uifonts::MAX_AGGREGATE_BYTES.saturating_sub(used.saturating_add(extra_bytes));
+    let found = deckcraft_fonts::system_cjk_ui_font_for(mode, needed, &mut guard.by_path, budget_left);
+    guard.by_mode.insert(key, found.clone());
+    found
 }
 
 pub fn bold(size: f32) -> egui::FontId {
@@ -481,5 +566,12 @@ mod tests {
         for (c, size, ink) in drawn("\u{2013}\u{2014}-_\u{2026}\u{2022}\u{00b7}\u{2018}\u{2019}\u{201c}\u{201d}=~") {
             assert!(ink, "{c:?} ({:04X}) draws nothing at {size} px", c as u32);
         }
+    }
+
+    #[test]
+    fn non_cjk_interface_does_not_preload_system_cjk_font() {
+        crate::i18n::set_current(crate::i18n::Lang::EN);
+        let defs = super::font_definitions(&[]);
+        assert!(!defs.font_data.keys().any(|k| k.starts_with("system-cjk-")), "non-CJK UI must not load a system CJK fallback");
     }
 }

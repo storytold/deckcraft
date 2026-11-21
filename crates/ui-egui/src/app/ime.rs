@@ -5,8 +5,10 @@ use super::{
 
 impl SlideApp {
     /// Borrow faces for interface text in scripts the interface fonts lack (#101): the open
-    /// presentations' names and text, recent files, and what is typed or composed this frame.
-    pub(super) fn note_ui_text(&mut self, ctx: &egui::Context) {
+    /// presentations' names and text, recent files, active notices, and what is typed or composed
+    /// this frame. Returns `true` when an active toast or status notice required installing a new
+    /// font, so the current pass should be discarded before drawing that notice.
+    pub(super) fn note_ui_text(&mut self, ctx: &egui::Context) -> bool {
         let typed: String = ctx.input(|i| {
             i.events
                 .iter()
@@ -17,6 +19,27 @@ impl SlideApp {
                 })
                 .collect()
         });
+        let lang = crate::i18n::current();
+        if self.catalog_noted != Some(lang) {
+            // The language's own face is now installed: characters seen against the old fonts and
+            // the open presentation's text must be checked against it.
+            self.ui_fonts.reset_coverage();
+        }
+        // Check active notices first so a font shared with typed or document text still triggers a
+        // pass discard before the notice paints, without discarding pure typing/IME passes.
+        if let Some(toast) = &self.toast {
+            self.ui_fonts.note(ctx, &toast.text);
+        }
+        if let Some((status, _)) = &self.status {
+            self.ui_fonts.note(ctx, status);
+        }
+        let notice_changed = self.ui_fonts.apply(ctx);
+        if self.catalog_noted != Some(lang) {
+            for text in lang.catalog_text() {
+                self.ui_fonts.note(ctx, text);
+            }
+            self.catalog_noted = Some(lang);
+        }
         self.ui_fonts.note(ctx, &typed);
         for d in self.session.documents() {
             self.ui_fonts.note(ctx, &d.title());
@@ -28,6 +51,7 @@ impl SlideApp {
             self.ui_fonts.note_doc(ctx, st);
         }
         self.ui_fonts.apply(ctx);
+        notice_changed
     }
 
     /// Stable IME owner for the canvas text target: document, view, shape and table cell.

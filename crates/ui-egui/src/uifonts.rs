@@ -18,9 +18,10 @@ use deckcraft_fonts::{FontDb, FontFace};
 /// for the stock macOS CJK collections the font database picks: `AppleSDGothicNeo.ttc` (about
 /// 55 MB, the only Hangul face) and `PingFang.ttc` (about 78 MB, Simplified Chinese).
 const MAX_FACE_BYTES: usize = 128 << 20;
-/// Aggregate bytes of every borrowed UI face. `MAX_FACE_BYTES` alone bounded one face but left
-/// `faces` unbounded; three full-size CJK collections are enough for the supported scripts.
-const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
+/// Aggregate bytes of every borrowed UI face (including any cached system CJK interface face).
+/// `MAX_FACE_BYTES` alone bounded one face but left `faces` unbounded; three full-size CJK
+/// collections are enough for the supported scripts.
+pub(crate) const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
 
 fn accepts_face(byte_len: usize, color: bool) -> bool {
     !color && byte_len <= MAX_FACE_BYTES
@@ -90,7 +91,7 @@ impl UiFonts {
                 |c| FontDb::global().fallback_for_filtered(c, u32::MAX, |face| accepts_face(face.data().len(), face.is_color())),
             )
         });
-        let mut total: usize = self.faces.iter().map(|f| f.data().len()).sum();
+        let mut total: usize = crate::theme::system_cjk_cache_bytes().saturating_add(self.faces.iter().map(|f| f.data().len()).sum());
         let accepted: Vec<_> = new
             .into_iter()
             .filter(|f| {
@@ -120,6 +121,14 @@ impl UiFonts {
         self.doc = Some((st.uid, st.revision));
         let text = ui_text(st);
         self.note(ctx, &text);
+    }
+
+    /// Forget which characters and presentation were already looked at, so unchanged text is
+    /// checked again against the interface fonts now installed (after a language change swaps
+    /// the system CJK face). The borrowed faces are kept.
+    pub fn reset_coverage(&mut self) {
+        self.seen.clear();
+        self.doc = None;
     }
 
     /// Install the interface fonts again when faces were added. True if they were.
@@ -240,6 +249,19 @@ mod tests {
         assert!(faces_for_text("한국어", &[], &mut seen, |_| true, lookup).is_empty(), "the interface draws it");
         assert!(faces_for_text("abc  \n\t\u{E001}", &[], &mut HashSet::new(), |_| false, lookup).is_empty(), "ASCII, spaces, private use");
         assert!(faces_for_text("한", std::slice::from_ref(&inter), &mut HashSet::new(), |_| false, lookup).is_empty(), "already borrowed");
+    }
+
+    /// A language change forgets what was looked at, but keeps the borrowed faces.
+    #[test]
+    fn reset_coverage_clears_seen_characters_and_document_but_keeps_faces() {
+        let mut fonts = UiFonts::default();
+        fonts.faces.push(face("Inter"));
+        fonts.seen.insert('\u{D55C}');
+        fonts.doc = Some((1, 2));
+        fonts.reset_coverage();
+        assert!(fonts.seen.is_empty());
+        assert_eq!(fonts.doc, None);
+        assert_eq!(fonts.faces.len(), 1);
     }
 
     #[test]
