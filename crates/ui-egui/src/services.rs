@@ -13,6 +13,9 @@ pub type DownloadFn = Box<dyn FnMut(&str, &[u8])>;
 
 /// [`Services::host_save`]: `(file name, bytes, save_as)`. An error means the page didn't get
 /// the file, and the save failed.
+/// [`Services::save_prompt`]: `(window title, question, detail)`.
+pub type SavePrompt = Box<dyn Fn(&str, &str, &str) -> Option<std::sync::mpsc::Receiver<String>>>;
+
 pub type HostSaveFn = Box<dyn FnMut(&str, &[u8], bool) -> Result<(), String>>;
 
 /// A file the host finished reading for the request `id` from [`SlideApp::begin_external_file`].
@@ -51,6 +54,10 @@ pub struct Services {
     /// Asynchronous open dialog (web). The callback receives the purpose and the request id
     /// from [`SlideApp::begin_external_file`]; the chosen file arrives through `inbox`.
     pub open_async: Option<OpenAsyncFn>,
+    /// macOS: ask Close's "Save changes?" as a sheet on the window titled `window`; the answer
+    /// ("save", "dontSave" or anything else for Cancel) arrives on the receiver. `None` from the
+    /// call asks in DeckCraft's own dialog.
+    pub save_prompt: Option<SavePrompt>,
     /// Hand bytes to the user as a named file (browser download).
     pub download: Option<DownloadFn>,
     /// Web, framed by a page that keeps the files (`?host=parent`): Save and Save As hand the

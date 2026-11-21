@@ -15,11 +15,14 @@ pub struct Dialog {
     /// Field values while the dialog is open.
     #[serde(skip)]
     pub fields: std::collections::HashMap<String, String>,
+    /// The answer to the host's Save Changes sheet while it is up (`Services::save_prompt`).
+    #[serde(skip)]
+    sheet: Option<std::rc::Rc<std::sync::mpsc::Receiver<String>>>,
 }
 
 impl Dialog {
     pub fn new(id: &str) -> Self {
-        Dialog { id: id.into(), params: Value::Null, fields: Default::default() }
+        Dialog { id: id.into(), params: Value::Null, fields: Default::default(), sheet: None }
     }
     pub fn modal(&self) -> bool {
         true
@@ -81,6 +84,9 @@ fn title(id: &str) -> &'static str {
 /// state as its close path requires.
 pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
+    if save_sheet(app, &mut d) {
+        return;
+    }
     let mut open = true;
     let mut close = false;
     let mut window = egui::Window::new(title(&d.id))
@@ -124,6 +130,36 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
         back.params = ret;
         app.dialog = Some(back);
     }
+}
+
+/// Close's Save Changes as a sheet on the presentation's own window, when the host shows one
+/// (`Services::save_prompt`), in place of the built-in dialog. Returns whether the sheet has it:
+/// the dialog stays in `app.dialog` while the sheet is up, so quitting still waits on it.
+fn save_sheet(app: &mut SlideApp, d: &mut Dialog) -> bool {
+    use std::sync::mpsc::TryRecvError;
+    if d.id != "close" || d.fields.contains_key("builtin") {
+        return false;
+    }
+    if d.sheet.is_none() {
+        let (Some(ask), Some(doc), true) = (&app.services.save_prompt, app.session.active(), app.native_windows) else { return false };
+        let question = format!("Do you want to save the changes you made to “{}”?", doc.title());
+        let Some(rx) = ask(&crate::window_ui::window_title(doc), &question, "Your changes will be lost if you don't save them.") else {
+            // No window that is surely the presentation's: the built-in dialog asks.
+            d.fields.insert("builtin".into(), String::new());
+            return false;
+        };
+        d.sheet = Some(std::rc::Rc::new(rx));
+    }
+    let reply = match d.sheet.as_ref().map(|rx| rx.try_recv()) {
+        Some(Err(TryRecvError::Empty)) => {
+            app.dialog = Some(d.clone());
+            return true;
+        }
+        Some(Ok(reply)) => reply,
+        _ => String::new(),
+    };
+    body::answer_close(app, &reply);
+    true
 }
 
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {

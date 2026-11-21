@@ -292,6 +292,13 @@ impl Capture {
         self.requests.len() >= MAX_REQUESTS
     }
 
+    /// Whether the UI pass of presentation `doc`'s window settles and takes the screenshots: no
+    /// request waits for another presentation's window (with a window per presentation, each
+    /// window's pass would otherwise reset the settling of the others).
+    pub fn is_for(&self, doc: Option<u64>) -> bool {
+        self.requests.first().is_none_or(|r| r.doc_generation == doc)
+    }
+
     /// Return the number of currently admitted screenshot requests.
     pub fn pending(&self) -> usize {
         self.requests.len()
@@ -548,6 +555,13 @@ impl Capture {
         let req = self.requests.remove(i);
         req.slot.cancel();
         let _ = req.reply.send(json!({"ok": false, "error": why}));
+    }
+
+    /// Fail every admitted request with `why`.
+    pub fn fail_all(&mut self, why: &str) {
+        while !self.requests.is_empty() {
+            self.fail(0, why);
+        }
     }
 
     /// Test-only: make the settle deadline already pass without sleeping.

@@ -158,8 +158,10 @@ impl SlideApp {
     /// viewports and never call `logic`/`ui`; admitting such a callback would let a render-only
     /// viewport mutate root composition state while only the reset map is per-viewport. Reject it
     /// before any state changes instead of pretending to support multi-view editing.
-    pub(super) fn root_viewport_admitted(ctx: &egui::Context) -> bool {
-        ctx.viewport_id() == egui::ViewportId::ROOT
+    /// A presentation's own native window ([`crate::doc_windows`]) is a full editing view too:
+    /// it is drawn with its presentation active and its window state swapped in.
+    pub(super) fn root_viewport_admitted(&self, ctx: &egui::Context) -> bool {
+        ctx.viewport_id() == egui::ViewportId::ROOT || self.window_viewport == Some(ctx.viewport_id())
     }
 
     /// Report whether the current pass is a full UI pass for the IME-owning viewport rather than
@@ -338,14 +340,18 @@ impl SlideApp {
         // still deliver its suffix. Keep the guard bound to its retired owner and treat the new
         // destination as a fresh interruption; only exact reset completion or an observed
         // teardown may clear the terminal metadata.
-        let pending_interrupted = self.ime_terminal_pending.as_ref().is_some_and(|p| {
-            let reference = if p.interrupted {
-                p.interrupted_at
-            } else {
-                Some(ImeTerminalStamp { owner: Some(p.owner), revision: p.revision, anchor: Some(p.anchor), caret: Some(p.caret) })
-            };
-            reference != current_stamp
-        });
+        // Another window's pass compares against that window's selection, not the editing one's.
+        let viewport = self.ime_frame_viewport.unwrap_or_else(|| ctx.viewport_id());
+        let other_window = self.ime_viewport.is_some_and(|v| v != viewport);
+        let pending_interrupted = !other_window
+            && self.ime_terminal_pending.as_ref().is_some_and(|p| {
+                let reference = if p.interrupted {
+                    p.interrupted_at
+                } else {
+                    Some(ImeTerminalStamp { owner: Some(p.owner), revision: p.revision, anchor: Some(p.anchor), caret: Some(p.caret) })
+                };
+                reference != current_stamp
+            });
         if settles == self.ime_settles_seen && !pending_interrupted {
             return;
         }
@@ -600,7 +606,13 @@ impl SlideApp {
         self.note_settled_composition(ctx);
         // The editing window going away really ends the viewport's context; a merely hidden
         // owner (modal, palette, unfocused field) stays observed as unfocused instead.
-        if self.session.active().is_none() || ctx.input(|i| i.viewport().close_requested()) {
+        let closing = ctx.input(|i| i.viewport().close_requested());
+        if closing && self.session.active().is_some() && self.ime_viewport.is_some_and(|v| v != viewport) {
+            // Another window closing leaves the editing window's composition and guard alone.
+            let _ = self.ime_reset.remove(&viewport);
+            return None;
+        }
+        if self.session.active().is_none() || closing {
             self.ime_interrupt_pending = false;
             if let Some(old) = self.ime_viewport.take() {
                 self.ime_tracker.end_viewport(old);
@@ -660,8 +672,8 @@ impl SlideApp {
         if self.ime_viewport != Some(viewport)
             && let Some(old) = self.ime_viewport.replace(viewport)
         {
+            // The old window keeps its own reset guard until its reset completes or it closes.
             self.ime_tracker.end_viewport(old);
-            let _ = self.ime_reset.remove(&old);
         }
         let committed = st.selection.text.as_ref().and_then(|t| deckcraft_engine::cmd::text::ime_surrounding(st, t));
         let mut observation =
