@@ -149,13 +149,16 @@ pub fn apply(ctx: &egui::Context, t: &Tokens) {
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t.separator);
     v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     v.widgets.inactive.bg_fill = t.control;
-    v.widgets.inactive.bg_stroke = Stroke::NONE;
+    // Add a border stroke here instead of Stroke::NONE:
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, t.border); 
+    
     v.widgets.hovered.weak_bg_fill = t.hover;
     v.widgets.hovered.bg_fill = t.control_hover;
-    v.widgets.hovered.bg_stroke = Stroke::NONE;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, t.border);
+
     v.widgets.active.weak_bg_fill = t.pressed;
     v.widgets.active.bg_fill = t.control_pressed;
-    v.widgets.open.weak_bg_fill = t.pressed;
+    v.widgets.active.bg_stroke = Stroke::new(1.0, t.accent); // Optional: use accent color when pressed
     v.window_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 18, spread: 0, color: t.shadow };
     v.popup_shadow = egui::epaint::Shadow { offset: [0, 3], blur: 12, spread: 0, color: t.shadow };
     ctx.set_visuals(v);
