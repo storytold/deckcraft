@@ -67,7 +67,7 @@ fn title(id: &str) -> &'static str {
         "customShow" => "Custom Shows",
         "chartData" => "Chart Data",
         "trim" => "Trim Media",
-        "smartart" => "Choose a SmartArt Graphic",
+        "smartart" => "Choose a Diagram Graphic",
         "bullets" => "Bullets and Numbering",
         "action" => "Action Settings",
         "quit" => "DeckCraft",

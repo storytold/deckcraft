@@ -51,6 +51,9 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
+        // The window is closing for good: a ready update's helper starts now and installs it once
+        // the process has exited.
+        self.0.start_pending_update();
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -122,9 +125,10 @@ fn services(native_wayland: bool) -> Services {
                 "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
                 "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
                 _ => d
-                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
+                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx", "ppt", "pot", "pps"])
                     .add_filter("DeckCraft", &["deckcraft"])
                     .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
+                    .add_filter("PowerPoint 97-2003", &["ppt", "pot", "pps"])
                     .add_filter("Outline", &["txt", "md"]),
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())
@@ -141,6 +145,14 @@ fn services(native_wayland: bool) -> Services {
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
         ..Default::default()
     }
+}
+
+/// Displays winit lists for `window`, counting an output Wayland lists twice once. `None` when it
+/// lists none: Presenter View then stays as it was.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn display_count(window: &winit::window::Window) -> Option<usize> {
+    let n = window.available_monitors().collect::<std::collections::BTreeSet<_>>().len();
+    (n > 0).then_some(n)
 }
 
 const APP_ID: &str = "ai.storyteller.deckcraft";
@@ -280,6 +292,11 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
             let mut app = SlideApp::new(Session::new(), services(native_wayland));
+            // Presenter View asks winit how many displays there are when a show starts.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            if let Some(window) = cc.winit_window().cloned() {
+                app.services.displays = Some(Box::new(move || display_count(&window)));
+            }
             load_prefs(&mut app);
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
@@ -443,12 +460,16 @@ mod tests {
             .collect();
         win.sort();
 
-        let mime_ext = |m: &str| match m {
-            "application/x-deckcraft" => Some("deckcraft"),
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
-            "application/vnd.openxmlformats-officedocument.presentationml.template" => Some("potx"),
-            "application/vnd.openxmlformats-officedocument.presentationml.slideshow" => Some("ppsx"),
-            _ => None,
+        // One MIME type covers all three PowerPoint 97-2003 extensions.
+        let mime_exts = |m: &str| -> Option<&[&str]> {
+            Some(match m {
+                "application/x-deckcraft" => &["deckcraft"],
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation" => &["pptx"],
+                "application/vnd.openxmlformats-officedocument.presentationml.template" => &["potx"],
+                "application/vnd.openxmlformats-officedocument.presentationml.slideshow" => &["ppsx"],
+                "application/vnd.ms-powerpoint" => &["ppt", "pot", "pps"],
+                _ => return None,
+            })
         };
         let mut linux: Vec<String> = desktop
             .lines()
@@ -456,7 +477,8 @@ mod tests {
             .unwrap_or_default()
             .split(';')
             .filter(|m| !m.is_empty())
-            .map(|m| mime_ext(m).unwrap_or(m).to_string()) // an unknown MIME type shows up in the diff
+            // An unknown MIME type shows up in the diff.
+            .flat_map(|m| mime_exts(m).map_or_else(|| vec![m.to_string()], |e| e.iter().map(|x| x.to_string()).collect()))
             .collect();
         linux.sort();
 

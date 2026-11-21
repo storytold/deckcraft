@@ -9,7 +9,4 @@ description = "DeckCraft colour: RGB/HSL, theme colour slots, DrawingML-style co
 workspace = true
 
 [dependencies]
-serde = { workspace = true }
-
-[dev-dependencies]
-serde_json = { workspace = true }
+craft-drawingml = { workspace = true }
