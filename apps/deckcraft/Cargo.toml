@@ -39,6 +39,18 @@ cpal = "0.16"
 # GridCraft, PdfCraft and PhotoCraft) registers the handler (Objective-C interop needs unsafe, which
 # our workspace forbids) behind a safe API. Pinned exactly: review the diff before bumping.
 fmv-macos-events = "=0.1.0"
+# The Edit menu a system file panel needs for ⌘V and the like (panel_menu.rs), behind a safe API.
+muda = { version = "0.21", default-features = false }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSMenu"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# tests/mac_panel_menu_appkit.rs reads AppKit's menu bar back.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSMenu", "NSMenuItem"] }
+
+[[test]]
+name = "mac_panel_menu_appkit"
+harness = false
