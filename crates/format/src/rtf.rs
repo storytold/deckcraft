@@ -60,7 +60,7 @@ pub fn slides_to_rtf(p: &Presentation) -> String {
 
 /// Whether `bytes` look like RTF.
 pub fn sniff_rtf(bytes: &[u8]) -> bool {
-    craft_rtf::is_rtf(bytes)
+    craft_rtf::is_rtf(bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes))
 }
 
 /// Destinations whose text is not document text.
@@ -189,6 +189,7 @@ fn heading_styles(rtf: &str) -> [bool; 10] {
 }
 
 fn paragraphs(rtf: &str) -> Vec<(usize, String)> {
+    let rtf = rtf.strip_prefix('\u{feff}').unwrap_or(rtf);
     let mut p = Outline {
         stack: vec![],
         st: St { skip: false, uc: 1 },
@@ -627,6 +628,13 @@ mod tests {
         crate::outline_to_slides(&mut p, "A\n\tB\n\t\tC\n");
         let rtf = slides_to_rtf(&p);
         assert!(rtf.contains("{\\s9\\li3240") && rtf.contains("\\pard\\s1\\outlinelevel0") && rtf.contains("\\pard\\s3\\outlinelevel2"), "{rtf}");
+    }
+
+    #[test]
+    fn an_initial_utf8_bom_is_not_part_of_the_rtf_outline() {
+        let rtf = concat!("\u{feff} \r\n", r"{\rtf1\ansi\pard Document\par\pard\li360 Café\par}");
+        assert!(sniff_rtf(rtf.as_bytes()));
+        assert_eq!(rtf_to_outline(rtf), "Document\n\tCafé\n");
     }
 
     #[test]
