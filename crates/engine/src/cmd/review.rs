@@ -35,7 +35,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             |s, p| neighbour(s, p, false)
         ),
-        cmd!(query "review.accessibility", "Check Accessibility", ["Review", "Accessibility"], None, "{} → [{slide, shape, issue}]", has_doc, accessibility),
+        cmd!(query "review.accessibility", "Check Accessibility", ["Review", "Accessibility"], None, "{} → [{slide, shape?, title?, issue}]", has_doc, accessibility),
         cmd!(query "review.spelling", "Spelling", ["Review", "Proofing"], Some("F7"), "{lang?, ignore?:[word]} → [{slide, shape?, row?, col?, notes?, para, start, end, word, lang, suggestions}] (shapes, table cells and notes; repeated words as {repeated, deleteFrom}; runs marked noProof skipped; each run in its own language, lang? for runs without one; Hunspell dictionaries installed on the system, else a built-in list of common misspellings)", has_doc, spelling),
         cmd!(
             "review.spellingChange",
@@ -246,12 +246,27 @@ fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
     Ok(json!({"slide": slide, "index": index, "text": text}))
 }
 
+/// Titles that differ only in case or in spacing read the same to a screen reader, so they name the same slide.
+fn title_key(title: &str) -> String {
+    title.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
 fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let mut out = vec![];
-    for (i, sl) in st.doc.slides.iter().enumerate() {
-        if sl.title().trim().is_empty() {
+    let titles: Vec<String> = st.doc.slides.iter().map(|sl| sl.title()).collect();
+    // How many slides carry each title: a screen-reader user navigates by title, so slides sharing one are hard to tell apart.
+    let mut title_counts: std::collections::HashMap<String, usize> = Default::default();
+    for title in &titles {
+        if !title.trim().is_empty() {
+            *title_counts.entry(title_key(title)).or_default() += 1;
+        }
+    }
+    for (i, (sl, title)) in st.doc.slides.iter().zip(&titles).enumerate() {
+        if title.trim().is_empty() {
             out.push(json!({"slide": i, "issue": "Missing slide title"}));
+        } else if title_counts.get(&title_key(title)).is_some_and(|count| *count > 1) {
+            out.push(json!({"slide": i, "title": title.trim(), "issue": "Duplicate slide title"}));
         }
         deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
             let needs_alt = matches!(
@@ -1040,5 +1055,77 @@ mod accessibility_contrast_tests {
         }
         assert!(!contrasts.iter().any(|issue| issue["shape"] == 6), "black control warned: {issues}");
         assert!(!contrasts.iter().any(|issue| issue["shape"] == 8), "white break or spaces warned: {issues}");
+    }
+}
+
+#[cfg(test)]
+mod accessibility_duplicate_title_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A slide with the given title, or without one when `title` is `None`.
+    fn add_slide(s: &mut Session, title: Option<&str>) {
+        let mut p = json!({"layout": "titleOnly"});
+        if let Some(t) = title {
+            p["title"] = json!(t);
+        }
+        s.execute("slide.new", &p).unwrap();
+    }
+
+    /// The slides the checker blames for sharing a title, as (slide index, title).
+    fn duplicates(issues: &Value) -> Vec<(u64, String)> {
+        issues
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|issue| issue["issue"] == "Duplicate slide title")
+            .map(|issue| (issue["slide"].as_u64().unwrap(), issue["title"].as_str().unwrap_or_default().to_string()))
+            .collect()
+    }
+
+    /// The title of every slide of the open deck.
+    fn titles(s: &Session) -> Vec<String> {
+        s.active().unwrap().doc.slides.iter().map(|sl| sl.title()).collect()
+    }
+
+    #[test]
+    fn every_slide_that_shares_a_title_is_reported() {
+        let mut s = Session::with_new();
+        add_slide(&mut s, Some("Results"));
+        add_slide(&mut s, Some("Results"));
+        add_slide(&mut s, Some("Agenda"));
+
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        let reported = duplicates(&issues);
+        let deck_titles = titles(&s);
+        let shared: Vec<u64> = deck_titles.iter().enumerate().filter(|(_, t)| t.as_str() == "Results").map(|(i, _)| i as u64).collect();
+        assert_eq!(shared.len(), 2, "the deck should have two slides titled Results: {deck_titles:?}");
+        // Both slides titled "Results" are reported, and the one titled "Agenda" is not.
+        assert_eq!(reported.iter().map(|(i, _)| *i).collect::<Vec<_>>(), shared, "{issues}");
+        assert!(reported.iter().all(|(_, t)| t == "Results"), "{issues}");
+    }
+
+    #[test]
+    fn slides_without_a_title_are_not_reported_as_duplicates() {
+        let mut s = Session::with_new();
+        add_slide(&mut s, None);
+        add_slide(&mut s, None);
+
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        assert!(duplicates(&issues).is_empty(), "{issues}");
+        // The untitled slides are still reported as missing a title, one each.
+        let missing = issues.as_array().unwrap().iter().filter(|issue| issue["issue"] == "Missing slide title").count();
+        assert_eq!(missing, titles(&s).iter().filter(|t| t.trim().is_empty()).count(), "{issues}");
+    }
+
+    #[test]
+    fn titles_that_differ_only_in_case_or_spacing_share_one_title() {
+        let mut s = Session::with_new();
+        add_slide(&mut s, Some("Results"));
+        add_slide(&mut s, Some("results "));
+
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        let reported = duplicates(&issues);
+        assert_eq!(reported.len(), 2, "{issues}");
     }
 }
