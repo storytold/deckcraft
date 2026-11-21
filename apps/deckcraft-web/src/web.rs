@@ -80,7 +80,7 @@ pub fn start() {
                         crate::host::Bridge::set_author(&mut app, &author);
                     }
                     crate::api::install(&mut app, cc.egui_ctx.clone());
-                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge, page_title: String::new() }))
                 }),
             )
             .await;
@@ -121,6 +121,8 @@ struct WebShell {
     inbox: Inbox,
     /// The parent page that keeps the files (`?host=parent`).
     bridge: Option<crate::host::Bridge>,
+    /// The page title last set (`document.title`), so it is written only when it changes.
+    page_title: String,
 }
 
 impl eframe::App for WebShell {
@@ -139,6 +141,7 @@ impl eframe::App for WebShell {
         {
             host.close();
         }
+        self.sync_page_title();
     }
 
     /// Consume browser drops with fresh input, capture the identity before the asynchronous read,
@@ -170,6 +173,23 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        self.sync_page_title();
+    }
+}
+
+impl WebShell {
+    /// eframe's web runner ignores `ViewportCommand::Title`: put the same window title on the
+    /// page, which a host embedding it reads to tell which presentation a drop opened (#1058).
+    /// After `logic` and after each UI pass, as the window title is, so an edit made in the pass
+    /// marks the page title in that same pass.
+    fn sync_page_title(&mut self) {
+        let title = self.app.window_title();
+        if title != self.page_title
+            && let Some(doc) = web_sys::window().and_then(|w| w.document())
+        {
+            doc.set_title(&title);
+            self.page_title = title;
+        }
     }
 }
 
