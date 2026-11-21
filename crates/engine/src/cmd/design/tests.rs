@@ -624,7 +624,7 @@ fn extra_colours_are_names_in_colour_parameters() {
     assert_eq!(shape.fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0xEB, 0xE5, 0xE0)))));
     assert_eq!(shape.line.as_ref().and_then(|l| l.fill.clone()), Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0xFC, 0xFC, 0xFC)))));
     assert_eq!(s.execute("slide.colorAt", &json!({"x": 150.0, "y": 150.0})).unwrap()["color"], "EBE5E0");
-    assert!(s.execute("shape.fill", &json!({"color": "Navy"})).is_err(), "an unknown name is still rejected");
+    assert!(s.execute("shape.fill", &json!({"color": "Nonesuch"})).is_err(), "an unknown name is still rejected");
 
     // `null` removes a list, `[]` the extras; a builtin scheme by name has neither.
     s.execute("design.colors", &json!({"tints": {"accent5": null, "accent6": null}, "computedTints": true})).unwrap();
