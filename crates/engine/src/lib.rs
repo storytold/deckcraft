@@ -237,6 +237,9 @@ pub struct DocState {
     /// The list AutoFormat just started from a typed `* ` or `1. `, so Backspace right after
     /// can put the typed text back.
     pub auto_list: Option<cmd::text::AutoList>,
+    /// The presentation and selection between a typed character and the AutoCorrect it set off,
+    /// so the command's undo step splits in two and Undo takes back only the correction (#2184).
+    pub autocorrected: Option<(Arc<Presentation>, Selection)>,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -266,6 +269,7 @@ impl DocState {
             compare: None,
             last_duplicate: None,
             auto_list: None,
+            autocorrected: None,
         }
     }
     pub fn is_dirty(&self) -> bool {
@@ -675,6 +679,9 @@ impl Session {
                 }
                 if outer {
                     self.tool.vertex_kind = vertex_kind;
+                    if let Some(st) = self.active_mut() {
+                        st.autocorrected = None;
+                    }
                 }
                 return Err(e);
             }
@@ -682,6 +689,7 @@ impl Session {
         if let Some(st) = self.active_mut() {
             clamp_selection(st);
         }
+        let autocorrected = if outer { self.active_mut().and_then(|st| st.autocorrected.take()) } else { None };
         if let (Some((uid, old, sel)), Some(st)) = (before, self.active_mut())
             && st.uid == uid
             && !Arc::ptr_eq(&old, &st.doc)
@@ -689,7 +697,11 @@ impl Session {
             && spec.undoable
             && outer
         {
-            push_undo(st, HistoryEntry { label: spec.label.to_string(), doc: old, selection: sel, vertex_kind });
+            push_undo(st, HistoryEntry { label: spec.label.to_string(), doc: old, selection: sel, vertex_kind: vertex_kind.clone() });
+            // The text as typed, before AutoCorrect changed it: its own step, undone first.
+            if let Some((doc, selection)) = autocorrected.filter(|(doc, _)| !Arc::ptr_eq(doc, &st.doc)) {
+                push_undo(st, HistoryEntry { label: "AutoCorrect".into(), doc, selection, vertex_kind });
+            }
         }
         if spec.journal && outer {
             self.journal.push((id.to_string(), params.clone()));

@@ -5282,6 +5282,51 @@ fn autocorrect_options_as_you_type() {
     assert_eq!(s.execute("text.get", &json!({"id": title})).unwrap()["text"], "monday notes ");
 }
 
+/// #2184: Undo right after AutoCorrect takes back only the correction; the space that set it off
+/// stays, and typing on does not correct the word again. A second Undo removes the space.
+#[test]
+fn undo_takes_back_only_the_autocorrect() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    let text = |s: &Session| {
+        s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|sh| sh.id.0 == title).unwrap().text.as_ref().unwrap().paragraphs[0].text()
+    };
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    for c in "hello ".chars() {
+        s.execute("text.insert", &json!({"text": c.to_string()})).unwrap();
+    }
+    assert_eq!(text(&s), "Hello ");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(text(&s), "hello ", "the correction is undone, the space stays");
+    assert_eq!(s.doc().unwrap().selection.text.as_ref().map(|t| t.caret), Some((0, 6)), "the caret stays after the space");
+    // Redo brings the correction back.
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(text(&s), "Hello ");
+    s.execute("edit.undo", &json!({})).unwrap();
+    for c in "world ".chars() {
+        s.execute("text.insert", &json!({"text": c.to_string()})).unwrap();
+    }
+    assert_eq!(text(&s), "hello world ", "typing on leaves the word as it is");
+    for _ in 0.."world ".len() {
+        s.execute("edit.undo", &json!({})).unwrap();
+    }
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(text(&s), "hello", "the next Undo removes the space");
+    // Typing that AutoCorrect leaves alone is still one step per character.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(text(&s), "hell");
+    // A typed comma sets AutoCorrect off too; the space after it leaves the undone word alone.
+    s.execute("text.selectAll", &json!({})).ok();
+    s.execute("text.delete", &json!({"dir": "backward"})).ok();
+    for c in "hello,".chars() {
+        s.execute("text.insert", &json!({"text": c.to_string()})).unwrap();
+    }
+    assert_eq!(text(&s), "Hello,");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("text.insert", &json!({"text": " "})).unwrap();
+    assert_eq!(text(&s), "hello, ", "the space after the comma leaves the undone word alone");
+}
+
 #[test]
 fn autocorrect_superscripts_ordinals_as_you_type() {
     let mut s = session();
