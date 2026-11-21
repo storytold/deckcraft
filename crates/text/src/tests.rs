@@ -152,7 +152,7 @@ fn ligatures_stay_for_scripts_that_need_them() {
     let has = |f: &[deckcraft_fonts::Feature], tag: &str| f.iter().any(|x| Some(*x) == deckcraft_fonts::feature(tag));
     let cells = |s: &str| {
         s.chars()
-            .map(|ch| Cell { ch, style: 0, face: 0, level: 0, glyphs: vec![], adv: 0.0, head: 0, boundary: true, upright: false })
+            .map(|ch| Cell { ch, style: 0, face: 0, level: 0, glyphs: vec![], adv: 0.0, head: 0, boundary: true, upright: false, fallback: false })
             .collect::<Vec<_>>()
     };
     let latin = shaping_features(&cells("office"), &[], Some(*b"Latn"));
@@ -2025,4 +2025,36 @@ fn serbian_runs_draw_the_fonts_serbian_forms() {
     let face = FontDb::global().face(&family, "Regular");
     assert_eq!(at(2), b(&face, "sr-Cyrl-RS"), "{family}: the Serbian б");
     assert_eq!(at(6), b(&face, "ru-RU"), "{family}: the Russian б");
+}
+
+#[test]
+fn bold_cjk_fallback_face_without_bold_is_made_bolder() {
+    // Fixture families: "DeckCraft Han" (Regular, Bold, Italic) draws U+31350; "DeckCraft Han
+    // Plain" (Regular only) draws U+31350 and U+31352. Nothing else installed draws them.
+    static LOADED: std::sync::Once = std::sync::Once::new();
+    LOADED.call_once(|| {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fonts/tests/fixtures");
+        for name in ["han-regular.ttf", "han-bold.ttf", "han-italic.ttf", "han-plain.ttf"] {
+            assert_eq!(FontDb::global().add_font(std::fs::read(dir.join(name)).unwrap()), 1, "{name}");
+        }
+    });
+    let run = |text: &str, ea: Option<&str>| {
+        let (p, mut sh) = setup(text, 600.0, 200.0);
+        let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+        para.props.bullet = Some(Bullet::None);
+        for r in &mut para.runs {
+            r.props.font = Some("DeckCraft Han".into());
+            r.props.font_ea = ea.map(String::from);
+            r.props.bold = Some(true);
+        }
+        let l = lay(&p, &sh, 600.0, 200.0);
+        let r = l.runs.into_iter().find(|r| !r.glyphs.is_empty()).unwrap();
+        (r.face.family.clone(), r.face.weight, r.fake_bold)
+    };
+    // The run's font lacks the ideograph: the fallback face has no bold, so it is made bolder.
+    assert_eq!(run("\u{31352}", None), ("DeckCraft Han Plain".into(), 400.0, true));
+    // The run's own bold face draws it.
+    assert_eq!(run("\u{31350}", None), ("DeckCraft Han".into(), 700.0, false));
+    // The run's own East Asian font, without a bold face, keeps the run's setting.
+    assert_eq!(run("\u{31350}", Some("DeckCraft Han Plain")), ("DeckCraft Han Plain".into(), 400.0, false));
 }
