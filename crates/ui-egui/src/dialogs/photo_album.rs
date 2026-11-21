@@ -19,16 +19,35 @@ fn album_item_label(v: &Value) -> String {
     }
 }
 
-fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
-    let path = if let Some(pick) = app.services.pick_open.as_mut() {
-        pick("picture")
-    } else {
+/// Add Pictures…: asks for a picture and appends it to the album dialog, if it is still open.
+fn pick_album_picture(app: &mut SlideApp) {
+    if app.services.pick_open.is_none() && app.services.start_pick.is_none() {
         app.set_status("Pass pictures to insert.photoAlbum");
-        None
-    };
-    let path = path?;
+        return;
+    }
+    app.pick_later("picture", |app, path| {
+        let Some(item) = load_album_picture(app, &path) else { return };
+        let Some(mut d) = app.dialog.take() else { return };
+        if d.id == "photoAlbum" {
+            match album_items(&d) {
+                Some(mut list) if list.len() < 48 => {
+                    list.push(item);
+                    let next = list.len().saturating_sub(1);
+                    store_album_items(&mut d, &list);
+                    d.fields.insert("sel".into(), next.to_string());
+                }
+                Some(_) => app.set_status("A photo album holds at most 48 pictures or text boxes"),
+                None => app.set_status("The picture list is invalid"),
+            }
+        }
+        app.dialog = Some(d);
+    });
+}
+
+/// The album item for the picture file at `path` (its name and data), or why it is not one (in the status bar).
+fn load_album_picture(app: &mut SlideApp, path: &str) -> Option<Value> {
     let loaded = if let Some(read) = app.services.read.as_ref() {
-        match read(&path) {
+        match read(path) {
             Ok(bytes) => bytes,
             Err(e) => {
                 app.set_status(e);
@@ -38,7 +57,7 @@ fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
     } else {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            match std::fs::read(&path) {
+            match std::fs::read(path) {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     app.set_status(format!("{path}: {e}"));
@@ -60,7 +79,7 @@ fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
         app.set_status("That picture is larger than 32 MB");
         return None;
     }
-    let name = std::path::Path::new(&path).file_name().and_then(std::ffi::OsStr::to_str).filter(|s| !s.is_empty()).unwrap_or("picture").to_string();
+    let name = std::path::Path::new(path).file_name().and_then(std::ffi::OsStr::to_str).filter(|s| !s.is_empty()).unwrap_or("picture").to_string();
     Some(json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(&loaded)}))
 }
 
@@ -170,19 +189,8 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
         });
         d.fields.insert("sel".into(), sel.to_string());
         ui.horizontal(|ui| {
-            if ui.button("Add Pictures…").clicked()
-                && let Some(item) = pick_album_picture(app)
-            {
-                match album_items(d) {
-                    Some(mut list) if list.len() < 48 => {
-                        list.push(item);
-                        let next = list.len().saturating_sub(1);
-                        store_album_items(d, &list);
-                        d.fields.insert("sel".into(), next.to_string());
-                    }
-                    Some(_) => app.set_status("A photo album holds at most 48 pictures or text boxes"),
-                    None => app.set_status("The picture list is invalid"),
-                }
+            if ui.button("Add Pictures…").clicked() {
+                pick_album_picture(app);
             }
             if ui.button("New Text Box").clicked() {
                 let text = d.get("boxText", "Text Box");
