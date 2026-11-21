@@ -487,6 +487,9 @@ mod units_tests;
 #[cfg(test)]
 #[path = "datetime_tests.rs"]
 mod datetime_tests;
+#[cfg(test)]
+#[path = "font_panel_tests.rs"]
+mod font_panel_tests;
 
 #[cfg(test)]
 mod inbox_tests;

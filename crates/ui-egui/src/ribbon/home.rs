@@ -219,12 +219,29 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 toggle(app, ui, Icon::Superscript, "Superscript", "format.superscript", b("superscript"));
                 toggle(app, ui, Icon::Subscript, "Subscript", "format.subscript", b("subscript"));
                 let r = icon_toggle(ui, Icon::CharSpacing, "Character Spacing", en, false);
-                egui::Popup::menu(&r).show(|ui| {
+                // The fields take clicks and typing, so only a click outside closes it.
+                egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
                     for (label, pt) in [("Very Tight", -3.0), ("Tight", -1.5), ("Normal", 0.0), ("Loose", 3.0), ("Very Loose", 6.0)] {
                         if ui.button(label).clicked() {
                             run(app, "format.spacing", json!({"pt": pt}));
+                            ui.close();
                         }
                     }
+                    ui.separator();
+                    let f = |k: &str| st.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Spacing (pt)");
+                        if let Some(pt) = widgets::spinner(ui, "cspacing", "Spacing", f("spacing"), 0.5, "", 46.0) {
+                            run(app, "format.spacing", json!({"pt": pt}));
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Offset (%)");
+                        // Raised (+) or lowered (−) by a share of the font size, as superscript and subscript are.
+                        if let Some(pc) = widgets::spinner(ui, "coffset", "Offset", (f("baseline") * 100.0).round(), 1.0, "", 46.0) {
+                            run(app, "format.fontDialog", json!({"baseline": pc / 100.0}));
+                        }
+                    });
                 });
                 let r = icon_toggle(ui, Icon::ChangeCase, "Change Case", en, false);
                 egui::Popup::menu(&r).show(|ui| {
@@ -237,6 +254,14 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                     ] {
                         if ui.button(label).clicked() {
                             run(app, "format.case", json!({"mode": mode}));
+                        }
+                    }
+                    ui.separator();
+                    let caps = st.get("caps").and_then(Value::as_str).unwrap_or("none");
+                    for (label, mode) in [("Small Caps", "small"), ("All Caps", "all")] {
+                        // A display setting, unlike the cases above: the typed letters stay as they are.
+                        if ui.selectable_label(caps == mode, label).clicked() {
+                            run(app, "format.caps", json!({"caps": if caps == mode { "none" } else { mode }}));
                         }
                     }
                 });

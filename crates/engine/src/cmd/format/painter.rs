@@ -1,6 +1,6 @@
 use super::{
-    Bullet, Effects, Fill, Line, ParaProps, Result, RunProps, Session, Shape, Strike, Value, bad, base64_decode, bool_or, current_para, current_run,
-    ed, edit_shapes, format_run, ids_param, json, ok, resolve, str_param,
+    Bullet, Caps, Effects, Fill, Line, ParaProps, Result, RunProps, Session, Shape, Strike, Value, bad, base64_decode, bool_or, current_para,
+    current_run, ed, edit_shapes, format_run, ids_param, json, ok, resolve, str_param,
 };
 
 /// Formatting picked up by the Format Painter.
@@ -115,6 +115,13 @@ pub(super) fn state(s: &mut Session, _p: &Value) -> Result<Value> {
         "strike": r.strike.is_some_and(|x| x != Strike::None),
         "superscript": r.baseline.unwrap_or(0.0) > 0.0,
         "subscript": r.baseline.unwrap_or(0.0) < 0.0,
+        "baseline": r.baseline.unwrap_or(0.0),
+        "caps": match r.caps {
+            Some(Caps::Small) => "small",
+            Some(Caps::All) => "all",
+            _ => "none",
+        },
+        "spacing": r.spacing.unwrap_or(0.0),
         "align": pp.align.map(|a| a.xml()),
         "bullets": matches!(pp.bullet, Some(Bullet::Char { .. })),
         "numbering": matches!(pp.bullet, Some(Bullet::AutoNum { .. })),
