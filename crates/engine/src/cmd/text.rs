@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use deckcraft_geom::{Affine, Point, Rect};
+use deckcraft_geom::{Affine, Point};
 use deckcraft_model::edit::{self as ed, Pos};
 use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::text::{Align, AutoFit, Hyperlink, Paragraph, Run, RunKind, RunProps, TextBody};

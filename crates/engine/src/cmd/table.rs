@@ -179,7 +179,7 @@ pub fn table_frame(st: &DocState, sh: &Shape) -> Option<TableFrame> {
     let x = sh.xfrm.unwrap_or_else(|| xfrm_of(&st.doc, &st.selection, sh));
     let heights = table_drawn_heights(&st.doc, &st.selection, t);
     let cells = deckcraft_render::table_cell_rects(t, &heights);
-    Some(TableFrame { affine: x.affine(), cols: t.cols.clone(), heights, cells })
+    Some(TableFrame { affine: super::parent_transform(st, sh.id) * x.affine(), cols: t.cols.clone(), heights, cells })
 }
 
 impl TableFrame {

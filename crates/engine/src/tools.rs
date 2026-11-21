@@ -163,10 +163,12 @@ enum Drag {
         orig: Xfrm,
     },
     Rotate {
-        ids: Vec<ShapeId>,
+        /// Slide coordinates to the shared rotation frame.
+        to_frame: Affine,
         center: Point,
         start: f64,
-        origs: Vec<(ShapeId, Xfrm)>,
+        /// Original boxes and their parent-to-frame transforms.
+        origs: Vec<(ShapeId, Xfrm, Affine)>,
     },
     Adjust {
         id: ShapeId,
@@ -331,6 +333,17 @@ pub fn box_handles(x: &Xfrm) -> ([Point; 8], Point) {
     let rot =
         Affine::translate(Vec2::new(x.x + w / 2.0, x.y + h / 2.0)) * Affine::rotate(x.rot.to_radians()) * Point::new(0.0, up * (h / 2.0 + 20.0));
     (pts, rot)
+}
+
+/// Box handles after the containing groups are applied. The rotation stem remains 20 slide
+/// points long, so shrinking a group cannot merge it with the north resize handle.
+pub fn transformed_box_handles(x: &Xfrm, parent: Affine) -> ([Point; 8], Point) {
+    let (pts, rot) = box_handles(x);
+    let top = parent * pts[1];
+    let direction = parent * rot - top;
+    let length = direction.hypot();
+    let rot = if length > 0.0 && length.is_finite() { top + direction * (20.0 / length) } else { top };
+    (pts.map(|q| parent * q), rot)
 }
 
 /// WordArt adjust handles for `sh`, in shape-local points (the text rectangle). Empty when the

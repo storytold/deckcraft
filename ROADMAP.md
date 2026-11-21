@@ -2,6 +2,12 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (group-move connector cleanup uses bounded tree passes and hash-set membership; attachment behavior and parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** minor (grouped handle integrity, slide-space click tolerances and Alt-drag duplication; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** trivial (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-13 · **Change:** minor (collapsed-parent move and resize gestures preserve geometry; synced with current upstream; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; empty notes slides are kept through PPTX and native saves, #2025; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-09 · **Change:** minor (progress log: PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import, #239) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -12,6 +18,7 @@
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (community PR wave 10: PPTX and native saves keep table cell centred anchoring, text overflow, compatible line spacing, normalised character height, Thai distributed alignment, RTL table direction, alternate run language and reflection transforms; imported effects placed by parent time-node delays; Reuse Slides fits the destination size and brings custom table styles; deleted slides leave custom shows; merged shapes drop their animations; Compress Pictures measures grouped pictures at displayed size; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (progress log: fix for a workflow-breaking regression: Ctrl+C/X/V use the system clipboard again, broken for all text and objects from 0.11.1 to 0.15.0; pasted and duplicated placeholders keep their look; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (progress log: Set Up Slide Show ▸ Keep mouse cursor visible, #1445; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -158,6 +165,23 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-18 | Group-move connector cleanup avoids a tree search for each descendant and uses hash-set endpoint membership; stationary and moving attachments retain their behavior (#1095) |
+| 2026-11-18 | Connector cleanup follows moved shape trees: nested connector ends detach from stationary external targets, while targets inside the moved group or selected with it stay glued (#1095) |
+| 2026-11-18 | Grouped line-end attachments persist in the shape tree and follow target sites in connector parent space. Rotation and text-selection drags skip collapsed live mappings; normal and tiny finite frames stay valid (#1095) |
+| 2026-11-18 | Grouped text editing shares the renderer’s point-sized layout; caret, selection, spelling and composition underlines agree with scaled-group text placement (#1095) |
+| 2026-11-18 | Synced grouped-editing fixes with upstream, retaining canvas clipping, all-slides picture export, scaled-group text placement, language and format updates, and both documentation histories (#1095) |
+| 2026-11-16 | Grouped editing: collapsed parents preserve line ends and Decorative Text adjustments; nested/uneven scales retain slide-space click bands, rotation stays separate from resize, and Alt-drag copies members into their own group (#1095) |
+| 2026-11-16 | Synced grouped-editing fixes with upstream, retaining shared format helpers, display names, slide-show replay behavior and both documentation histories (#1095) |
+| 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
+| 2026-11-13 | Grouped box gestures: collapsed parents reject resize and whole-selection movement before invalid geometry or Alt-drag copies; nested/reflected, save/load and tiny-invertible regressions (#1095) |
+| 2026-11-13 | Synced grouped-editing fixes with upstream, retaining shared codecs/metafile rendering, text and group-operation fixes, and both documentation histories (#1095) |
+| 2026-11-11 | Synced grouped-editing fixes with upstream, retaining the shared media codecs/demuxers, import/render hardening and both documentation histories (#1095) |
+| 2026-11-11 | Grouped table cells: outlines, carets, underlines and cell clicks agree with rendering, including growing rows; covering siblings receive context clicks (#1095) |
+| 2026-11-11 | Grouped snapping: resize edges snap in slide space; moving a member no longer snaps against its containing groups. Nested, scaled/reflected and undo regressions (#1095) |
+| 2026-11-11 | Shape rotation: Shift snapping no longer carries one selected member’s snapped turn into the next. Grouped/ungrouped and reversed-selection regressions; synced with upstream 0.18.0 (#1095) |
+| 2026-11-10 | Grouped editing: selected members of different groups rotate about one slide pivot without jumping when the pointer is still (#1095) |
+| 2026-11-06 | Grouped shape adjustments: skip drags when the parent transform cannot be inverted, preserving callout geometry in native saves; regression coverage includes collapsed and tiny invertible groups (#1095) |
+| 2026-11-05 | Grouped editing: sync #1095 with upstream, retaining text, sibling-click and line-end regression coverage; parity scores unchanged |
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | PPTX: a slide whose notes slide has empty text retains its notesSlide part and relationship on save and reopen (#2025); empty notes slides survive native round trips |
@@ -180,6 +204,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-01 | Ctrl+V of a picture copied in a browser (Copy Image) pastes the picture, not a text box with its link and alt text; the link still pastes as text when no picture came with it |
 | 2026-11-01 | Copy, Cut, Paste, Duplicate and Alt+drag of a title, body or other placeholder on a slide keep its look: the copy is a regular shape that takes the size, font, bullets, indents, autofit and box its layout and master gave it, instead of 18 pt unbulleted text |
 | 2026-11-01 | Clipboard: Ctrl+C, Ctrl+X and Ctrl+V use the system clipboard again, so text and pictures paste from other apps and in-app copies paste back. Since the egui 0.37 migration (#1350) the desktop build had a clipboard that only worked inside the app. On native Wayland, text goes through egui's Wayland clipboard; HTML stays on X11, macOS and Windows |
+| 2026-11-02 | Grouped editing follow-up: spelling underlines are regression-tested against rendered text and table cells; line ends constrain Shift angles and query connection sites in slide space before converting back into group space (#1095) |
+| 2026-11-01 | Grouped text: editing outlines, caret/selection, hit tests and frame gestures follow moved, scaled, rotated, flipped and nested groups. Sibling hit tests map clicks and tolerance into group child space; regression coverage includes overlapping members (#1095) |
 | 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
@@ -351,6 +377,23 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | minor | Group-move connector cleanup uses bounded tree passes and hash-set membership; large-group pointer coverage preserves stationary connector attachments. Scores unchanged |
+| 2026-11-18 | minor | Moving a group detaches nested connectors from stationary external targets while keeping connections to targets that move with them; pointer, undo and native-save regressions added. Scores unchanged |
+| 2026-11-18 | minor | Grouped connector endpoint glue persists through target movement and native saves; live collapsed-parent rotation/text-selection samples preserve the whole selection; scale-tolerance regression strengthened. Scores unchanged |
+| 2026-11-18 | minor | Grouped text carets, selection, spelling and IME underlines share the renderer’s slide-point layout, preserving font sizes, insets and wrapping (#1095) |
+| 2026-11-18 | trivial | Synced grouped-editing fixes with upstream export, canvas and text-placement changes; retained both documentation histories and unchanged parity scores (#1095) |
+| 2026-11-16 | minor | Grouped handle, click-tolerance and Alt-drag regressions fixed; parity scores unchanged (#1095) |
+| 2026-11-16 | trivial | Merged current upstream into #1095; retained grouped-editing fixes and upstream behavior. Parity scores unchanged |
+| 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
+| 2026-11-13 | minor | Move and resize guards reject singular parent mappings before geometry or duplication; small invertible parents remain supported (#1095) |
+| 2026-11-13 | trivial | Merged current upstream into #1095; retained grouped-editing fixes and upstream behavior. Parity scores unchanged |
+| 2026-11-11 | trivial | Merged current upstream into #1095; retained grouped-editing fixes, upstream behavior and both progress histories. Parity scores unchanged |
+| 2026-11-11 | minor | Grouped table-cell frames, caret/underline geometry and pointer cell selection use the renderer’s slide-space mapping, including growing rows; context clicks respect covering siblings (#1095) |
+| 2026-11-11 | minor | Axis-aligned grouped resizing snaps dragged edges in slide space, including scale/reflection; moving members exclude their ancestors from smart-guide targets; pointer and undo regressions (#1095) |
+| 2026-11-11 | minor | Same-parent Shift rotation snaps each member from the raw pointer turn, independent of selection order; upstream ink handling and gesture limits retained during merge (#1095) |
+| 2026-11-10 | minor | Rotation drags across groups share the grabbed handle’s slide pivot and do not jump at the start; reflected, unevenly scaled and nested group cases are covered (#1095) |
+| 2026-11-06 | minor | Adjustment-handle drags in collapsed groups leave geometry unchanged and preserve native save/load values; normal and tiny invertible groups retain adjustment and undo behavior (#1095) |
+| 2026-11-05 | trivial | Sync grouped-editing fixes and regression coverage with current upstream; preserve both documentation updates and unchanged parity scores (#1095) |
 | 2026-11-16 | trivial | Progress log: export all slides as PNG or JPEG from the File tab (#2019); scores unchanged |
 | 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
 | 2026-11-11 | minor | Progress log: empty notes slides preserved on PPTX/native save (#2025); parity scores unchanged |
@@ -363,6 +406,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-11-02 | trivial | Progress log: tiled picture fills keep their size in scaled groups. Scores and milestone names unchanged |
 | 2026-11-01 | trivial | Workflow-breaking regression fixed: the desktop build uses the system clipboard again (eframe `clipboard` feature) |
+| 2026-11-02 | minor | Renderer-based spelling-underline regressions for grouped/nested text and table cells; grouped line ends snap and constrain Shift angles in slide space, with endpoint and undo coverage (#1095) |
+| 2026-11-01 | minor | Grouped-text editing coordinates, pointer gestures and sibling hit tests follow enclosing group transforms; synthetic regression coverage (#1095) |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
 | 2026-10-29 | trivial | Progress log: going back in the slide show reverses the left slide's transition (#1531). Scores and milestone names unchanged |
