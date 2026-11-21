@@ -149,12 +149,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             {
                 let size =
                     crate::textures::fit_size((480, (480.0 * doc.slide_size.height / doc.slide_size.width.max(1.0)).clamp(1.0, 1e9) as u32), 640);
-                let image = deckcraft_render::render_slide(
-                    &doc,
-                    n,
-                    &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
-                );
-                show.remote_next = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false)).map(|image| (n, image));
+                let image = super::presenter::render_preview(&doc, n, size, 0);
+                show.remote_next = crate::presenter::Preview::from_image(&image).map(|image| (n, image));
             }
             if !show.presenter_grid {
                 show.remote_grid.clear();
@@ -369,7 +365,9 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
     let media = crate::media::slide_media(doc, idx);
     let hidden: Vec<ShapeId> = media
         .iter()
-        .filter(|(id, _, clip)| clip.hide_while_not_playing && !app.media.status(*id).is_some_and(|s| s.state != deckcraft_media::PlayState::Ended))
+        .filter(|(id, _, clip)| {
+            clip.hide_while_not_playing && (!clip.video || !app.media.status(*id).is_some_and(|s| s.state != deckcraft_media::PlayState::Ended))
+        })
         .map(|m| m.0)
         .collect();
     let gifs = app.media.gifs(doc_uid, doc, idx, now, &app.session.gif_paused);
