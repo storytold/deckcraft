@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (progress log: Reuse Slides picker shows thumbnails; previous: trivial, progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; empty notes slides are kept through PPTX and native saves, #2025; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-09 · **Change:** minor (progress log: PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import, #239) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-07 · **Change:** trivial (progress log: text in a group whose child coordinates scale its shapes is placed for export where the slide draws it; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -184,6 +184,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
 | 2026-10-29 | Slide Show: going back to the previous slide plays the transition of the slide being left, reversed, as PowerPoint does, instead of the previous slide's own entrance transition (#1531); a jump (Go to Slide, links) still plays the target slide's transition |
+| 2026-10-28 | Reuse Slides: the picker shows each slide of the other presentation as a thumbnail beside its title. Thumbnails render only for rows in view, a few a frame, for the first 200 slides; a slide that can't be drawn shows a placeholder |
 | 2026-10-27 | Set Up Slide Show ▸ Keep mouse cursor visible: a full-screen show no longer hides a still pointer, so the choices of a branching deck stay visible and clickable; the setting is kept with the user's preferences (`ui.json`, `showKeepCursor`), off by default (#1445) |
 | 2026-10-25 | A photo in a picture placeholder is cut into the shape its layout gives the placeholder, as PowerPoint draws it: a layout's round picture placeholder keeps a slide's photo in a circle with the layout's white border, where it came out as a rectangle (the reader only passed `p:sp` placeholders to `inherit_placeholder_geometry`, not `p:pic`) |
 | 2026-10-28 | CLI `run --cmd-file FILE` reads UTF-8 commands in order alongside `--cmd`, skips blank/comment lines, and reports file/line errors before final save/export (#1098) |
@@ -367,6 +368,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
 | 2026-10-29 | trivial | Progress log: going back in the slide show reverses the left slide's transition (#1531). Scores and milestone names unchanged |
 | 2026-10-29 | trivial | Progress log: the Picture Styles row leaves room for Crop and Size (#1232). Scores and milestone names unchanged |
+| 2026-10-28 | trivial | Progress log: thumbnails in the Reuse Slides picker. Scores and milestone names unchanged |
 | 2026-10-25 | trivial | Progress log: a picture in a picture placeholder takes the layout's shape. Scores and milestone names unchanged |
 | 2026-10-28 | trivial | Progress log: CLI command-file input (#1098). Scores and milestone scope unchanged. |
 | 2026-10-28 | trivial | Progress log: MCP accepts multiple automation read and write roots (#1154). Scores and milestone names unchanged |

@@ -236,6 +236,8 @@ pub struct SlideApp {
     anim_preview: Option<AnimPreview>,
     /// Where the Reuse Slides picker inserts: the presentation and slide current when it opened.
     reuse_target: Option<FileTarget>,
+    /// The Reuse Slides picker's file and thumbnails, while it is open.
+    pub(crate) reuse_preview: Option<dialogs::ReusePreview>,
     /// Audio/video playback (editor control bar, slide show, `media.*` commands).
     pub media: media::MediaHost,
     pub status: Option<(String, f64)>,

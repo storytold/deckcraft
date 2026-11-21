@@ -137,3 +137,128 @@ fn a_failed_insert_keeps_the_dialog_open() {
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("reuseSlides"), "the dialog closed on a failed insert");
     assert_eq!(titles(&h), before);
 }
+
+/// Thumbnails drawn so far for the open picker: `(held, rendered ever)`.
+fn thumbs(h: &Harness<'_, SlideApp>) -> (usize, u64) {
+    h.state().reuse_preview.as_ref().map(|p| (p.textures.thumb_count(), p.textures.thumb_renders())).unwrap_or_default()
+}
+
+#[test]
+fn each_listed_slide_shows_a_thumbnail_of_the_picked_file() {
+    let file = Rc::new(RefCell::new(deck_bytes(&["Alpha", "Beta", "Gamma"])));
+    let mut h = harness(&file);
+    open_dialog(&mut h);
+    h.run_steps(6);
+    assert_eq!(thumbs(&h), (3, 3));
+    // Settled: later frames draw the same textures without rendering again.
+    h.run_steps(6);
+    assert_eq!(thumbs(&h), (3, 3));
+    assert!(h.query_all_by_label("No preview").next().is_none());
+}
+
+#[test]
+fn ticking_only_the_second_slide_inserts_the_second_slide() {
+    let file = Rc::new(RefCell::new(deck_bytes(&["Alpha", "Beta", "Gamma"])));
+    let mut h = harness(&file);
+    open_dialog(&mut h);
+    h.run_steps(4);
+    for i in [0, 2] {
+        h.state_mut().dialog.as_mut().unwrap().fields.insert(format!("off{i}"), "1".into());
+    }
+    h.run_steps(2);
+    press_insert(&mut h);
+    assert!(h.state().dialog.is_none());
+    assert!(h.state().reuse_preview.is_none(), "the thumbnails go with the dialog");
+    let t = titles(&h);
+    assert!(t.iter().any(|x| x == "Beta") && !t.iter().any(|x| x == "Alpha" || x == "Gamma"), "{t:?}");
+}
+
+#[test]
+fn the_thumbnails_go_when_a_script_closes_the_dialog() {
+    let file = Rc::new(RefCell::new(deck_bytes(&["Alpha", "Beta"])));
+    let mut h = harness(&file);
+    open_dialog(&mut h);
+    h.run_steps(6);
+    assert_eq!(thumbs(&h).0, 2);
+    let (req, _rx) = crate::control::ControlRequest::new("ui.dialog.close", json!({}));
+    let ctx = h.ctx.clone();
+    assert!(matches!(crate::control::handle(h.state_mut(), &ctx, &req), crate::control::Outcome::Done(_)));
+    h.run_steps(1);
+    assert!(h.state().dialog.is_none());
+    assert!(h.state().reuse_preview.is_none(), "the parsed file and its textures are released");
+}
+
+#[test]
+fn a_slide_that_cannot_be_drawn_keeps_its_title_beside_a_placeholder() {
+    let file = Rc::new(RefCell::new(deck_bytes(&["Alpha"])));
+    let mut h = harness(&file);
+    open_dialog(&mut h);
+    if let Some(d) = h.state_mut().dialog.as_mut()
+        && let Some(a) = d.params["slides"].as_array_mut()
+    {
+        a.push(json!({"index": 9, "title": "Ghost", "hidden": false}));
+    }
+    h.run_steps(6);
+    h.get_by_label("10  Ghost");
+    assert_eq!(h.query_all_by_label("No preview").count(), 1);
+    assert_eq!(thumbs(&h), (1, 1));
+}
+
+#[test]
+fn only_the_first_200_slides_get_thumbnails_and_only_rows_in_view_render() {
+    let names: Vec<String> = (1..=205).map(|i| format!("S{i}")).collect();
+    let file = Rc::new(RefCell::new(deck_bytes(&names.iter().map(String::as_str).collect::<Vec<_>>())));
+    let mut h = harness(&file);
+    open_dialog(&mut h);
+    h.run_steps(10);
+    assert_eq!(h.query_all_by_label("No preview").count(), 5, "slides 201 to 205 are listed by title only");
+    let (_, rendered) = thumbs(&h);
+    assert!((1..=20).contains(&rendered), "rendered {rendered} of 205");
+}
+
+/// An app whose open dialog picks `path` and that has no reader of its own (the engine reads it).
+fn path_only_harness(path: &str) -> Harness<'static, SlideApp> {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let picked = path.to_string();
+    let services = Services { pick_open: Some(Box::new(move |_| Some(picked.clone()))), ..Services::default() };
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(s, services),
+    );
+    h.run_steps(3);
+    h
+}
+
+#[test]
+fn a_host_without_a_reader_lists_previews_and_inserts_the_same_bytes() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-reuse-path-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("src.deckcraft");
+    std::fs::write(&path, deck_bytes(&["Alpha", "Beta"])).unwrap();
+    let mut h = path_only_harness(path.to_str().unwrap());
+    open_dialog(&mut h);
+    h.run_steps(6);
+    assert_eq!(thumbs(&h).0, 2, "each listed slide has a thumbnail");
+    // The file changes after it was listed: what is inserted is still what was listed.
+    std::fs::write(&path, deck_bytes(&["Changed"])).unwrap();
+    press_insert(&mut h);
+    let t = titles(&h);
+    assert!(t.ends_with(&["Alpha".to_string(), "Beta".to_string()]) && !t.contains(&"Changed".to_string()), "{t:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_long_title_wraps_beside_its_thumbnail() {
+    let long = "A very long slide title that keeps going ".repeat(6);
+    let file = Rc::new(RefCell::new(deck_bytes(&[long.trim()])));
+    let mut h = harness(&file);
+    open_dialog(&mut h);
+    h.run_steps(6);
+    let row = h.get_by_label_contains("A very long slide title").rect();
+    assert!(row.width() <= crate::dialogs::REUSE_TITLE_W + 1.0, "the title is {} wide", row.width());
+    assert!(row.height() > 2.0 * 14.0, "the title wraps onto more lines: {}", row.height());
+}
