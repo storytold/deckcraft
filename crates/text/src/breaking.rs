@@ -262,21 +262,23 @@ pub(crate) struct Tab {
 
 /// The paragraph's tab stops in position order (a stop at no finite position is left out), so
 /// [`tab_advance`] finds the next one by binary search instead of a scan per tab.
-pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
+pub(crate) fn tabs_of(props: &ParaProps, edge: f64) -> Vec<Tab> {
     let mut tabs: Vec<Tab> = props
         .tabs
         .as_ref()
         .map(|t| {
             t.iter()
                 .filter(|s| s.pos.is_finite())
-                .map(|s| Tab {
-                    pos: s.pos,
-                    align: match s.align.as_str() {
+                .map(|s| {
+                    let align = match s.align.as_str() {
                         "ctr" => TabAlign::Center,
                         "r" => TabAlign::Right,
                         "dec" => TabAlign::Decimal,
                         _ => TabAlign::Left,
-                    },
+                    };
+                    // PowerPoint aligns a right stop past the right edge at the edge (#1663).
+                    let pos = if align == TabAlign::Right && s.pos > edge { edge } else { s.pos };
+                    Tab { pos, align }
                 })
                 .collect()
         })
