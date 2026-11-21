@@ -18,6 +18,10 @@ use vello_cpu::{Pixmap, RenderContext, peniko};
 /// Longest side of the rasterised gradient, in pixels (bilinear sampling smooths the rest).
 const MAX_SIDE: f64 = 384.0;
 
+/// Fewest pixels across the short side of a long, thin gradient (a line's stroke), up to its size
+/// on the output, so the colors still change across it.
+const MIN_SIDE: f64 = 64.0;
+
 /// Most pixel × outline-edge tests one `shape` gradient may cost; a denser outline is simplified
 /// to fit (each pixel tests every edge).
 const MAX_EDGE_WORK: u64 = 64_000_000;
@@ -287,18 +291,41 @@ pub fn ramp(stops: &[(f64, Rgba)]) -> Vec<Rgba> {
 /// `ramp::expand`) over `bounds`, faded by `alpha`; `m` maps the path to the output.
 #[allow(clippy::too_many_arguments)]
 pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64, Rgba)], bounds: Rect, path: &BezPath, m: Affine, alpha: f64) {
-    if bounds.width() <= 0.0 || bounds.height() <= 0.0 || !bounds.is_finite() || stops.is_empty() {
+    if !set_paint(ctx, kind, focus, stops, bounds, path, m, alpha) {
         return;
+    }
+    ctx.fill_path(path);
+    ctx.reset_paint_transform();
+}
+
+/// Set the transform to `m` and the paint to a `rect` or `shape` path gradient of `stops` over
+/// `bounds`, `outline` being the shape whose contours a `shape` gradient follows. Returns false,
+/// with nothing set, when `bounds` is empty or there are no stops. The caller resets the paint
+/// transform after drawing with it.
+#[allow(clippy::too_many_arguments)]
+pub fn set_paint(
+    ctx: &mut RenderContext,
+    kind: &str,
+    focus: [f64; 4],
+    stops: &[(f64, Rgba)],
+    bounds: Rect,
+    outline: &BezPath,
+    m: Affine,
+    alpha: f64,
+) -> bool {
+    if bounds.width() <= 0.0 || bounds.height() <= 0.0 || !bounds.is_finite() || stops.is_empty() {
+        return false;
     }
     let k = crate::scale_of(m);
     let k = if k.is_finite() && k > 0.0 { k } else { 1.0 };
     let longest = bounds.width().max(bounds.height()) * k;
     let s = (MAX_SIDE / longest).min(1.0) * k;
-    let (pw, ph) = (((bounds.width() * s).ceil() as u32).clamp(1, 4096), ((bounds.height() * s).ceil() as u32).clamp(1, 4096));
+    let side = |len: f64| ((len * s).ceil().max((len * k).ceil().min(MIN_SIDE)) as u32).clamp(1, 4096);
+    let (pw, ph) = (side(bounds.width()), side(bounds.height()));
     let (outline, pw, ph) = if kind == "shape" {
         let max_edges = edge_budget(pw, ph);
         let pixel = (bounds.width() / f64::from(pw)).min(bounds.height() / f64::from(ph));
-        let o = simplify(polygons(path), pixel, max_edges);
+        let o = simplify(polygons(outline), pixel, max_edges);
         let (pw, ph) = fit_raster(o.iter().map(|p| p.len().saturating_sub(1)).sum(), pw, ph);
         (o, pw, ph)
     } else {
@@ -307,7 +334,7 @@ pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64,
     // An outline `polygons` refused (too many points) has no contours: skip the shape rather than
     // paint it with the rectangle fallback's different gradient.
     if kind == "shape" && outline.is_empty() {
-        return;
+        return false;
     }
     let lut = ramp(stops);
     let a = alpha.clamp(0.0, 1.0);
@@ -331,8 +358,7 @@ pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64,
     ctx.set_paint_transform(
         Affine::translate(bounds.origin().to_vec2()) * Affine::scale_non_uniform(bounds.width() / pw as f64, bounds.height() / ph as f64),
     );
-    ctx.fill_path(path);
-    ctx.reset_paint_transform();
+    true
 }
 
 #[cfg(test)]
