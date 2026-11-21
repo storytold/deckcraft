@@ -1,4 +1,4 @@
-use super::{ColorRef, Fill, Geom, Line, NO_ID_SPACE, Result, Session, Value, bad, bool_or, id_param, json, str_param, usize_param};
+use super::{ColorRef, Fill, Geom, Line, NO_ID_SPACE, Result, Session, Value, bad, bool_or, id_param, json, str_param, usize_param, xfrm_of};
 
 pub(super) fn sites(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id", "shape.sites")?.ok_or_else(|| bad("shape.sites", "missing `id`"))?;
@@ -24,20 +24,50 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "both shapes need connection sites (lines and groups have none)"));
     }
     let pick = |v: &[deckcraft_geom::Point], key: &str| usize_param(p, key).filter(|i| *i < v.len());
+    // A site left unsaid is the one facing the other shape along the dominant direction between
+    // the two (a box mostly below is left from the bottom), which is where a person glues an
+    // arrow; "the closest pair" chose a side site for a diagonal neighbour and crossed boxes.
+    // The direction runs between the shapes' box centres: the mean of the sites is off-centre
+    // for a shape whose sites are not symmetric (a triangle's lie mostly along its base).
+    // In slide space, as the sites are: a shape inside a group is placed where the group draws it.
+    let centre = |id| {
+        crate::connect::locate(&st.doc, &st.selection, st.shapes(), id)
+            .map(|(sh, to_abs)| to_abs * xfrm_of(&st.doc, &st.selection, sh).center())
+            .unwrap_or_default()
+    };
+    let (ca, cb) = (centre(from), centre(to));
+    // A tie goes to the lowest site index: an exact diagonal leaves a box from its bottom (site 2,
+    // before the right side, 3) and enters the other at its top (0, before the left side, 1), and
+    // shapes with one centre, where every direction is as good, both take site 0.
+    let facing = |v: &[deckcraft_geom::Point], c: deckcraft_geom::Point, dx: f64, dy: f64| {
+        let len = dx.hypot(dy).max(1e-9);
+        let cos: Vec<f64> = v
+            .iter()
+            .map(|q| {
+                let (sx, sy) = (q.x - c.x, q.y - c.y);
+                (sx * dx + sy * dy) / (sx.hypot(sy).max(1e-9) * len)
+            })
+            .collect();
+        let best = cos.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        cos.iter().position(|x| *x >= best - 1e-9).unwrap_or(0)
+    };
+    // With one site given, the other end is the site of the other shape closest to it, as before;
+    // the facing rule is for the case where neither is given.
+    let closest = |v: &[deckcraft_geom::Point], to: deckcraft_geom::Point| {
+        let mut best = (f64::MAX, 0);
+        for (i, q) in v.iter().enumerate() {
+            let d = (*q - to).hypot();
+            if d < best.0 {
+                best = (d, i);
+            }
+        }
+        best.1
+    };
     let (ia, ib) = match (pick(&a, "fromSite"), pick(&b, "toSite")) {
         (Some(i), Some(j)) => (i, j),
-        (fi, fj) => {
-            let mut best = (f64::MAX, 0, 0);
-            for (i, pa) in a.iter().enumerate().filter(|(i, _)| fi.is_none_or(|f| f == *i)) {
-                for (j, pb) in b.iter().enumerate().filter(|(j, _)| fj.is_none_or(|f| f == *j)) {
-                    let d = (*pa - *pb).hypot();
-                    if d < best.0 {
-                        best = (d, i, j);
-                    }
-                }
-            }
-            (best.1, best.2)
-        }
+        (Some(i), None) => (i, closest(&b, a[i])),
+        (None, Some(j)) => (closest(&a, b[j]), j),
+        (None, None) => (facing(&a, ca, cb.x - ca.x, cb.y - ca.y), facing(&b, cb, ca.x - cb.x, ca.y - cb.y)),
     };
     let (p0, p1) = (a[ia], b[ib]);
     let id = match id_param(p, "id", "shape.connect")? {
