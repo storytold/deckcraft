@@ -74,7 +74,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     show.observe_visible_frame(now, web_time::Instant::now());
-    begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
+    begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some(), &app.ui.presentation_monitor);
     let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
         && !show.reading
@@ -209,7 +209,7 @@ fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
     }
 }
 
-fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, remote: bool) {
+fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, remote: bool, target_mon: &str) {
     if !show.started {
         show.started = true;
         show.slide_start = now;
@@ -219,9 +219,14 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.step_end = now;
         show.show_start = now;
         show.timer = PresenterTimer::start(now);
+        show.monitor_choice = Some(target_mon.to_string());
         show.last_move = now;
         if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
+            let (aud_pos, _) = crate::monitors::presentation_placement(target_mon, show.swapped);
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(aud_pos));
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+            crate::monitors::route_presentation(target_mon, show.swapped);
+            show.placed = true;
         }
         show.after_enter(doc, now);
     }
@@ -853,6 +858,10 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
     if keep {
         app.show = Some(show);
     } else {
+        crate::monitors::cancel_pending_routing();
+        if show.placed {
+            crate::monitors::restore_editor_window();
+        }
         if let Some(host) = app.services.presenter.as_mut() {
             host.close();
         }

@@ -13,6 +13,10 @@ pub(super) fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation,
             .collect()
     });
     let (keep, consumed) = handle_keys(show, doc, now, keys, presenter);
+    if show.pending_swap {
+        show.pending_swap = false;
+        super::presenter::swap_presentation_displays(ctx, show, now);
+    }
     for (key, modifiers) in consumed {
         ctx.input_mut(|i| i.consume_key(modifiers, key));
         ctx.request_repaint_of(egui::ViewportId::ROOT);
@@ -152,6 +156,9 @@ fn tool_key(show: &mut Show, k: egui::Key, m: egui::Modifiers, now: f64, present
         R if plain(m) => show.timer.reset(now),
         OpenBracket if plain(m) => show.nudge_notes(-NOTES_STEP),
         CloseBracket if plain(m) => show.nudge_notes(NOTES_STEP),
+        F6 | S if (k == F6 && plain(m)) || (m.alt && !m.command && !m.shift) => {
+            show.pending_swap = true;
+        }
         Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 => {
             if let Some(d) = k.name().chars().next() {
                 show.push_slide_number(d, now);
