@@ -2,6 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** trivial (a browsed show's window takes the slide's shape; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; empty notes slides are kept through PPTX and native saves, #2025; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-09 · **Change:** minor (progress log: PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import, #239) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -158,6 +159,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-18 | Slide show: Browsed by an individual (window) plays in a window of the slide's shape. The window shrinks to fit the slide when the show starts, snaps back to that shape after a resize (on macOS once the mouse button is let go, elsewhere after 0.3 s without change), and the editor's size, minimum size and maximized state return when the show ends. Before, the show kept the editor's 1440×900 window, so a 16:9 deck had black bars |
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | PPTX: a slide whose notes slide has empty text retains its notesSlide part and relationship on save and reopen (#2025); empty notes slides survive native round trips |

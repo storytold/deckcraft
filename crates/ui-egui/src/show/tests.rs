@@ -1059,6 +1059,97 @@ fn browsed_by_an_individual_stays_in_a_window() {
     assert!(!show_fills_screen(true, "speaker"));
     assert!(show_fills_screen(false, "speaker"));
     assert!(show_fills_screen(false, "kiosk"));
+    // Only a browsed show takes the slide's shape; reading view keeps the editor's window.
+    assert!(show_fits_window(false, "browsed"));
+    assert!(!show_fits_window(true, "browsed"));
+    assert!(!show_fits_window(false, "speaker"));
+}
+
+/// A browsed show in a 1440x900 window left black bars beside a 16:9 or 4:3 slide: the window
+/// takes the slide's shape, keeps any bar outside the slide area and stays on the monitor.
+#[test]
+fn a_browsed_show_window_takes_the_slide_shape() {
+    use super::window_fit::{Keep, SHOW_MIN_INNER_SIZE, fits, fitted_inner_size};
+    let wide = 16.0 / 9.0;
+    let full = vec2(1440.0, 900.0);
+    // 16:9: the width stays, the height drops to the slide's.
+    assert_eq!(fitted_inner_size(full, full, wide, Keep::Width, None), vec2(1440.0, 810.0));
+    assert_eq!(fitted_inner_size(full, full, wide, Keep::Inside, None), vec2(1440.0, 810.0));
+    // 4:3: keeping the width would grow the window; inside keeps the height.
+    assert_eq!(fitted_inner_size(full, full, 4.0 / 3.0, Keep::Width, None), vec2(1440.0, 1080.0));
+    assert_eq!(fitted_inner_size(full, full, 4.0 / 3.0, Keep::Inside, None), vec2(1200.0, 900.0));
+    // A 32 pt title bar above the slide area is kept on top of the slide's height.
+    assert_eq!(fitted_inner_size(full, vec2(1440.0, 868.0), wide, Keep::Width, None), vec2(1440.0, 842.0));
+    // The user dragged the bottom edge: the height stays, the width follows.
+    assert_eq!(fitted_inner_size(vec2(1000.0, 450.0), vec2(1000.0, 450.0), wide, Keep::Height, None), vec2(800.0, 450.0));
+    // Larger than the monitor: scaled down to fit, still the slide's shape.
+    let on_screen = fitted_inner_size(vec2(1600.0, 900.0), vec2(1600.0, 900.0), 4.0 / 3.0, Keep::Width, Some(vec2(1376.0, 804.0)));
+    assert_eq!(on_screen, vec2(1072.0, 804.0));
+    // Never below the show's minimum, and hostile input leaves the window alone.
+    let tiny = fitted_inner_size(vec2(50.0, 50.0), vec2(50.0, 50.0), wide, Keep::Width, None);
+    assert!(tiny.x >= SHOW_MIN_INNER_SIZE.x && tiny.y >= SHOW_MIN_INNER_SIZE.y);
+    // A very tall slide: the minimum width would make the window taller than the monitor, so the
+    // monitor wins and the slide keeps its shape.
+    let tall = fitted_inner_size(vec2(800.0, 600.0), vec2(800.0, 600.0), 0.25, Keep::Inside, Some(vec2(1376.0, 804.0)));
+    assert_eq!(tall, vec2(201.0, 804.0));
+    // A very wide one, with a 32 pt bar: the bar is kept and the whole stays on the monitor.
+    let flat = fitted_inner_size(vec2(1000.0, 432.0), vec2(1000.0, 400.0), 10.0, Keep::Height, Some(vec2(1376.0, 804.0)));
+    assert!(flat.x <= 1376.0 && flat.y <= 804.0, "{flat:?}");
+    assert_eq!(fitted_inner_size(full, full, f32::NAN, Keep::Width, None), full);
+    assert_eq!(fitted_inner_size(full, full, 0.0, Keep::Height, None), full);
+    assert!(fits(vec2(1440.0, 810.4), wide));
+    assert!(!fits(full, wide));
+}
+
+/// The window is sized when a browsed show starts, then a resize is snapped only after it has
+/// settled, keeping the side the user changed more.
+#[test]
+fn a_resized_browsed_show_window_snaps_back_after_it_settles() {
+    use super::window_fit::{RELEASED_SECS, SETTLE_SECS, Step, WindowFit};
+    let wide = 16.0 / 9.0;
+    let mut fit = WindowFit::new(Some(vec2(1440.0, 900.0)), false);
+    assert_eq!(fit.frame(vec2(1440.0, 900.0), vec2(1440.0, 900.0), wide, None, None, 0.0), Step::Resize(vec2(1440.0, 810.0)));
+    // The window takes the size asked for: nothing more to do once it settles.
+    let slide = vec2(1440.0, 810.0);
+    assert!(matches!(fit.frame(slide, slide, wide, None, None, 0.1), Step::Wait(_)));
+    assert_eq!(fit.frame(slide, slide, wide, None, None, 0.1 + SETTLE_SECS), Step::Idle);
+    // The user drags the right edge in: wait while it moves, then keep the new width.
+    let dragged = vec2(1000.0, 810.0);
+    assert!(matches!(fit.frame(dragged, dragged, wide, None, None, 1.0), Step::Wait(_)));
+    assert!(matches!(fit.frame(dragged, dragged, wide, None, None, 1.1), Step::Wait(_)));
+    assert_eq!(fit.frame(dragged, dragged, wide, None, None, 1.0 + SETTLE_SECS), Step::Resize(vec2(1000.0, 563.0)));
+    // The snap lands and the user widens the window before it settles: the width is kept.
+    let wider = vec2(1100.0, 563.0);
+    assert!(matches!(fit.frame(wider, wider, wide, None, None, 1.4), Step::Wait(_)));
+    assert_eq!(fit.frame(wider, wider, wide, None, None, 1.4 + SETTLE_SECS), Step::Resize(vec2(1100.0, 619.0)));
+    // Then the bottom edge down: the height is kept.
+    let taller = vec2(1100.0, 700.0);
+    assert!(matches!(fit.frame(taller, taller, wide, None, None, 2.0), Step::Wait(_)));
+    assert_eq!(fit.frame(taller, taller, wide, None, None, 2.0 + SETTLE_SECS), Step::Resize(vec2(1244.0, 700.0)));
+    // The monitor's margin does not shrink a window that is already on screen.
+    let mut editor = WindowFit::new(Some(vec2(1440.0, 805.0)), false);
+    let start = editor.frame(vec2(1440.0, 805.0), vec2(1440.0, 805.0), wide, Some(vec2(1440.0, 900.0)), None, 0.0);
+    assert_eq!(start, Step::Resize(vec2(1431.0, 805.0)));
+    // A window larger than the monitor is brought onto it, even when it has the slide's shape.
+    let mut big = WindowFit::new(Some(vec2(2000.0, 1125.0)), false);
+    let start = big.frame(vec2(2000.0, 1125.0), vec2(2000.0, 1125.0), wide, Some(vec2(1440.0, 900.0)), None, 0.0);
+    assert_eq!(start, Step::Resize(vec2(1440.0, 810.0)));
+    let mut big = WindowFit::new(Some(vec2(2000.0, 1200.0)), false);
+    let start = big.frame(vec2(2000.0, 1200.0), vec2(2000.0, 1200.0), wide, Some(vec2(1440.0, 900.0)), None, 0.0);
+    assert_eq!(start, Step::Resize(vec2(1440.0, 810.0)));
+    // A drag of the window's edge with the button still held: no snap, however long the pause.
+    let mut drag = WindowFit::new(None, false);
+    assert_eq!(drag.frame(slide, slide, wide, None, Some(false), 0.0), Step::Idle);
+    let held = vec2(900.0, 700.0);
+    assert!(matches!(drag.frame(held, held, wide, None, Some(true), 1.0), Step::Wait(_)));
+    assert!(matches!(drag.frame(held, held, wide, None, Some(true), 3.0), Step::Wait(_)), "held: wait");
+    // Let go: the snap follows shortly, keeping the side changed more.
+    assert!(matches!(drag.frame(held, held, wide, None, Some(false), 3.1), Step::Wait(_)));
+    assert_eq!(drag.frame(held, held, wide, None, Some(false), 3.1 + RELEASED_SECS), Step::Resize(vec2(900.0, 506.0)), "released: snap");
+    // Without a resize nothing is asked for.
+    let mut still = WindowFit::new(None, false);
+    assert_eq!(still.frame(slide, slide, wide, None, None, 0.0), Step::Idle);
+    assert_eq!(still.frame(slide, slide, wide, None, None, 5.0), Step::Idle);
 }
 
 #[test]

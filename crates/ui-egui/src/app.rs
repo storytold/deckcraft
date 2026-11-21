@@ -52,6 +52,7 @@ impl SlideApp {
             dialog: None,
             thesaurus_query: String::new(),
             show: None,
+            show_window: None,
             anim_preview: None,
             reuse_target: None,
             media: media::MediaHost::new(audio_out),
@@ -306,6 +307,9 @@ impl SlideApp {
         canvas::trackpad_twist(self, &ctx);
         eyedropper::tick(self, &ctx);
         self.opening_ui(&ctx);
+        if self.show.is_none() {
+            show::restore_window(self, &ctx);
+        }
         if self.show.is_some() {
             self.anim_preview = None;
             show::ui(self, ui);

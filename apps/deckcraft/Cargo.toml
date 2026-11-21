@@ -39,6 +39,9 @@ cpal = "0.16"
 # GridCraft, PdfCraft and PhotoCraft) registers the handler (Objective-C interop needs unsafe, which
 # our workspace forbids) behind a safe API. Pinned exactly: review the diff before bumping.
 fmv-macos-events = "=0.1.0"
+# NSEvent.pressedMouseButtons: a browsed show's window snaps to the slide's shape only after an
+# edge drag ends. Already in the tree through arboard; a safe call, no `unsafe` here.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }

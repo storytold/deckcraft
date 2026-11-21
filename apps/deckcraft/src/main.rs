@@ -243,7 +243,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("DeckCraft")
             .with_inner_size([1440.0, 900.0])
-            .with_min_inner_size([900.0, 560.0])
+            .with_min_inner_size(deckcraft_ui_egui::EDITOR_MIN_INNER_SIZE)
             .with_drag_and_drop(true)
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)
@@ -296,6 +296,11 @@ fn main() -> eframe::Result {
             #[cfg(all(unix, not(target_os = "macos")))]
             if let Some(window) = cc.winit_window().cloned() {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
+            }
+            // A browsed show's window waits for the end of an edge drag before it snaps (macOS).
+            #[cfg(target_os = "macos")]
+            {
+                app.services.mouse_held = Some(Box::new(|| objc2_app_kit::NSEvent::pressedMouseButtons() != 0));
             }
             load_prefs(&mut app);
             app.enable_update_checks();

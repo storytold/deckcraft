@@ -38,6 +38,9 @@ pub mod toast;
 pub mod uifonts;
 pub mod widgets;
 
+/// The editor window's smallest inner size, in points. A browsed show lowers it while it runs.
+pub const EDITOR_MIN_INNER_SIZE: egui::Vec2 = egui::Vec2::new(900.0, 560.0);
+
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 
@@ -232,6 +235,8 @@ pub struct SlideApp {
     /// The word looked up in the Thesaurus pane.
     pub thesaurus_query: String,
     pub show: Option<show::Show>,
+    /// A browsed show's window sizing, and the editor's window size it puts back when the show ends.
+    show_window: Option<show::WindowFit>,
     /// Current slide's animations playing on the editor canvas (not the full-screen show).
     anim_preview: Option<AnimPreview>,
     /// Where the Reuse Slides picker inserts: the presentation and slide current when it opened.
