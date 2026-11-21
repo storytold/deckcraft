@@ -33,7 +33,8 @@ use thesaurus::thesaurus;
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(pane) = app.ui.pane.clone() else { return };
-    egui::Panel::right("task_pane")
+    let rtl = crate::i18n::is_rtl();
+    crate::i18n::trailing_panel("task_pane")
         .resizable(true)
         .default_size(app.ui.pane_width)
         .size_range(240.0..=520.0)
@@ -52,9 +53,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 "revisions" => "Revisions",
                 _ => "Pane",
             };
-            ui.horizontal(|ui| {
+            let header_layout = if rtl { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
+            let close_layout = if rtl { egui::Layout::left_to_right(egui::Align::Center) } else { egui::Layout::right_to_left(egui::Align::Center) };
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 24.0), header_layout, |ui| {
                 ui.label(egui::RichText::new(title).font(theme::bold(16.0)));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(close_layout, |ui| {
                     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
                     if resp.hovered() {
                         ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);

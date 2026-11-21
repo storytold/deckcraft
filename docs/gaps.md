@@ -1,6 +1,9 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **Last reviewed:** 2026-11-19 · **Last updated:** 2026-11-19 · **Change:** trivial (side panels, Backstage navigation, ribbon tab strip, and status bar mirror in RTL; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-09 · **Change:** minor (legacy `.ppt` import landed; its entry lists what it leaves out; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-03 · **Change:** minor (English and German interface, #15; previous: trivial (run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -21,7 +24,7 @@ revision history.
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media playback options (#74) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
 | 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
-| 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
+| 5 | Localization: English and German; Hebrew is partial when its catalog is embedded; side panels, Backstage navigation, ribbon tab strip, and status bar mirror in RTL | Localization | B (4 more languages) | 45–80 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
 | 8 | Image paste fails on Windows (#1414); Linux not re-checked | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
@@ -338,14 +341,21 @@ Detail in [hardware-parity.md](hardware-parity.md).
 
 Detail in [localization-parity.md](localization-parity.md).
 
-- **English only, no string catalog** (#15, #30; Ukrainian PR #34 open). PowerPoint for Mac ships
-  26 languages. Infrastructure 8–14 h, then 3–16 h per language plus native review. Beta needs the
-  infrastructure and at least Simplified Chinese, Spanish, French, German and Japanese (~30–45 h).
+- **English, and German or Hebrew only when `CRAFT_I18N_DIR` embeds their catalogs** (#15, #30; Ukrainian PR #34
+  open). Without `CRAFT_I18N_DIR`, the build embeds no catalogs and the interface is English only.
+  When `CRAFT_I18N_DIR` is set, the interface reads the shared craft-i18n catalogs and follows the
+  system language, or `app.language` (`auto`, `en`, `de`, `he`). German (included at
+  `craft-i18n.rev`) covers the ribbon, menus, palette, status bar, File tab, dialogs and panes;
+  Hebrew (`he`, `he-IL`, `he_IL.UTF-8`) does the same when `CRAFT_I18N_DIR` points to a checkout
+  with `locales/he/deckcraft.tsv` (`craft-i18n.rev` does not include it yet, so a build from the
+  pin does not list Hebrew). Side panels, Backstage navigation, the ribbon tab strip, and the status bar mirror right to left. PowerPoint for Mac ships
+  26 languages: 3–16 h per language plus native review. Beta needs at least Simplified Chinese,
+  Spanish, French and Japanese as well (~25–40 h).
 - **Hangul in the interface needs an installed Korean font** (#101). craft-fonts has no Korean face
   (Noto CJK is excluded by the asset policy), so the web build draws Korean file names, notes and
   outline text as boxes; desktop borrows Malgun Gothic, Apple SD Gothic Neo or Noto Sans CJK.
   Adding an openly licensed Korean face (e.g. Nanum Gothic, OFL) to craft-fonts: 1–2 h.
-- **UI isn't mirrored for right-to-left languages.** 6–10 h.
+- **Dialog internals and canvas overlays aren't fully mirrored for right-to-left languages** (side panels, Backstage navigation, ribbon tab strip, and status bar mirror in RTL). 2–4 h.
 - **Browser build draws Arabic and Hebrew as missing-glyph boxes in exports** (#81). 1–2 h.
 
 ## Performance
@@ -374,6 +384,8 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-19 | trivial | Side panels, Backstage navigation, ribbon tab strip, and status bar mirror right to left; legacy iw tags normalize to he; scores unchanged |
+| 2026-11-09 | trivial | Hebrew is partial when its catalog is embedded; the right-to-left panel-mirroring gap stays; scores unchanged |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

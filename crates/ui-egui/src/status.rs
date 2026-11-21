@@ -17,50 +17,65 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let Some(st) = app.session.active() else { return };
         let n = st.doc.slides.len();
         let left = match st.selection.target {
-            deckcraft_engine::Target::Slides => format!("Slide {} of {}", (st.selection.slide + 1).min(n.max(1)), n),
-            _ => "Slide Master".to_string(),
+            deckcraft_engine::Target::Slides => crate::i18n::fmt(
+                tl!("Slide {n} of {total}"),
+                &[("n", &(st.selection.slide + 1).min(n.max(1)).to_string()), ("total", &n.to_string())],
+            ),
+            _ => tl!("Slide Master").to_string(),
         };
+        let rtl = crate::i18n::is_rtl();
+        let align = if rtl { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER };
         let p = ui.painter();
-        // Left to right: slide counter, language, status message. Each starts at its usual column, or
-        // after the one before it when that runs long ("Slide 100 of 120", "… (not checked)").
-        let sr = p.text(pos2(rect.min.x + 14.0, rect.center().y), Align2::LEFT_CENTER, &left, theme::font(12.0), t.text_dim);
+        // Flowing from leading edge (left in LTR, right in RTL): slide counter, language, status message.
+        let sx = if rtl { rect.max.x - 14.0 } else { rect.min.x + 14.0 };
+        let sr = p.text(pos2(sx, rect.center().y), align, &left, theme::font(12.0), t.text_dim);
         shown_text(ui, sr, "status_slide", &left);
-        // Where the controls on the right begin; nothing on the left paints or clicks past it.
-        let right_x = rect.max.x - 560.0;
+        // Edge where the trailing controls begin; nothing on the leading side paints or clicks past it.
+        let controls_edge = if rtl { rect.min.x + 560.0 } else { rect.max.x - 560.0 };
         // The selection's proofing language; a click opens Review › Language.
         let (lang, no_proof) = crate::dialogs::selected_language(app);
-        let name = crate::squiggles::display_lang_name(ui.ctx(), &lang) + if no_proof { " (not checked)" } else { "" };
-        let lx = (rect.min.x + 120.0).max(sr.max.x + 16.0);
-        let lclip = Rect::from_min_max(pos2(lx - 3.0, rect.min.y), pos2(right_x.max(lx - 3.0), rect.max.y));
-        let lr = p.with_clip_rect(lclip).text(pos2(lx, rect.center().y), Align2::LEFT_CENTER, &name, theme::font(12.0), t.text_dim);
+        let name = crate::squiggles::display_lang_name(ui.ctx(), &lang) + if no_proof { tl!(" (not checked)") } else { "" };
+        let lx = if rtl { (rect.max.x - 120.0).min(sr.min.x - 16.0) } else { (rect.min.x + 120.0).max(sr.max.x + 16.0) };
+        let lclip = if rtl {
+            Rect::from_min_max(pos2(controls_edge.min(lx + 3.0), rect.min.y), pos2(lx + 3.0, rect.max.y))
+        } else {
+            Rect::from_min_max(pos2(lx - 3.0, rect.min.y), pos2(controls_edge.max(lx - 3.0), rect.max.y))
+        };
+        let lr = p.with_clip_rect(lclip).text(pos2(lx, rect.center().y), align, &name, theme::font(12.0), t.text_dim);
         let hit = lr.expand(3.0).intersect(lclip);
         if hit.is_positive() {
-            let resp = ui.interact(hit, ui.scope_id().with("status_lang"), Sense::click()).on_hover_text("Language");
-            resp.widget_info(|| named_with_value("Language", &name));
+            let resp = ui.interact(hit, ui.scope_id().with("status_lang"), Sense::click()).on_hover_text(tl!("Language"));
+            resp.widget_info(|| named_with_value(tl!("Language"), &name));
             if resp.clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("language"));
             }
         }
-        // Transient status message, clipped before the controls on the right.
+        // Transient status message, clipped before the controls.
         if let Some(msg) = app.fresh_status() {
-            let mx = (rect.min.x + 290.0).max(lr.max.x + 16.0);
-            let clip = Rect::from_min_max(pos2(mx, rect.min.y), pos2(right_x.max(mx), rect.max.y));
-            let mr = p.with_clip_rect(clip).text(pos2(mx, rect.center().y), Align2::LEFT_CENTER, &msg, theme::font(12.0), t.accent);
+            let mx = if rtl { (rect.max.x - 290.0).min(lr.min.x - 16.0) } else { (rect.min.x + 290.0).max(lr.max.x + 16.0) };
+            let clip = if rtl {
+                Rect::from_min_max(pos2(controls_edge.min(mx), rect.min.y), pos2(mx, rect.max.y))
+            } else {
+                Rect::from_min_max(pos2(mx, rect.min.y), pos2(controls_edge.max(mx), rect.max.y))
+            };
+            let mr = p.with_clip_rect(clip).text(pos2(mx, rect.center().y), align, &msg, theme::font(12.0), t.accent);
             shown_text(ui, mr.intersect(clip), "status_message", &msg);
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
         }
-        let mut right = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(Rect::from_min_max(pos2(right_x, rect.min.y), pos2(rect.max.x - 8.0, rect.max.y)))
-                .layout(egui::Layout::right_to_left(egui::Align::Center)),
-        );
+        let controls_rect = if rtl {
+            Rect::from_min_max(pos2(rect.min.x + 8.0, rect.min.y), pos2(controls_edge, rect.max.y))
+        } else {
+            Rect::from_min_max(pos2(controls_edge, rect.min.y), pos2(rect.max.x - 8.0, rect.max.y))
+        };
+        let controls_layout = if rtl { egui::Layout::left_to_right(egui::Align::Center) } else { egui::Layout::right_to_left(egui::Align::Center) };
+        let mut right = ui.new_child(egui::UiBuilder::new().max_rect(controls_rect).layout(controls_layout));
         right.spacing_mut().item_spacing.x = 4.0;
         if small_icon(&mut right, Icon::FitSmall, "Fit slide to current window", false).clicked() {
             app.ui.zoom = None;
         }
         let pct = (app.canvas_scale * 100.0).round();
         let lbl = right.add(egui::Label::new(egui::RichText::new(format!("{pct}%")).size(12.0).color(t.text_dim)).sense(Sense::click()));
-        lbl.widget_info(|| named_with_value("Zoom level", &format!("{pct}%")));
+        lbl.widget_info(|| named_with_value(tl!("Zoom level"), &format!("{pct}%")));
         if lbl.clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
@@ -79,7 +94,10 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         // technology only, leaving its geometry unchanged. Its value is the percentage shown.
         let shown = format!("{}%", zp.round());
         let enabled = s.enabled();
-        s.widget_info(|| egui::WidgetInfo { current_text_value: Some(shown.clone()), ..egui::WidgetInfo::slider(enabled, f64::from(zp), "Zoom") });
+        s.widget_info(|| egui::WidgetInfo {
+            current_text_value: Some(shown.clone()),
+            ..egui::WidgetInfo::slider(enabled, f64::from(zp), tl!("Zoom"))
+        });
         if s.changed() {
             z = zp / 100.0;
             app.ui.zoom = Some(z);
@@ -117,6 +135,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
 
 /// Draw a small status icon with a tooltip and return its interaction response.
 fn small_icon(ui: &mut Ui, icon: Icon, tip: &str, on: bool) -> egui::Response {
+    let tip = tl!(tip);
     let resp = icon_button(ui, icon, on);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     resp.on_hover_text(tip)
@@ -124,6 +143,7 @@ fn small_icon(ui: &mut Ui, icon: Icon, tip: &str, on: bool) -> egui::Response {
 
 /// A view button: screen readers hear its name and whether its view is the one shown.
 fn view_icon(ui: &mut Ui, icon: Icon, tip: &str, on: bool) -> egui::Response {
+    let tip = tl!(tip);
     let resp = icon_button(ui, icon, on);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, tip));
     resp.on_hover_text(tip)
@@ -156,13 +176,19 @@ fn shown_text(ui: &Ui, rect: Rect, id: &str, text: &str) {
 /// accessible selected state.
 fn labeled(ui: &mut Ui, icon: Icon, label: &str, on: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
+    let label = tl!(label);
     let w = 22.0 + ui.fonts_mut(|f| f.layout_no_wrap(label.into(), theme::font(12.0), t.text).size().x) + 8.0;
     let (r, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
     if on || resp.hovered() {
         ui.painter().rect_filled(r, CornerRadius::same(4), if on { t.selected } else { t.hover });
     }
-    icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 11.0, r.center().y), vec2(15.0, 15.0)), icon, t.text_dim, false);
-    ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, label, theme::font(12.0), t.text_dim);
+    let (icon_cx, label_x, align) = if crate::i18n::is_rtl() {
+        (r.max.x - 11.0, r.max.x - 22.0, Align2::RIGHT_CENTER)
+    } else {
+        (r.min.x + 11.0, r.min.x + 22.0, Align2::LEFT_CENTER)
+    };
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(icon_cx, r.center().y), vec2(15.0, 15.0)), icon, t.text_dim, false);
+    ui.painter().text(pos2(label_x, r.center().y), align, label, theme::font(12.0), t.text_dim);
     // The visible label is painted directly, so name the interactive control explicitly and
     // expose the toggle state as selected: a screen reader hears "Notes, pressed" not "Notes".
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
@@ -215,7 +241,7 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     crate::notes::editor(ui, &mut draft, &look, |e| {
-                        e.id(id).hint_text("Click to add notes").frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
+                        e.id(id).hint_text(tl!("Click to add notes")).frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
                     })
                 })
                 .inner;
@@ -266,12 +292,12 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                             .collect()
                     };
                     if let Some(from) = w.delete_from {
-                        if ui.button(egui::RichText::new("Delete Repeated Word").strong()).clicked() {
+                        if ui.button(egui::RichText::new(tl!("Delete Repeated Word")).strong()).clicked() {
                             changed = Some(splice(ls + from, ""));
                             ui.close();
                         }
                     } else if w.suggestions.is_empty() {
-                        ui.label(egui::RichText::new("(no spelling suggestions)").weak());
+                        ui.label(egui::RichText::new(tl!("(no spelling suggestions)")).weak());
                     }
                     for to in &w.suggestions {
                         if ui.button(egui::RichText::new(to).strong()).clicked() {
@@ -279,11 +305,11 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                             ui.close();
                         }
                     }
-                    if ui.button("Ignore All").clicked() {
+                    if ui.button(tl!("Ignore All")).clicked() {
                         app.squiggles.ignore(&w.word);
                         ui.close();
                     }
-                    if w.delete_from.is_none() && ui.button("Add to Dictionary").clicked() {
+                    if w.delete_from.is_none() && ui.button(tl!("Add to Dictionary")).clicked() {
                         if let Err(e) = app.session.execute("review.addToDictionary", &json!({"word": w.word})) {
                             app.set_status(e.to_string());
                         }

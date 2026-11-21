@@ -137,29 +137,43 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     egui::Panel::top("ribbon").exact_size(h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
         // Tabs. File comes first and opens the File tab's full-window view (Backstage), as in
-        // PowerPoint.
-        let mut x = rect.min.x + 12.0;
+        // PowerPoint. In RTL languages, the tab strip flows from the right edge leftward.
+        let rtl = crate::i18n::is_rtl();
+        let next_tab_rect = |cursor: &mut f32, y: f32, w: f32| {
+            if rtl {
+                *cursor -= w;
+                let r = Rect::from_min_size(pos2(*cursor, y), vec2(w, 24.0));
+                *cursor -= 2.0;
+                r
+            } else {
+                let r = Rect::from_min_size(pos2(*cursor, y), vec2(w, 24.0));
+                *cursor += w + 2.0;
+                r
+            }
+        };
+        let mut x = if rtl { rect.max.x - 12.0 } else { rect.min.x + 12.0 };
         let y = rect.min.y + 2.0;
         {
-            let w = ui.fonts_mut(|f| f.layout_no_wrap("File".to_string(), theme::font(13.0), t.text).size().x) + 18.0;
-            let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(tl!("File").to_string(), theme::font(13.0), t.text).size().x) + 18.0;
+            let r = next_tab_rect(&mut x, y, w);
             let resp = ui.interact(r, ui.scope_id().with("tab_file"), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "File"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("File")));
             if resp.hovered() {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
             }
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, "File", theme::font(13.0), t.text);
-            if resp.on_hover_text("File (Alt+F)").clicked() {
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, tl!("File"), theme::font(13.0), t.text);
+            if resp.on_hover_text(format!("{} ({})", tl!("File"), pretty_shortcut("Alt+F"))).clicked() {
                 app.open_backstage(crate::backstage::Page::Home);
             }
-            x += w + 2.0;
         }
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
-            let label = tab_label(name);
+            // `name` is the tab's id (`app.ui.tab`, `view.tab`); only its caption is translated,
+            // from the display name `tab_label` gives it.
+            let label = tl!(tab_label(name));
             let font = theme::font(13.0);
             let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 18.0;
-            let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
+            let r = next_tab_rect(&mut x, y, w);
             let resp = ui.interact(r, ui.scope_id().with(("tab", name)), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
             let active = app.ui.tab == name;
@@ -184,7 +198,6 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             if resp.double_clicked() {
                 app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
             }
-            x += w + 2.0;
         }
         if app.ui.ribbon_collapsed {
             return;
@@ -265,13 +278,14 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let mut next = None;
         if offset > 1.0 {
             let left = Rect::from_min_max(pos2((r.left() - edge).max(inner.left()), r.top()), pos2(r.left(), r.bottom()));
-            if edge_cue(&mut cui, left, "‹", "Scroll ribbon left", &t) {
+            // The cue points the way the offset moves. That stays physical in a right-to-left language.
+            if edge_cue(&mut cui, left, scroll_cue_glyph(true), tl!("Scroll ribbon left"), &t) {
                 next = Some(offset - step);
             }
         }
         if overflow - offset > 1.0 {
             let right = Rect::from_min_max(pos2(r.right(), r.top()), pos2((r.right() + edge).min(inner.right()), r.bottom()));
-            if edge_cue(&mut cui, right, "›", "Scroll ribbon right", &t) {
+            if edge_cue(&mut cui, right, scroll_cue_glyph(false), tl!("Scroll ribbon right"), &t) {
                 next = Some(offset + step);
             }
         }
@@ -291,6 +305,12 @@ fn spare_room_id(tab: &str) -> egui::Id {
 /// from this.
 pub(super) fn spare_room(ctx: &egui::Context, tab: &str) -> Option<f32> {
     ctx.data(|d| d.get_temp::<f32>(spare_room_id(tab)))
+}
+
+/// Chevron for a ribbon edge. `left` lowers the scroll offset; the other edge raises it.
+/// The mark points that way in every language, so a right-to-left interface does not flip it.
+pub(crate) fn scroll_cue_glyph(left: bool) -> &'static str {
+    if left { "‹" } else { "›" }
 }
 
 /// A chevron over a ribbon edge that scrolls it; `true` on the frame it is clicked.
@@ -336,6 +356,7 @@ fn toggle(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, on
 }
 
 fn tip(id: &str, label: &str) -> String {
+    let label = tl!(label);
     let sc = deckcraft_engine::find_command(id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == id).and_then(|c| c.2));
     match sc {
         Some(s) => format!("{label} ({})", pretty_shortcut(s)),

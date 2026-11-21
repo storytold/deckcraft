@@ -87,7 +87,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     if app.session.active().is_some_and(|d| d.selection.target.is_page_master()) {
         return;
     }
-    let panel = egui::Panel::left("thumbs")
+    let panel = crate::i18n::leading_panel("thumbs")
         .resizable(true)
         .default_size(app.ui.thumbs_width)
         .size_range(150.0..=420.0)
@@ -168,25 +168,25 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                 t.text_dim,
             );
             resp.context_menu(|ui| {
-                if ui.button("Rename Section…").clicked() {
+                if ui.button(tl!("Rename Section…")).clicked() {
                     let mut d = crate::dialogs::Dialog::new("renameSection");
                     d.params = json!({"index": si, "name": sec.name});
                     app.dialog = Some(d);
                     ui.close();
                 }
-                if ui.button("Remove Section").clicked() {
+                if ui.button(tl!("Remove Section")).clicked() {
                     let _ = app.run("section.remove", json!({"index": si}));
                     ui.close();
                 }
-                if ui.button("Remove Section & Slides").clicked() {
+                if ui.button(tl!("Remove Section & Slides")).clicked() {
                     let _ = app.run("section.remove", json!({"index": si, "slides": true}));
                     ui.close();
                 }
-                if ui.button("Move Section Up").clicked() {
+                if ui.button(tl!("Move Section Up")).clicked() {
                     let _ = app.run("section.move", json!({"index": si, "to": si.saturating_sub(1)}));
                     ui.close();
                 }
-                if ui.button("Move Section Down").clicked() {
+                if ui.button(tl!("Move Section Down")).clicked() {
                     let _ = app.run("section.move", json!({"index": si, "to": si + 1}));
                     ui.close();
                 }
@@ -285,8 +285,9 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
             if let Some(d) = app.thumb_drag.as_mut() {
                 d.slot = to;
             }
+            let (line_x0, line_x1) = rects.first().map(|(_, r)| (r.min.x, r.max.x)).unwrap_or((26.0, width));
             let y = rects.iter().find(|(i, _)| *i == to).map(|(_, r)| r.min.y + 2.0).or_else(|| rects.last().map(|(_, r)| r.max.y)).unwrap_or(0.0);
-            ui.painter().line_segment([pos2(26.0, y), pos2(width, y)], Stroke::new(2.0, t.accent));
+            ui.painter().line_segment([pos2(line_x0, y), pos2(line_x1, y)], Stroke::new(2.0, t.accent));
         }
         if ui.input(|i| i.pointer.any_released()) {
             drop_slide_drag(app);
@@ -317,20 +318,20 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         }
     }
     ui.separator();
-    if ui.button("New Slide").clicked() {
+    if ui.button(tl!("New Slide")).clicked() {
         let _ = app.run("slide.new", json!({}));
         ui.close();
     }
-    if ui.button("Duplicate Slide").clicked() {
+    if ui.button(tl!("Duplicate Slide")).clicked() {
         let _ = app.run("slide.duplicate", json!({}));
         ui.close();
     }
-    if ui.button("Delete Slide").clicked() {
+    if ui.button(tl!("Delete Slide")).clicked() {
         let _ = app.run("slide.delete", json!({}));
         ui.close();
     }
     ui.separator();
-    if ui.button("Add Section").clicked() {
+    if ui.button(tl!("Add Section")).clicked() {
         let _ = app.run("section.add", json!({"at": i}));
         ui.close();
     }
@@ -347,11 +348,11 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
             }
         }
     });
-    if ui.button("Reset Slide").clicked() {
+    if ui.button(tl!("Reset Slide")).clicked() {
         let _ = app.run("slide.reset", json!({}));
         ui.close();
     }
-    if ui.button("Format Background…").clicked() {
+    if ui.button(tl!("Format Background…")).clicked() {
         let _ = app.run("view.pane", json!({"pane": "background"}));
         ui.close();
     }

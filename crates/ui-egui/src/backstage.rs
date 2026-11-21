@@ -326,26 +326,22 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     if !has_doc && bs.page.needs_doc() {
         bs.page = Page::Home;
     }
+    let rtl = crate::i18n::is_rtl();
     let (nav_bg, page_bg) = colours(&t);
     let mut out = Outcome::default();
     let (top, bottom) = entries(has_doc);
-    egui::Panel::left("backstage_nav").exact_size(NAV_W).resizable(false).frame(egui::Frame::NONE.fill(nav_bg)).show(ui, |ui| {
+    crate::i18n::leading_panel("backstage_nav").exact_size(NAV_W).resizable(false).frame(egui::Frame::NONE.fill(nav_bg)).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         if has_doc {
             let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Back"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Back")));
+            let icon_cx = if rtl { r.right() - 26.0 } else { r.left() + 26.0 };
             let hovered = resp.hovered();
             if hovered {
-                ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
+                ui.painter().rect_filled(Rect::from_center_size(pos2(icon_cx, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
             }
-            icons::paint(
-                ui.painter(),
-                Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(22.0, 22.0)),
-                Icon::BackCircle,
-                t.text,
-                false,
-            );
-            if resp.on_hover_text("Back (Esc)").clicked() {
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(icon_cx, r.center().y), vec2(22.0, 22.0)), Icon::BackCircle, t.text, false);
+            if resp.on_hover_text(tl!("Back (Esc)")).clicked() {
                 out.close = true;
             }
         } else {
@@ -354,9 +350,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let mut index = 0;
         for (k, nav) in top.iter().enumerate() {
             if k == 3 {
-                separator(ui, &t);
+                separator(ui, &t, rtl);
             }
-            if nav_item(ui, *nav, &bs, index, &t).clicked() {
+            if nav_item(ui, *nav, &bs, index, &t, rtl).clicked() {
                 bs.focus = None;
                 commit_props(app, &bs);
                 match act(app, *nav, bs.page) {
@@ -371,7 +367,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.add_space(8.0);
             // Bottom-up: draw the last entry first.
             for (k, nav) in bottom.iter().enumerate().rev() {
-                if nav_item(ui, *nav, &bs, first_bottom + k, &t).clicked() {
+                if nav_item(ui, *nav, &bs, first_bottom + k, &t, rtl).clicked() {
                     bs.focus = None;
                     commit_props(app, &bs);
                     match act(app, *nav, bs.page) {
@@ -380,9 +376,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             }
-            separator(ui, &t);
+            separator(ui, &t, rtl);
         });
     });
+    let page_margin =
+        if rtl { egui::Margin { left: 36, right: 48, top: 22, bottom: 32 } } else { egui::Margin { left: 48, right: 36, top: 22, bottom: 32 } };
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(page_bg)).show(ui, |ui| {
         // Fields, boxes and buttons sit on the page's own colour: outline them, as PowerPoint does.
         ui.visuals_mut().text_edit_bg_color = Some(t.field_bg);
@@ -393,12 +391,12 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         w.hovered.bg_stroke = Stroke::new(1.0, t.accent);
         w.active.bg_stroke = Stroke::new(1.0, t.accent);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Frame::NONE.inner_margin(egui::Margin { left: 48, right: 36, top: 22, bottom: 32 }).show(ui, |ui| {
+            egui::Frame::NONE.inner_margin(page_margin).show(ui, |ui| {
                 // set_max_width can also widen: in a window narrower than CONTENT_W it would push the
                 // page past the right margin and clip the tiles (#1421).
                 ui.set_max_width(ui.available_width().min(CONTENT_W));
                 if bs.page != Page::Home {
-                    ui.label(RichText::new(bs.page.label()).font(theme::bold(22.0)).color(t.text));
+                    ui.label(RichText::new(tl!(bs.page.label())).font(theme::bold(22.0)).color(t.text));
                     ui.add_space(16.0);
                 }
                 // Errors raised on a backstage page (a missing recent file, a failed open) would
@@ -436,10 +434,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 // ---------------------------------------------------------------- side menu
 
 /// Draw one clickable Backstage navigation row and return its interaction response.
-fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> egui::Response {
+fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens, rtl: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, ITEM_H), Sense::click());
     let selected = nav == Nav::Page(bs.page);
-    let label = nav.label();
+    let label = tl!(nav.label());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     let p = ui.painter();
     let row = rect.shrink2(vec2(6.0, 1.0));
@@ -452,46 +450,54 @@ fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> 
         p.rect_stroke(row, CornerRadius::same(2), Stroke::new(1.0, ink), StrokeKind::Inside);
     }
     let ink = if selected { t.accent } else { t.text };
-    icons::paint(p, Rect::from_center_size(pos2(rect.left() + 26.0, rect.center().y), vec2(16.0, 16.0)), nav.icon(), ink, false);
-    p.text(pos2(rect.left() + 44.0, rect.center().y), Align2::LEFT_CENTER, label, theme::font(13.0), ink);
+    let (icon_cx, label_x, align) = if rtl {
+        (rect.right() - 26.0, rect.right() - 44.0, Align2::RIGHT_CENTER)
+    } else {
+        (rect.left() + 26.0, rect.left() + 44.0, Align2::LEFT_CENTER)
+    };
+    icons::paint(p, Rect::from_center_size(pos2(icon_cx, rect.center().y), vec2(16.0, 16.0)), nav.icon(), ink, false);
+    p.text(pos2(label_x, rect.center().y), align, label, theme::font(13.0), ink);
     resp
 }
 
-fn separator(ui: &mut Ui, t: &Tokens) {
+fn separator(ui: &mut Ui, t: &Tokens, rtl: bool) {
     let (rect, _) = ui.allocate_exact_size(vec2(NAV_W, 13.0), Sense::hover());
     let y = rect.center().y;
-    ui.painter().line_segment([pos2(rect.left() + 20.0, y), pos2(rect.right() - 14.0, y)], Stroke::new(1.0, t.separator));
+    let (x0, x1) = if rtl { (rect.left() + 14.0, rect.right() - 20.0) } else { (rect.left() + 20.0, rect.right() - 14.0) };
+    ui.painter().line_segment([pos2(x0, y), pos2(x1, y)], Stroke::new(1.0, t.separator));
 }
 
 // ---------------------------------------------------------------- shared pieces
 
 fn heading(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(RichText::new(text).font(theme::bold(16.0)).color(t.text));
+    ui.label(RichText::new(tl!(text)).font(theme::bold(16.0)).color(t.text));
     ui.add_space(8.0);
 }
 
 fn dim(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(RichText::new(text).font(theme::font(12.5)).color(t.text_dim));
+    ui.label(RichText::new(tl!(text)).font(theme::font(12.5)).color(t.text_dim));
 }
 
-/// A link with an arrow (More themes →): true when clicked.
+/// A link with an arrow (More themes →, or ← in a right-to-left language): true when clicked.
 fn arrow_link(ui: &mut Ui, text: &str) -> bool {
     let t = Tokens::get(ui.ctx());
-    ui.add(egui::Label::new(RichText::new(format!("{text}  →")).font(theme::font(12.5)).color(t.accent)).sense(Sense::click()))
+    let label = format!("{}  {}", tl!(text), crate::i18n::mirror_glyph("→"));
+    ui.add(egui::Label::new(RichText::new(label).font(theme::font(12.5)).color(t.accent)).sense(Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
 }
 
 /// A search box; true when its text changed.
 fn search(ui: &mut Ui, query: &mut String, hint: &str, width: f32) -> bool {
-    ui.add(egui::TextEdit::singleline(query).hint_text(hint).desired_width(width)).changed()
+    ui.add(egui::TextEdit::singleline(query).hint_text(tl!(hint)).desired_width(width)).changed()
 }
 
 /// Draw a labelled icon button and return whether it was clicked while enabled.
 fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> bool {
     let t = Tokens::get(ui.ctx());
+    let label = tl!(label);
     let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     if resp.hovered() && enabled {
@@ -506,7 +512,7 @@ fn bullets(ui: &mut Ui, items: &[&str]) {
     for b in items {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
-            ui.label(RichText::new(format!("•  {b}")).font(theme::font(12.5)));
+            ui.label(RichText::new(format!("•  {}", tl!(b))).font(theme::font(12.5)));
         });
     }
     ui.add_space(10.0);
