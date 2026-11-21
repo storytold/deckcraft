@@ -82,6 +82,7 @@ pub fn rich_deck() -> Presentation {
                                 action: Action::Url { url: "https://example.org/a?b=1&c=2".into() },
                                 tooltip: "tip".into(),
                                 highlight_click: false,
+                                use_text_color: false,
                                 sound: None,
                                 stop_sound: false,
                                 zoom_return: None,
@@ -162,6 +163,7 @@ pub fn rich_deck() -> Presentation {
         action: Action::NextSlide,
         tooltip: String::new(),
         highlight_click: true,
+        use_text_color: false,
         sound: None,
         stop_sound: false,
         zoom_return: None,
@@ -239,6 +241,7 @@ pub fn rich_deck() -> Presentation {
     pic.kind = ShapeKind::Picture {
         fill: PictureFill {
             media: img,
+            svg_media: None,
             crop: [0.1, 0.05, 0.2, 0.0],
             mode: PictureMode::Stretch { fill_rect: [0.0; 4] },
             alpha: Some(0.5),
@@ -354,6 +357,7 @@ pub fn rich_deck() -> Presentation {
         action: Action::Slide { slide: target },
         tooltip: String::new(),
         highlight_click: false,
+        use_text_color: false,
         sound: None,
         stop_sound: false,
         zoom_return: None,

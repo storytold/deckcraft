@@ -16,19 +16,27 @@ pub(super) fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("insert.hyperlink", "missing `url` or `slide`"));
     };
     let display = str_param(p, "text").map_or(display, str::to_string);
+    let use_text_color = bool_param(p, "useTextColor");
     let link = Hyperlink {
         action,
         tooltip: str_param(p, "tooltip").unwrap_or("").to_string(),
         highlight_click: bool_or(p, "highlightClick", false),
+        use_text_color: use_text_color.unwrap_or(false),
         sound: None,
         stop_sound: false,
         zoom_return: None,
     };
     if s.doc()?.selection.text.is_some() {
-        return crate::cmd::text::link_text(s, link, &display);
+        return crate::cmd::text::link_text(s, link, use_text_color.is_none(), &display);
     }
     edit_shapes(s, p, "insert.hyperlink", |sh| {
-        sh.click = Some(link.clone());
+        let mut next = link.clone();
+        if use_text_color.is_none()
+            && let Some(prev) = &sh.click
+        {
+            next.use_text_color = prev.use_text_color;
+        }
+        sh.click = Some(next);
         Ok(())
     })
 }
@@ -71,7 +79,15 @@ pub(super) fn shape_action(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let highlight = bool_param(p, "highlight").unwrap_or(true);
     let tooltip = str_param(p, "tooltip").unwrap_or("").to_string();
-    let link = action.map(|action| Hyperlink { action, tooltip, highlight_click: highlight, sound: None, stop_sound: false, zoom_return: None });
+    let link = action.map(|action| Hyperlink {
+        action,
+        tooltip,
+        highlight_click: highlight,
+        use_text_color: false,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    });
     edit_shapes(s, p, CMD, |sh| {
         if hover {
             sh.hover = link.clone();
@@ -108,6 +124,7 @@ pub(super) fn action_button(s: &mut Session, p: &Value) -> Result<Value> {
             action: a,
             tooltip: String::new(),
             highlight_click: true,
+            use_text_color: false,
             sound: None,
             stop_sound: false,
             zoom_return: None,
@@ -116,4 +133,42 @@ pub(super) fn action_button(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let id = add_shape(s, "insert.actionButton", shape, true)?;
     Ok(json!({"id": id}))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    #[test]
+    fn hyperlink_use_text_color_preserves_when_omitted_and_clears_when_false() {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 50], "text": "LinkWord"})).unwrap();
+        s.execute("text.edit", &json!({})).unwrap();
+        s.execute("text.selectAll", &json!({})).unwrap();
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/a", "useTextColor": true})).unwrap();
+        let run_link = |s: &Session| {
+            s.doc().unwrap().doc.slides[0].shapes.last().unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.link.clone().unwrap()
+        };
+        assert!(run_link(&s).use_text_color);
+
+        // Editing URL without `useTextColor` preserves the existing true flag.
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/b"})).unwrap();
+        assert!(run_link(&s).use_text_color);
+
+        // Explicit `useTextColor: false` clears it.
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/c", "useTextColor": false})).unwrap();
+        assert!(!run_link(&s).use_text_color);
+
+        // Same preserve/clear contract on a shape-level hyperlink.
+        s.execute("text.exit", &json!({})).unwrap();
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/shape1", "useTextColor": true})).unwrap();
+        let shape_link = |s: &Session| s.doc().unwrap().doc.slides[0].shapes.last().unwrap().click.clone().unwrap();
+        assert!(shape_link(&s).use_text_color);
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/shape2"})).unwrap();
+        assert!(shape_link(&s).use_text_color);
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/shape3", "useTextColor": false})).unwrap();
+        assert!(!shape_link(&s).use_text_color);
+    }
 }

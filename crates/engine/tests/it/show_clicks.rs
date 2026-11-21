@@ -24,6 +24,7 @@ fn link_to(slide: SlideId) -> Option<Hyperlink> {
         action: Action::Slide { slide },
         tooltip: String::new(),
         highlight_click: false,
+        use_text_color: false,
         sound: None,
         stop_sound: false,
         zoom_return: None,

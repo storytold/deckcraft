@@ -6,7 +6,7 @@ use super::{
 };
 
 fn link(action: Action, tip: &str) -> Hyperlink {
-    Hyperlink { action, tooltip: tip.into(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
+    Hyperlink { action, tooltip: tip.into(), highlight_click: false, use_text_color: false, sound: None, stop_sound: false, zoom_return: None }
 }
 
 fn url(address: &str, tip: &str) -> Hyperlink {

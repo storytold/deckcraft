@@ -181,7 +181,7 @@ fn picture_adjust_from(a: cd_style::PictureAdjust) -> dm_style::PictureAdjust {
 fn picture_fill_to(p: &dm_style::PictureFill) -> cd_style::PictureFill {
     cd_style::PictureFill {
         media: media_id_to(p.media),
-        svg: None,
+        svg: p.svg_media.map(media_id_to),
         crop: p.crop,
         mode: picture_mode_to(&p.mode),
         alpha: p.alpha,
@@ -194,12 +194,13 @@ fn picture_fill_to(p: &dm_style::PictureFill) -> cd_style::PictureFill {
 fn picture_fill_from(p: cd_style::PictureFill) -> dm_style::PictureFill {
     dm_style::PictureFill {
         media: media_id_from(p.media),
+        svg_media: p.svg.map(media_id_from),
         crop: p.crop,
         mode: picture_mode_from(p.mode),
         alpha: p.alpha,
         adjust: picture_adjust_from(p.adjust),
         upright: p.upright,
-        artistic: p.artistic.map(|a| dm_style::Artistic { effect: a.effect, original: media_id_from(a.original) }),
+        artistic: p.artistic.map(|a| dm_style::Artistic { effect: a.effect, original: media_id_from(a.original), svg_media: None }),
     }
 }
 
@@ -705,6 +706,7 @@ fn hyperlink_from(h: cd_text::Hyperlink) -> dm_text::Hyperlink {
         action: action_from(h.action),
         tooltip: h.tooltip,
         highlight_click: h.highlight_click,
+        use_text_color: false,
         sound: h.sound.map(media_id_from),
         stop_sound: h.stop_sound,
         zoom_return: h.zoom_return.map(slide_id_from),

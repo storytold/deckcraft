@@ -28,8 +28,14 @@ macro_rules! walkers {
 
         pub fn picture(p: &$($m)? PictureFill, f: &mut F) {
             f(&$($m)? p.media);
+            if let Some(svg) = &$($m)? p.svg_media {
+                f(svg);
+            }
             if let Some(a) = &$($m)? p.artistic {
                 f(&$($m)? a.original);
+                if let Some(svg) = &$($m)? a.svg_media {
+                    f(svg);
+                }
             }
         }
 
@@ -337,25 +343,30 @@ mod tests {
         let mut s = (*p.slides.first().cloned().unwrap_or_default()).clone();
         let pic = Shape {
             kind: ShapeKind::Picture {
-                fill: PictureFill { artistic: Some(Artistic { effect: "artisticBlur".into(), original: MediaId(9002) }), ..pf(9001) },
+                fill: PictureFill {
+                    svg_media: Some(MediaId(9003)),
+                    artistic: Some(Artistic { effect: "artisticBlur".into(), original: MediaId(9002), svg_media: None }),
+                    ..pf(9001)
+                },
             },
             ..Default::default()
         };
         let clip = Shape {
-            kind: ShapeKind::Media(MediaClip { media: MediaId(9003), poster: Some(MediaId(9004)), ..Default::default() }),
+            kind: ShapeKind::Media(MediaClip { media: MediaId(9004), poster: Some(MediaId(9005)), ..Default::default() }),
             ..Default::default()
         };
         let mut text = deckcraft_model::text::TextBody::from_text("x");
         if let Some(para) = text.paragraphs.first_mut() {
-            para.props.bullet = Some(Bullet::Picture { media: MediaId(9007) });
+            para.props.bullet = Some(Bullet::Picture { media: MediaId(9008) });
         }
         let filled = Shape {
-            fill: Some(Fill::Picture(pf(9005))),
+            fill: Some(Fill::Picture(pf(9006))),
             click: Some(Hyperlink {
                 action: Action::NextSlide,
                 tooltip: String::new(),
                 highlight_click: false,
-                sound: Some(MediaId(9006)),
+                use_text_color: false,
+                sound: Some(MediaId(9007)),
                 stop_sound: false,
                 zoom_return: None,
             }),
@@ -364,12 +375,12 @@ mod tests {
         };
         let group = Shape { kind: ShapeKind::Group { children: vec![pic, clip], child: Default::default() }, ..Default::default() };
         s.shapes = vec![group, filled];
-        s.background = Some(Background::Fill { fill: Fill::Picture(pf(9008)) });
+        s.background = Some(Background::Fill { fill: Fill::Picture(pf(9009)) });
         p.slides = vec![Arc::new(s)];
         if let Some(m) = p.masters.first_mut() {
-            Arc::make_mut(m).theme.format.bg_fills.push(Fill::Picture(pf(9009)));
+            Arc::make_mut(m).theme.format.bg_fills.push(Fill::Picture(pf(9010)));
         }
-        p.embedded_fonts.push(deckcraft_model::EmbeddedFont { regular: Some(MediaId(9010)), ..Default::default() });
+        p.embedded_fonts.push(deckcraft_model::EmbeddedFont { regular: Some(MediaId(9011)), ..Default::default() });
         p
     }
 
@@ -378,10 +389,10 @@ mod tests {
         let p = deck();
         let mut got = presentation_media(&p);
         got.sort();
-        assert_eq!(got, (9001..=9010).map(MediaId).collect::<Vec<_>>());
+        assert_eq!(got, (9001..=9011).map(MediaId).collect::<Vec<_>>());
         let mut slide = p.slides.first().map(|s| slide_media(s)).unwrap_or_default();
         slide.sort();
-        assert_eq!(slide, (9001..=9008).map(MediaId).collect::<Vec<_>>());
+        assert_eq!(slide, (9001..=9009).map(MediaId).collect::<Vec<_>>());
     }
 
     #[test]
@@ -391,7 +402,10 @@ mod tests {
         visit_mut::slide(&mut s, &mut |id: &mut MediaId| id.0 += 100);
         let mut got = slide_media(&s);
         got.sort();
-        assert_eq!(got, (9101..=9108).map(MediaId).collect::<Vec<_>>());
+        assert_eq!(got, (9101..=9109).map(MediaId).collect::<Vec<_>>());
+        let ShapeKind::Group { children, .. } = &s.shapes[0].kind else { panic!("expected group") };
+        let ShapeKind::Picture { fill } = &children[0].kind else { panic!("expected picture") };
+        assert_eq!((fill.media, fill.svg_media), (MediaId(9101), Some(MediaId(9103))));
     }
 
     /// SmartArt and OLE objects keep their parts as media items (#209); those count as used.

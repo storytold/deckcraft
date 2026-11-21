@@ -172,12 +172,18 @@ pub fn format_range(st: &DocState, t: &TextSel) -> (Pos, Pos) {
 /// Link the text being edited: the selection or the word at the caret, as `format_run` would.
 /// With nothing to link (caret at a word boundary, empty paragraph) `display` is inserted at the
 /// caret as linked text in the surrounding formatting, as PowerPoint's Insert Hyperlink does.
-pub(crate) fn link_text(s: &mut Session, link: Hyperlink, display: &str) -> Result<Value> {
+pub(crate) fn link_text(s: &mut Session, link: Hyperlink, preserve_use_text_color: bool, display: &str) -> Result<Value> {
     let st = s.doc()?;
     let Some(t) = st.selection.text.clone() else { return Err(bad("insert.hyperlink", "not editing text")) };
     let (a, b) = format_range(st, &t);
     if a != b {
-        return format_run(s, &move |rp| rp.link = Some(link.clone()));
+        return format_run(s, &move |rp| {
+            let mut next = link.clone();
+            if preserve_use_text_color && let Some(prev) = &rp.link {
+                next.use_text_color = prev.use_text_color;
+            }
+            rp.link = Some(next);
+        });
     }
     if display.is_empty() {
         return Err(bad("insert.hyperlink", "nothing to link: select text or give `text`"));
