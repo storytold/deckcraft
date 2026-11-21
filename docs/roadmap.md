@@ -19,7 +19,7 @@ points and lead the beta plan.
 | Present: full-screen show with transitions, animations, media, presenter view with notes, next slide and timer | yes | 48/48 transitions, 64 effects, triggers, builds, media playback, presenter window, See All Slides and zoom. The presenter timer pauses and resets, and notes have a size control. A custom show plays only its slides. Typing a slide number during the show shows it, and Enter goes there. Presenter view isn't placed on the second display automatically (drag it there; #433) | 2–4 |
 | Add business content: tables, charts with their data, simple diagrams | partial (not blocking) | Tables with styles, merge/split, all D or P. Charts insert with the common types and edit data in the Chart Data dialog (P0 partial); SmartArt is basic (pre-drawn shapes) | 12–20 |
 | Share the deck: PDF of slides, notes or handouts; images | yes | `file.export` PDF with text layer, links, bookmarks, handouts 1–9; PNG/JPEG. Artwork is raster in the PDF; no direct print (print the PDF) | 10–16 |
-| Review: comments with replies, resolve, spelling | partial (not blocking) | Comments, replies and resolve work and survive `.deckcraft` and `.pptx` (#70); Previous and Next walk every slide and the pane lists them; spelling uses installed Hunspell dictionaries (only a short built-in list where none is installed) | 4–8 |
+| Review: comments with replies, resolve, spelling | partial (not blocking) | Comments, replies and resolve work and survive `.deckcraft` and `.pptx` (#70); Previous and Next walk every slide and the pane lists them; spelling uses installed Hunspell dictionaries (where none is installed, only repeated words and, in English, a short built-in list) | 4–8 |
 
 ## Current focus (2026-10-10)
 
