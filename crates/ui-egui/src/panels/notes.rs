@@ -57,10 +57,11 @@ fn indents(p: &Paragraph) -> (f64, f64) {
     (first, margin)
 }
 
-/// Each paragraph's bullet or number, numbered as on a slide (per level, restarting after an
-/// unnumbered paragraph at the same or a lower level).
+/// Each paragraph's bullet or number, numbered as on a slide. A change to Start at restarts the
+/// count at that level, as does an unnumbered paragraph at the same or a shallower level.
 fn bullets(body: &TextBody) -> Vec<Option<String>> {
     let mut numbering = [0u32; 9];
+    let mut run_start = [0u32; 9];
     body.paragraphs
         .iter()
         .map(|p| {
@@ -79,6 +80,11 @@ fn bullets(body: &TextBody) -> Vec<Option<String>> {
                 Bullet::Char { char } => Some(deckcraft_text::map_symbol_bullet(char, p.props.bullet_font.as_deref())),
                 Bullet::AutoNum { scheme, start_at } => {
                     let n = numbering.get_mut(lvl)?;
+                    let start = run_start.get_mut(lvl)?;
+                    if *start != *start_at {
+                        *start = *start_at;
+                        *n = 0;
+                    }
                     *n = n.saturating_add(1);
                     Some(deckcraft_text::autonum(scheme, start_at.saturating_sub(1).saturating_add(*n)))
                 }
@@ -293,6 +299,31 @@ mod tests {
     fn bullets_follow_the_paragraphs() {
         let b = bullets(&notes());
         assert_eq!(b, vec![None, None, Some("▪".into()), Some("▪".into()), Some("1.".into()), Some("2.".into()), None, None]);
+    }
+
+    #[test]
+    fn numbered_notes_restart_when_the_start_at_value_changes() {
+        let numbered = |text, level, start_at| {
+            let mut p = Paragraph::new(text);
+            p.level = level;
+            p.props.bullet = Some(Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at });
+            p
+        };
+        let body = TextBody {
+            paragraphs: vec![
+                numbered("One", 0, 1),
+                numbered("Nested three", 1, 3),
+                numbered("Nested four", 1, 3),
+                numbered("Two", 0, 1),
+                numbered("Restart at eight", 0, 8),
+                numbered("", 0, 20),
+                numbered("Restart nested at three", 1, 3),
+                numbered("Nine", 0, 8),
+            ],
+            ..Default::default()
+        };
+        let expected = [Some("1."), Some("3."), Some("4."), Some("2."), Some("8."), None, Some("3."), Some("9.")];
+        assert_eq!(bullets(&body), expected.map(|n| n.map(str::to_string)));
     }
 
     #[test]
