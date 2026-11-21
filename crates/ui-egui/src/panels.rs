@@ -1,5 +1,5 @@
-//! Task panes on the right: Format Shape, Format Background, Animation, Selection, Comments and
-//! Design Ideas.
+//! Task panes on the right: Format Shape, Format Background, Animation, Selection, Comments,
+//! Design Ideas and the Library.
 
 use deckcraft_model::{AnimClass, AnimStart, Fill, ShapeKind};
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
@@ -50,6 +50,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 "smartart" => "Text Pane",
                 "thesaurus" => "Thesaurus",
                 "revisions" => "Revisions",
+                "library" => "Library",
                 _ => "Pane",
             };
             ui.horizontal(|ui| {
@@ -76,6 +77,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 "smartart" => smartart(app, ui),
                 "thesaurus" => thesaurus(app, ui),
                 "revisions" => revisions(app, ui),
+                "library" => library::show(app, ui),
                 _ => {}
             });
         });
@@ -113,6 +115,7 @@ fn color_button(
 
 pub mod animtimeline;
 pub mod fillui;
+pub mod library;
 pub mod notes;
 pub mod selpane;
 #[cfg(test)]

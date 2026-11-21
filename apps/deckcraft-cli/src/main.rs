@@ -142,6 +142,27 @@ fn open(s: &mut Session, input: Option<&str>, sample: bool) -> Result<(), String
 }
 
 /// Say on stderr what a file lost on opening, so a saved copy doesn't silently miss it (#203).
+/// The Library folders the desktop app keeps in its preferences, so `run` and `mcp` browse the
+/// same Library. Only those: the app's other preferences don't change what the CLI does.
+/// `DECKCRAFT_NO_PREFS` (as for the app) leaves them out. The file is the app's own, read before
+/// any automation root is in force; the folders are checked against the roots when they are read.
+fn saved_library_folders() -> Vec<String> {
+    if std::env::var_os("DECKCRAFT_NO_PREFS").is_some() {
+        return vec![];
+    }
+    let Some(path) = deckcraft_engine::settings_dir().map(|d| d.join(deckcraft_engine::PREFS_FILE)) else { return vec![] };
+    // Larger files are not preferences (the app's limit).
+    let sane = std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= 4 << 20);
+    if !sane {
+        return vec![];
+    }
+    std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<deckcraft_engine::Prefs>(&b).ok())
+        .map(|p| p.sanitized().library_folders)
+        .unwrap_or_default()
+}
+
 fn warn_if_damaged(path: &str, opened: &serde_json::Value) {
     let count = |key: &str| opened.get(key).and_then(|v| v.as_array()).map_or(0, |a| a.len());
     let (slides, media) = (count("lostSlides"), count("damagedMedia"));
@@ -575,6 +596,7 @@ fn run(args: &[String]) -> Result<(), String> {
         output_format(p)?;
     }
     let mut s = Session::new();
+    s.prefs.library_folders = saved_library_folders();
     open(&mut s, input.as_deref(), sample)?;
     for source in cmds {
         match source {
@@ -720,6 +742,7 @@ so drop --connect (or use --connect without the roots)"
         Some(c) => Box::new(Remote::connect(&control_addr(&c)).map_err(|e| format!("can't reach the app at {c}: {e}"))?),
         None => {
             let mut h = Headless::new();
+            h.session.prefs.library_folders = saved_library_folders();
             // `--sample` is the operator's own choice, made before the roots come into force.
             if sample {
                 deckcraft_engine::sample::open_sample(&mut h.session).map_err(|e| e.to_string())?;

@@ -157,7 +157,7 @@ pub(crate) fn detach_on_slide(doc: &deckcraft_model::Presentation, sel: &crate::
 /// space, mapped out through each group around it, as Ungroup places a freed shape. `None` for a
 /// shape on the top level or not found. A turned shape in a group stretched more one way than the
 /// other is drawn skewed, which a box cannot hold, so it gets the unskewed box Ungroup gives it.
-fn box_on_slide(
+pub(crate) fn box_on_slide(
     doc: &deckcraft_model::Presentation,
     sel: &crate::Selection,
     shapes: &[Shape],

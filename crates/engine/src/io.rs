@@ -87,6 +87,107 @@ pub fn file_len(_path: &str) -> Option<u64> {
     None
 }
 
+/// Folder entries and file stamps, as the Library core the Craft apps share defines them.
+pub use craft_library::{DirEntry, EntryKind, Stamp};
+
+#[cfg(not(target_arch = "wasm32"))]
+fn stamp_of(meta: &std::fs::Metadata) -> Stamp {
+    Stamp { len: meta.len(), modified: meta.modified().ok() }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn kind_of(t: std::fs::FileType) -> EntryKind {
+    if t.is_symlink() {
+        EntryKind::Link
+    } else if t.is_dir() {
+        EntryKind::Folder
+    } else if t.is_file() {
+        EntryKind::File
+    } else {
+        EntryKind::Other
+    }
+}
+
+/// At most `max` entries of the folder at `path` (inside the automation read root when there is
+/// one), and whether it holds more. Links are not followed: each is reported as a link.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_dir(path: &std::path::Path, max: usize) -> Result<(Vec<DirEntry>, bool), String> {
+    crate::file_access::check_read_path(path)?;
+    let shown = path.display();
+    let mut out = vec![];
+    for entry in std::fs::read_dir(path).map_err(|e| format!("{shown}: {e}"))? {
+        if out.len() >= max {
+            return Ok((out, true));
+        }
+        // An entry that vanished or can't be examined is left out.
+        let Ok(entry) = entry else { continue };
+        let Ok(t) = entry.file_type() else { continue };
+        let kind = kind_of(t);
+        let stamp = if kind == EntryKind::File { entry.metadata().map(|m| stamp_of(&m)).unwrap_or_default() } else { Stamp::default() };
+        out.push(DirEntry { path: entry.path(), name: entry.file_name().to_str().map(String::from), kind, stamp });
+    }
+    Ok((out, false))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn read_dir(path: &std::path::Path, _max: usize) -> Result<(Vec<DirEntry>, bool), String> {
+    Err(format!("{}: folders on this computer are not available in the browser build", path.display()))
+}
+
+/// What is at `path` (a link is reported as a link) and, for a file, its [`Stamp`].
+#[cfg(not(target_arch = "wasm32"))]
+pub fn stat(path: &std::path::Path) -> Result<(EntryKind, Stamp), String> {
+    crate::file_access::check_read_path(path)?;
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok((kind_of(meta.file_type()), stamp_of(&meta)))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn stat(path: &std::path::Path) -> Result<(EntryKind, Stamp), String> {
+    Err(format!("{}: files on this computer are not available in the browser build", path.display()))
+}
+
+/// `path` made absolute with its links followed, when it may be read.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn canonical(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    crate::file_access::check_read_path(path)?;
+    std::fs::canonicalize(path).map(crate::file_access::plain).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn canonical(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    Err(format!("{}: files on this computer are not available in the browser build", path.display()))
+}
+
+/// The bytes of the regular file at `path`, inside the automation read root when there is one,
+/// and no more than `max` of them: a larger file is an error, also one that grew after it was
+/// measured.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_path(path: &std::path::Path, max: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    crate::file_access::check_read_path(path)?;
+    let shown = path.display();
+    let meta = std::fs::metadata(path).map_err(|e| format!("{shown}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("{shown}: not a regular file"));
+    }
+    if meta.len() > max {
+        return Err(format!("{shown}: file size {} exceeds the {max}-byte limit", meta.len()));
+    }
+    let file = std::fs::File::open(path).map_err(|e| format!("{shown}: {e}"))?;
+    let mut bytes = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or(0));
+    file.take(max.saturating_add(1)).read_to_end(&mut bytes).map_err(|e| format!("{shown}: {e}"))?;
+    if bytes.len() as u64 > max {
+        return Err(format!("{shown}: the file grew past the {max}-byte limit while it was read"));
+    }
+    Ok(bytes)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn read_path(path: &std::path::Path, _max: u64) -> Result<Vec<u8>, String> {
+    Err(format!("{}: files on this computer are not available in the browser build", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

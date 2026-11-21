@@ -98,6 +98,7 @@ impl SlideApp {
             ui_fonts: uifonts::UiFonts::default(),
             thumb_drag: None,
             selpane: selpane::State::default(),
+            library: Default::default(),
             align_to: None,
             doc_window: None,
             sorter: sorter::State::default(),

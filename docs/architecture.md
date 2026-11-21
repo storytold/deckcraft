@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-11 · **Change:** trivial (containers and the Opus decoder come from craft-libs; previous: minor, `ppt` crate for PowerPoint 97–2003 import; previous: minor, native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-15 · **Change:** trivial (the Library's shared crates, craft-library and craft-library-egui, come from craft-libs; previous: trivial, containers and the Opus decoder come from craft-libs; previous: minor, `ppt` crate for PowerPoint 97–2003 import; previous: minor, native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -22,6 +22,7 @@ nothing below L6 uses egui, eframe, winit or rfd.
 | L4 | `pdf` | App-owned export layout and rendering through the shared `craft-pdf` writer |
 | L5 | `engine` | Sessions, documents, selection, undo history on shared slide snapshots, the command registry (320 commands in `cmd/*`), pointer tools, keys, AutoRecover, the panic guard (`guard.rs`) |
 | L6 | `ui-egui`, `mcp` | The PowerPoint-style interface (ribbon with 10 tabs + contextual tabs, canvas, thumbnails, panes, 41 dialogs, show and presenter windows, the JSON control channel); the MCP server (JSON-RPC 2.0 over stdio), headless or connected to a running app |
+| shared | `craft-library`, `craft-library-egui` (from craft-libs; the pane is used by `ui-egui`) | The Library the Craft apps share (#958): the folder walk, bounds, caches, search and the `library.*` contract over an app's file access and document kind; its pane over an app's host. DeckCraft's slides, confined file access and inserts are in `engine/src/library.rs` and `cmd/library.rs` |
 | apps | `deckcraft` (desktop: eframe/wgpu, cpal audio, logging), `deckcraft-cli` (run, render, convert, mcp, app), `deckcraft-web` (trunk; WebGPU with WebGL2 fallback), `xtask` | Exempt from layering |
 
 The media codecs and containers are clean-room pure Rust, 59k lines, shared in spirit with
@@ -86,6 +87,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | trivial | `craft-library` and `craft-library-egui` from craft-libs: the Library the Craft apps share (#958) |
 | 2026-11-12 | trivial | The `metafile` crate is gone: `render` reads EMF/WMF with craft-metafile from craft-libs |
 | 2026-11-12 | trivial | The `bitstream`, `h264`, `hevc`, `vp9` and `av1` crates are gone: `media` decodes video with craft-video from craft-libs |
 | 2026-11-11 | trivial | The `opus`, `ogg`, `isobmff` and `matroska` crates are gone: `media` uses craft-audio and craft-media from craft-libs |
