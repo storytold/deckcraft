@@ -47,7 +47,8 @@ fn format_tabs(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
 }
 
 fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
-    ui.label(egui::RichText::new("Shadow").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(tl!("Shadow")).font(theme::bold(13.0)));
+
     let fx = sh.effects.clone().unwrap_or_default();
     if let Some(v) = effect_presets::shadow_row(ui, effect_presets::shadow_preset_id(&fx)) {
         run(app, "shape.effects", json!({"shadow": v}));
@@ -59,7 +60,7 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             app,
             ui,
             ("shadow", sh.id.0, "t"),
-            "Transparency",
+            tl!("Transparency"),
             (1.0 - sw.color.alpha()) * 100.0,
             0.0..=100.0,
             "%",
@@ -73,7 +74,7 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
         fx_slider(app, ui, ("shadow", sh.id.0, "d"), "Distance", sw.dist, 0.0..=200.0, " pt", "shadowProps", "dist", 1.0);
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Reflection").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(tl!("Reflection")).font(theme::bold(13.0)));
     ui.horizontal_wrapped(|ui| {
         for (l, v) in [("None", "none"), ("Tight", "tight"), ("Half", "half"), ("Full", "full")] {
             if ui.button(l).clicked() {
@@ -86,7 +87,7 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             app,
             ui,
             ("refl", sh.id.0, "t"),
-            "Transparency",
+            tl!("Transparency"),
             (1.0 - r.start_alpha) * 100.0,
             0.0..=100.0,
             "%",
@@ -94,24 +95,25 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             "transparency",
             0.01,
         );
-        fx_slider(app, ui, ("refl", sh.id.0, "s"), "Size", r.end_pos * 100.0, 0.0..=100.0, "%", "reflectionProps", "size", 0.01);
+        fx_slider(app, ui, ("refl", sh.id.0, "s"), tl!("Size"), r.end_pos * 100.0, 0.0..=100.0, "%", "reflectionProps", "size", 0.01);
         fx_slider(app, ui, ("refl", sh.id.0, "d"), "Distance", r.dist, 0.0..=100.0, " pt", "reflectionProps", "dist", 1.0);
         fx_slider(app, ui, ("refl", sh.id.0, "b"), "Blur", r.blur, 0.0..=100.0, " pt", "reflectionProps", "blur", 1.0);
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Glow").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(tl!("Glow")).font(theme::bold(13.0)));
     let radius = fx.glow.as_ref().map_or(0.0, |g| g.radius);
     if let Some(r) = effect_presets::glow_row(ui, radius) {
         run(app, "shape.effects", json!({"glowProps": {"radius": r}}));
     }
-    fx_slider(app, ui, ("glow", sh.id.0, "r"), "Size", radius, 0.0..=150.0, " pt", "glowProps", "radius", 1.0);
+    fx_slider(app, ui, ("glow", sh.id.0, "r"), tl!("Size"), radius, 0.0..=150.0, " pt", "glowProps", "radius", 1.0);
+
     if let Some(g) = &fx.glow {
         color_button(app, ui, "Color", None, |c| ("shape.effects".into(), json!({"glowProps": {"color": c.as_ref().map(cref_param)}})));
         fx_slider(
             app,
             ui,
             ("glow", sh.id.0, "t"),
-            "Transparency",
+            tl!("Transparency"),
             (1.0 - g.color.alpha()) * 100.0,
             0.0..=100.0,
             "%",
@@ -120,17 +122,17 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             0.01,
         );
     }
-    ui.label(egui::RichText::new("Soft Edges").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(tl!("Soft Edges")).font(theme::bold(13.0)));
     let mut s = sh.effects.as_ref().and_then(|e| e.soft_edge).unwrap_or(0.0);
     if let Some(r) = effect_presets::soft_edge_row(ui, s) {
         run(app, "shape.effects", json!({"softEdges": r}));
     }
-    if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text("size (pt)")).drag_stopped() {
+    if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text(tl!("size (pt)"))).drag_stopped() {
         run(app, "shape.effects", json!({"softEdges": s}));
     }
     let raw3d = sh.effects.as_ref().and_then(|e| e.raw3d.clone());
     three_d_options(app, ui, sh.id.0, raw3d.as_deref());
-    if ui.button("Reset Effects").clicked() {
+    if ui.button(tl!("Reset Effects")).clicked() {
         run(app, "shape.effects", json!({"reset": true}));
     }
 }
@@ -188,11 +190,11 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
             }
         });
     };
-    ui.label(egui::RichText::new("Size").font(theme::bold(13.0)));
-    fields(ui, "Height", "fh", x.h, "h", "shape.resize", false);
-    fields(ui, "Width", "fw", x.w, "w", "shape.resize", false);
-    fields(ui, "Rotation", "fr", x.rot, "deg", "shape.rotate", true);
-    for (label, id, cur, base, key) in [("Scale Height", "fsh", x.h, base_h, "h"), ("Scale Width", "fsw", x.w, base_w, "w")] {
+    ui.label(egui::RichText::new(tl!("Size")).font(theme::bold(13.0)));
+    fields(ui, tl!("Height"), "fh", x.h, "h", "shape.resize", false);
+    fields(ui, tl!("Width"), "fw", x.w, "w", "shape.resize", false);
+    fields(ui, tl!("Rotation"), "fr", x.rot, "deg", "shape.rotate", true);
+    for (label, id, cur, base, key) in [(tl!("Scale Height"), "fsh", x.h, base_h, "h"), (tl!("Scale Width"), "fsw", x.w, base_w, "w")] {
         ui.add_enabled_ui(single, |ui| {
             ui.horizontal(|ui| {
                 ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
@@ -209,18 +211,19 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
             })
         });
     }
-    if ui.checkbox(&mut lock, "Lock aspect ratio").changed() {
+    if ui.checkbox(&mut lock, tl!("Lock aspect ratio")).changed() {
         ui.data_mut(|d| d.insert_temp(lock_id, lock));
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Position").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(tl!("Position")).font(theme::bold(13.0)));
     ui.add_enabled_ui(single, |ui| {
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(90.0, 20.0), egui::Label::new("From"));
-            let combo =
-                craft_ui::ComboBox::from_id_salt("fmt-origin").selected_text(if center { "Center" } else { "Top Left Corner" }).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut center, false, "Top Left Corner");
-                    ui.selectable_value(&mut center, true, "Center");
+            ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!("From")));
+            let combo = craft_ui::ComboBox::from_id_salt("fmt-origin")
+                .selected_text(if center { tl!("Center") } else { tl!("Top Left Corner") })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut center, false, tl!("Top Left Corner"));
+                    ui.selectable_value(&mut center, true, tl!("Center"));
                 });
             combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "From"));
         })
@@ -240,10 +243,10 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
             }
         });
     };
-    pos(ui, "Horizontal", "fx", px, dx, "x");
-    pos(ui, "Vertical", "fy", py, dy, "y");
+    pos(ui, tl!("Horizontal"), "fx", px, dx, "x");
+    pos(ui, tl!("Vertical"), "fy", py, dy, "y");
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Alt Text").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(tl!("Alt Text")).font(theme::bold(13.0)));
     let id = ui.scope_id().with(("alt", uid, sh.id.0));
     let stored: Option<(String, String)> = ui.data_mut(|d| d.get_temp(id));
     let mut alt = widgets::text_draft(stored, &sh.descr);
@@ -259,7 +262,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let Some(sh) = st.selected_shapes().first().map(|s| (*s).clone()) else {
-        ui.label(egui::RichText::new("Select a shape to format it.").color(t.text_dim));
+        ui.label(egui::RichText::new(tl!("Select a shape to format it.")).color(t.text_dim));
         return;
     };
     let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, &sh);
@@ -271,17 +274,18 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
     match app.ui.format_tab.as_str() {
         "effects" => effects_tab(app, ui, &sh),
         "size" => size_tab(app, ui, &sh, x, single, uid),
+
         "text" => {
-            ui.label(egui::RichText::new("Text Fill").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new(tl!("Text Fill")).font(theme::bold(13.0)));
             color_button(app, ui, "Color", None, |c| match c {
                 Some(c) => ("format.color".into(), json!({"color": cref_param(&c)})),
                 None => ("format.color".into(), json!({"color": "tx1"})),
             });
             text_transparency_slider(app, ui, &sh);
             ui.add_space(6.0);
-            ui.label(egui::RichText::new("Text Box").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new(tl!("Text Box")).font(theme::bold(13.0)));
             ui.horizontal(|ui| {
-                ui.label("Vertical alignment");
+                ui.label(tl!("Vertical alignment"));
                 for (l, a) in [("Top", "top"), ("Middle", "middle"), ("Bottom", "bottom")] {
                     if ui.small_button(l).clicked() {
                         run(app, "format.anchor", json!({"anchor": a}));
@@ -297,10 +301,10 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             });
             let wrap = sh.text.as_ref().and_then(|t| t.body.wrap).unwrap_or(true);
             let mut w = wrap;
-            if ui.checkbox(&mut w, "Wrap text in shape").changed() {
+            if ui.checkbox(&mut w, tl!("Wrap text in shape")).changed() {
                 run(app, "format.wrap", json!({"on": w}));
             }
-            ui.label("Margins (pt)");
+            ui.label(tl!("Margins (pt)"));
             let b = sh.text.as_ref().map(|t| t.body.clone()).unwrap_or_default();
             for (l, k, v) in [
                 ("Left", "left", b.inset_l.unwrap_or(7.2)),
@@ -316,7 +320,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 });
             }
             ui.horizontal(|ui| {
-                ui.label("Columns");
+                ui.label(tl!("Columns"));
                 for n in 1..=3 {
                     if ui.small_button(n.to_string()).clicked() {
                         run(app, "format.columns", json!({"count": n, "spacing": 18}));
@@ -330,30 +334,31 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         "picture" => {
             let adj = if let ShapeKind::Picture { fill } = &sh.kind { fill.adjust.clone() } else { Default::default() };
             let mut b = adj.brightness as f32;
-            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text(tl!("Brightness"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"brightness": b}));
             }
             let mut c = adj.contrast as f32;
-            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text(tl!("Contrast"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"contrast": c}));
             }
             let mut s = adj.saturation.unwrap_or(1.0) as f32;
-            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text(tl!("Saturation"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"saturation": s}));
             }
             let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
             let mut tr = (1.0 - alpha) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text(tl!("Transparency"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"transparency": tr}));
             }
-            if ui.button("Reset Picture").clicked() {
+            if ui.button(tl!("Reset Picture")).clicked() {
                 run(app, "picture.reset", json!({}));
             }
         }
         _ => {
             // Fill & Line.
-            ui.label(egui::RichText::new("Fill").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new(tl!("Fill")).font(theme::bold(13.0)));
             let members_background = members_have_background_fill(&sh);
+
             let kind = match &sh.fill {
                 _ if members_background => "background",
                 None => "auto",
@@ -372,8 +377,8 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 ("Gradient fill", "gradient"),
                 ("Picture or texture fill", "picture"),
                 ("Pattern fill", "pattern"),
-                ("Slide background fill", "background"),
-                ("Automatic", "auto"),
+                (tl!("Slide background fill"), "background"),
+                (tl!("Automatic"), "auto"),
             ] {
                 if k == "background" && !background_ok {
                     continue;
@@ -410,7 +415,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 if !transparency {
                     return;
                 }
-                let label = ui.label("Transparency");
+                let label = ui.label(tl!("Transparency"));
                 // Seed from this shape. A shared temp defaulted to 0, so a shape that was
                 // already 40% transparent showed as opaque, and leaving the slider wrote 0.
                 let seed = match &sh.fill {
@@ -441,7 +446,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     run(app, "shape.fill", json!({"gradient": crate::fillui::gradient_json(&ng)}));
                 }
                 let mut rot = g.rotate_with_shape;
-                if ui.checkbox(&mut rot, "Rotate with shape").changed() {
+                if ui.checkbox(&mut rot, tl!("Rotate with shape")).changed() {
                     let ng = deckcraft_model::style::Gradient { rotate_with_shape: rot, ..g.clone() };
                     run(app, "shape.fill", json!({"gradient": crate::fillui::gradient_json(&ng)}));
                 }
@@ -452,15 +457,15 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "shape.fill", json!({"pattern": crate::fillui::pattern_json(&np)}));
             }
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("Line").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new(tl!("Line")).font(theme::bold(13.0)));
             let none = matches!(sh.line.as_ref().and_then(|l| l.fill.as_ref()), Some(Fill::None));
-            if ui.radio(none, "No line").clicked() {
+            if ui.radio(none, tl!("No line")).clicked() {
                 run(app, "shape.line", json!({"none": true}));
             }
-            if ui.radio(!none && sh.line.is_some(), "Solid line").clicked() {
+            if ui.radio(!none && sh.line.is_some(), tl!("Solid line")).clicked() {
                 run(app, "shape.line", json!({"color": "tx1", "width": 1}));
             }
-            if ui.radio(sh.line.is_none(), "Automatic").clicked() {
+            if ui.radio(sh.line.is_none(), tl!("Automatic")).clicked() {
                 run(app, "shape.line", json!({"reset": true}));
             }
             color_button(app, ui, "Color", Some("No Outline"), |c| match c {
@@ -468,14 +473,14 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 None => ("shape.line".into(), json!({"none": true})),
             });
             ui.horizontal(|ui| {
-                ui.label("Width");
+                ui.label(tl!("Width"));
                 let w = sh.line.as_ref().and_then(|l| l.width).unwrap_or(0.75);
-                if let Some(v) = widgets::spinner(ui, "lw", "Width", w, 0.25, " pt", 60.0) {
+                if let Some(v) = widgets::spinner(ui, "lw", tl!("Width"), w, 0.25, " pt", 60.0) {
                     run(app, "shape.line", json!({"width": v.max(0.0)}));
                 }
             });
             ui.horizontal_wrapped(|ui| {
-                ui.label("Dash");
+                ui.label(tl!("Dash"));
                 for (l, d) in [("—", "solid"), ("···", "sysDot"), ("- -", "dash"), ("-·-", "dashDot"), ("— —", "lgDash")] {
                     if ui.small_button(l).clicked() {
                         run(app, "shape.line", json!({"dash": d}));
@@ -622,13 +627,13 @@ fn pic_drag(app: &mut SlideApp, ui: &mut Ui, label: &str, value: f64, suffix: &s
 fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft_model::style::PictureFill) {
     use deckcraft_model::style::PictureMode;
     ui.horizontal(|ui| {
-        ui.label("Picture source");
-        if ui.button("Insert…").clicked() {
+        ui.label(tl!("Picture source"));
+        if ui.button(tl!("Insert…")).clicked() {
             pick_fill_picture(app);
         }
     });
     let mut tile = matches!(pf.mode, PictureMode::Tile { .. });
-    if ui.checkbox(&mut tile, "Tile picture as texture").changed() {
+    if ui.checkbox(&mut tile, tl!("Tile picture as texture")).changed() {
         run(app, "shape.fill", json!({"pictureProps": {"tile": tile}}));
     }
     match &pf.mode {
@@ -648,7 +653,7 @@ fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft
                 ("b", "Bottom"),
                 ("br", "Bottom right"),
             ];
-            let mirrors = [("none", "None"), ("x", "Horizontal"), ("y", "Vertical"), ("xy", "Both")];
+            let mirrors = [("none", "None"), ("x", tl!("Horizontal")), ("y", tl!("Vertical")), ("xy", "Both")];
             for (label, key, opts, cur) in [("Alignment", "align", &aligns[..], align), ("Mirror type", "mirror", &mirrors[..], flip)] {
                 ui.horizontal(|ui| {
                     let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
@@ -680,7 +685,7 @@ fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft
         }
     }
     let mut rot = !pf.upright;
-    if ui.checkbox(&mut rot, "Rotate with shape").changed() {
+    if ui.checkbox(&mut rot, tl!("Rotate with shape")).changed() {
         run(app, "shape.fill", json!({"pictureProps": {"rotateWithShape": rot}}));
     }
 }
@@ -734,7 +739,7 @@ fn three_d_options(app: &mut SlideApp, ui: &mut Ui, id: u32, raw: Option<&str>) 
     let s3 = raw.map(Shape3d::parse).unwrap_or_default();
     let with_none: Vec<&str> = std::iter::once("none").chain(BEVELS.iter().copied()).collect();
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("3-D Format").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(tl!("3-D Format")).font(theme::bold(13.0)));
     for (label, key, b) in [("Top bevel", "bevelTop", &s3.top), ("Bottom bevel", "bevelBottom", &s3.bottom)] {
         three_d_combo(app, ui, id, label, key, b.as_ref().map_or("none", |b| b.preset.as_str()), &with_none);
         if let Some(b) = b {
@@ -747,14 +752,14 @@ fn three_d_options(app: &mut SlideApp, ui: &mut Ui, id: u32, raw: Option<&str>) 
     three_d_combo(app, ui, id, "Material", "material", &s3.material, MATERIALS);
     three_d_combo(app, ui, id, "Lighting", "lighting", &s3.light, LIGHTS);
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("3-D Rotation").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(tl!("3-D Rotation")).font(theme::bold(13.0)));
     three_d_combo(app, ui, id, "Presets", "camera", &s3.camera, CAMERAS);
     let (rx, ry, rz) = s3.rot.unwrap_or((0.0, 0.0, 0.0));
     three_d_drag(app, ui, "X Rotation", rx, "°", "rotX");
     three_d_drag(app, ui, "Y Rotation", ry, "°", "rotY");
     three_d_drag(app, ui, "Z Rotation", rz, "°", "rotZ");
     three_d_drag(app, ui, "Distance from ground", s3.z, " pt", "z");
-    if ui.add_enabled(raw.is_some(), egui::Button::new("Reset 3-D")).clicked() {
+    if ui.add_enabled(raw.is_some(), egui::Button::new(tl!("Reset 3-D"))).clicked() {
         run(app, "shape.effects", json!({"threeD": {"reset": true}}));
     }
 }
@@ -772,7 +777,7 @@ pub(crate) fn text_transparency_of(sh: &deckcraft_model::Shape) -> f64 {
 /// Text Fill › Transparency, as in PowerPoint's Format Shape › Text Options (#32).
 pub(crate) fn text_transparency_slider(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     ui.horizontal(|ui| {
-        let label = ui.label("Transparency");
+        let label = ui.label(tl!("Transparency"));
         let id = ui.scope_id().with(("text-transparency", sh.id));
         let stored = (text_transparency_of(sh) * 100.0) as f32;
         let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(stored));

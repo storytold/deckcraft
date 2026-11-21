@@ -104,7 +104,7 @@ fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
     let list: Vec<String> =
         app.ui.recent.iter().filter(|p| q.is_empty() || split_path(p).0.to_lowercase().contains(&q)).take(limit).cloned().collect();
     if list.is_empty() {
-        dim(ui, &format!("No recent presentations match “{}”.", query.trim()));
+        dim(ui, &crate::i18n::fmt(tl!("No recent presentations match “{query}”."), &[("query", query.trim())]));
         return;
     }
     let width = ui.available_width().min(CONTENT_W);
@@ -143,7 +143,7 @@ fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
             ui.painter().rect_filled(x.rect, CornerRadius::same(3), t.hover);
         }
         icons::paint(ui.painter(), Rect::from_center_size(x.rect.center(), vec2(14.0, 14.0)), Icon::Close, t.text_dim, false);
-        if x.on_hover_text("Remove from Recent").clicked() {
+        if x.on_hover_text(tl!("Remove from Recent")).clicked() {
             app.forget_recent(&path);
         }
         if resp.clicked() {
@@ -210,11 +210,11 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
         crate::dialogs::paint_logo(ui.painter(), r);
-        ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
+        ui.label(RichText::new(tl!("DeckCraft")).font(theme::bold(24.0)).color(t.text));
     });
     ui.add_space(18.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("New").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new(tl!("New")).font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if arrow_link(ui, "More themes") {
                 out.page = Some(Page::New);
@@ -225,7 +225,7 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     new_tiles(app, ui, "", 5, true);
     ui.add_space(22.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Templates").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new(tl!("Templates")).font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if arrow_link(ui, "More templates") {
                 out.page = Some(Page::New);
@@ -236,7 +236,7 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     template_tiles(app, ui, "", 3);
     ui.add_space(22.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Recent").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new(tl!("Recent")).font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             search(ui, &mut bs.query, "Search for a file", 280.0);
         });
@@ -278,7 +278,7 @@ pub(super) fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         false
     };
     if !themes && !templates {
-        dim(ui, &format!("No themes or templates match “{}”.", q.trim()));
+        dim(ui, &crate::i18n::fmt(tl!("No themes or templates match “{query}”."), &[("query", q.trim())]));
     }
 }
 
@@ -289,15 +289,15 @@ pub(super) fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.vertical(|ui| {
             ui.set_width(230.0);
             place_row(ui, Icon::Recent, "Recent", true, 220.0);
-            if place_row(ui, Icon::OpenFolder, "Browse", false, 220.0).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
+            if place_row(ui, Icon::OpenFolder, "Browse", false, 220.0).on_hover_text(tl!("Open a presentation from a folder (Ctrl+O)")).clicked() {
                 let _ = app.run("app.openDialog", json!({}));
             }
             if app.session.recovery_dir.is_some() {
                 ui.add_space(24.0);
-                if ui.button("Recover Unsaved Presentations").clicked() {
+                if ui.button(tl!("Recover Unsaved Presentations")).clicked() {
                     match app.run("file.recovery.open", json!({})) {
                         Ok(v) if v.get("opened").and_then(Value::as_array).is_some_and(|a| a.is_empty()) => {
-                            app.set_status("There are no unsaved presentations to recover");
+                            app.set_status(tl!("There are no unsaved presentations to recover"));
                         }
                         _ => {}
                     }
