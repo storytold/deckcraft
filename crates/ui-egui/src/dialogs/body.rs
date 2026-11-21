@@ -261,15 +261,25 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let ut = check(ui, d, "Use timings, if present", "ut", sh.use_timings);
     let kc = check(ui, d, "Keep mouse cursor visible", "kc", app.ui.show_keep_cursor);
     let names: Vec<String> = app.session.active().map(|s| s.doc.custom_shows.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
-    let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
+    // An absent choice preserves the saved range or custom show; only an explicit All slides
+    // choice clears it. Keep a saved range available if the user switches away and back.
+    let chosen = d.fields.get("custom").cloned();
+    let saved_range = sh.range.filter(|_| sh.custom_show.is_none()).map(|_| setup_show_slides_label(&sh, None));
     let field = ui.label("Slides");
-    let label = if chosen.is_empty() { "All slides".to_string() } else { chosen.clone() };
+    let label = setup_show_slides_label(&sh, chosen.as_deref());
     let combo = craft_ui::ComboBox::from_id_salt("setup_custom").selected_text(label).show_ui(ui, |ui| {
-        if ui.selectable_label(chosen.is_empty(), "All slides").clicked() {
+        if let Some(label) = &saved_range
+            && ui.selectable_label(chosen.is_none(), label).clicked()
+        {
+            d.fields.remove("custom");
+        }
+        let all = chosen.as_deref() == Some("") || (chosen.is_none() && sh.custom_show.is_none() && sh.range.is_none());
+        if ui.selectable_label(all, "All slides").clicked() {
             d.fields.insert("custom".into(), String::new());
         }
         for n in &names {
-            if ui.selectable_label(&chosen == n, n).clicked() {
+            let selected = chosen.as_deref().or(sh.custom_show.as_deref()) == Some(n.as_str());
+            if ui.selectable_label(selected, n).clicked() {
                 d.fields.insert("custom".into(), n.clone());
             }
         }
@@ -277,12 +287,32 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let _ = combo.response.labelled_by(field.id);
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
-        let ty = d.get("type", "speaker");
-        let custom = d.fields.get("custom").cloned().unwrap_or_default();
-        run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
+        run(app, "show.setup", setup_show_command(&sh, d, lp, nn, na, ut));
         run(app, "show.keepCursor", json!({"on": kc}));
     }
     ok || cancel
+}
+
+fn setup_show_slides_label(sh: &deckcraft_model::ShowSettings, choice: Option<&str>) -> String {
+    match choice.or(sh.custom_show.as_deref()) {
+        Some("") => "All slides".into(),
+        Some(name) => name.into(),
+        None => match sh.range {
+            Some((from, to)) => format!("Slides {from}–{to}"),
+            None => "All slides".into(),
+        },
+    }
+}
+
+fn setup_show_command(sh: &deckcraft_model::ShowSettings, d: &Dialog, lp: bool, nn: bool, na: bool, ut: bool) -> Value {
+    let ty = d.fields.get("type").map(String::as_str).unwrap_or(&sh.show_type);
+    let mut params = json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut});
+    match d.fields.get("custom") {
+        Some(name) if name.is_empty() => params["all"] = json!(true),
+        Some(name) => params["custom"] = json!(name),
+        None => {}
+    }
+    params
 }
 
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
@@ -1406,4 +1436,90 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         restore_preferences(app, d);
     }
     ok || cancel
+}
+
+#[cfg(test)]
+mod setup_show_tests {
+    use super::{Dialog, setup_show_command, setup_show_slides_label};
+    use deckcraft_engine::Session;
+    use serde_json::json;
+
+    #[test]
+    fn untouched_range_survives_unrelated_show_settings() {
+        let mut s = Session::with_new();
+        s.execute("show.setup", &json!({"from": 2, "to": 3, "type": "browsed", "loop": true})).unwrap();
+        let sh = s.doc().unwrap().doc.show.clone();
+        let d = Dialog::new("setupShow");
+        assert_eq!(setup_show_slides_label(&sh, None), "Slides 2–3");
+        let command = setup_show_command(&sh, &d, false, true, false, true);
+        assert!(command.get("custom").is_none() && command.get("all").is_none());
+        s.execute("show.setup", &command).unwrap();
+        let saved = &s.doc().unwrap().doc.show;
+        assert_eq!(saved.range, Some((2, 3)));
+        assert_eq!(saved.custom_show, None);
+        assert_eq!(saved.show_type, "browsed");
+        assert!(!saved.loop_until_esc && saved.without_narration);
+    }
+
+    #[test]
+    fn explicit_all_slides_clears_a_range_or_custom_show() {
+        for initial in [json!({"from": 2, "to": 3}), json!({"custom": "Short"})] {
+            let mut s = Session::with_new();
+            s.execute("show.setup", &initial).unwrap();
+            let sh = s.doc().unwrap().doc.show.clone();
+            let mut d = Dialog::new("setupShow");
+            d.fields.insert("custom".into(), String::new());
+            assert_eq!(setup_show_slides_label(&sh, Some("")), "All slides");
+            let command = setup_show_command(&sh, &d, false, false, false, true);
+            assert_eq!(command["all"], true);
+            assert!(command.get("custom").is_none());
+            s.execute("show.setup", &command).unwrap();
+            let saved = &s.doc().unwrap().doc.show;
+            assert_eq!(saved.range, None);
+            assert_eq!(saved.custom_show, None);
+        }
+    }
+
+    #[test]
+    fn custom_choice_can_return_to_the_saved_range_before_applying() {
+        let mut s = Session::with_new();
+        s.execute("show.setup", &json!({"from": 2, "to": 3, "type": "browsed"})).unwrap();
+        let sh = s.doc().unwrap().doc.show.clone();
+        let mut d = Dialog::new("setupShow");
+        for choice in ["", "Short"] {
+            d.fields.insert("custom".into(), choice.into());
+            d.fields.remove("custom");
+            assert_eq!(setup_show_slides_label(&sh, d.fields.get("custom").map(String::as_str)), "Slides 2–3");
+            let command = setup_show_command(&sh, &d, false, false, false, true);
+            s.execute("show.setup", &command).unwrap();
+            assert_eq!(s.doc().unwrap().doc.show.range, Some((2, 3)));
+        }
+        d.fields.insert("custom".into(), "Short".into());
+        assert_eq!(setup_show_slides_label(&sh, Some("Short")), "Short");
+        let command = setup_show_command(&sh, &d, false, false, false, true);
+        assert_eq!(command["custom"], "Short");
+        assert!(command.get("all").is_none());
+        s.execute("show.setup", &command).unwrap();
+        let saved = &s.doc().unwrap().doc.show;
+        assert_eq!(saved.custom_show.as_deref(), Some("Short"));
+        assert_eq!(saved.range, None);
+        assert_eq!(saved.show_type, "browsed");
+    }
+
+    #[test]
+    fn untouched_custom_show_and_default_all_slides_keep_their_settings() {
+        let mut s = Session::with_new();
+        let sh = s.doc().unwrap().doc.show.clone();
+        assert_eq!(setup_show_slides_label(&sh, None), "All slides");
+        s.execute("show.setup", &json!({"custom": "Short", "type": "kiosk"})).unwrap();
+        let sh = s.doc().unwrap().doc.show.clone();
+        assert_eq!(setup_show_slides_label(&sh, None), "Short");
+        let d = Dialog::new("setupShow");
+        let command = setup_show_command(&sh, &d, sh.loop_until_esc, false, true, false);
+        s.execute("show.setup", &command).unwrap();
+        let saved = &s.doc().unwrap().doc.show;
+        assert_eq!(saved.custom_show.as_deref(), Some("Short"));
+        assert_eq!(saved.show_type, "kiosk");
+        assert!(saved.loop_until_esc && saved.without_animation && !saved.use_timings);
+    }
 }
