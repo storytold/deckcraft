@@ -71,6 +71,11 @@ const TILES: &[(&str, [u8; 8])] = &[
     ("zigZag", [0x81, 0x42, 0x24, 0x18, 0x81, 0x42, 0x24, 0x18]),
 ];
 
+/// Every preset name, in the order of the tiles.
+pub fn presets() -> impl Iterator<Item = &'static str> {
+    TILES.iter().map(|(n, _)| *n)
+}
+
 /// The 8×8 tile of preset `name` (`pct50` for an unknown name).
 pub fn tile(name: &str) -> [u8; 8] {
     TILES

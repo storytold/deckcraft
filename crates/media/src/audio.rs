@@ -24,6 +24,8 @@ pub struct Pcm {
     pub samples: Vec<f32>,
 }
 
+const MAX_PCM_SAMPLES: usize = 64 * 1024 * 1024;
+
 impl Pcm {
     /// Sample frames (samples per channel).
     pub fn frames(&self) -> usize {
@@ -47,8 +49,10 @@ impl Pcm {
 
     fn push_planar(planes: &[Vec<f32>], out: &mut Vec<f32>) {
         let n = planes.iter().map(Vec::len).min().unwrap_or(0);
-        out.reserve(n * planes.len());
-        for i in 0..n {
+        let remaining = MAX_PCM_SAMPLES.saturating_sub(out.len());
+        let to_push = n.min(remaining / planes.len().max(1));
+        out.reserve(to_push * planes.len());
+        for i in 0..to_push {
             for p in planes {
                 out.push(p[i]);
             }
@@ -77,7 +81,9 @@ pub fn decode(bytes: &Bytes) -> Result<Pcm> {
             Some(r) => r,
             None => contained(|| decode_symphonia(bytes, "mkv")),
         },
-        Container::Mp4 if !crate::mp4guard::tables_fit(bytes) => Err(MediaError::Corrupt("the MP4's sample tables do not fit the file".into())),
+        Container::Mp4 | Container::Unknown | Container::Mp3 if !crate::mp4guard::probe_fits(bytes) => {
+            Err(MediaError::Corrupt("the MP4's sample tables do not fit the file".into()))
+        }
         c => contained(|| decode_symphonia(bytes, c.name())),
     }
 }
@@ -85,25 +91,32 @@ pub fn decode(bytes: &Bytes) -> Result<Pcm> {
 /// Ogg Opus with our decoder; `None` when the file holds no Opus stream.
 fn decode_ogg_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
     let src: &[u8] = bytes;
-    let file = deckcraft_ogg::open(src).ok()?;
-    let s = file.stream_of(deckcraft_ogg::Codec::Opus)?;
+    let file = craft_media::ogg::open(src).ok()?;
+    let s = file.stream_of(craft_media::ogg::Codec::Opus)?;
     let stream = file.streams.get(s)?;
     Some((|| {
         let head = stream.headers.first().ok_or(MediaError::Corrupt("Opus header missing".into()))?;
-        let mut dec = deckcraft_opus::Decoder::new(head).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+        let mut dec = craft_audio::opus::Decoder::new(head).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         dec.set_trim_pre_skip(true);
         let channels = dec.channels() as u16;
-        let timing = deckcraft_ogg::OpusTiming::of(stream, dec.pre_skip() as u32).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+        let timing = craft_media::ogg::OpusTiming::of(stream, dec.pre_skip() as u32);
         let mut out = Vec::new();
         for i in 0..stream.packets.len() {
+            if MAX_PCM_SAMPLES.saturating_sub(out.len()) < channels.max(1) as usize {
+                break;
+            }
             let Ok(p) = file.read_packet(src, s, i) else { continue };
+            if p.is_empty() {
+                continue;
+            }
             match dec.decode(Some(&p)) {
                 Ok(planes) => Pcm::push_planar(&planes, &mut out),
                 Err(e) => log::debug!("opus packet {i}: {e}"),
             }
         }
         // End trimming (RFC 7845 §4.5).
-        let total = timing.total.max(0) as usize * channels.max(1) as usize;
+        // the timing saturates on a hostile granule, so this product must too
+        let total = usize::try_from(timing.total).unwrap_or(0).saturating_mul(channels.max(1) as usize);
         if total > 0 && total < out.len() {
             out.truncate(total);
         }
@@ -114,19 +127,25 @@ fn decode_ogg_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
 /// WebM / Matroska Opus with our decoder; `None` when there is no Opus track.
 fn decode_mkv_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
     let src: &[u8] = bytes;
-    let file = deckcraft_matroska::open(src).ok()?;
+    let file = craft_media::matroska::open(src).ok()?;
     let (ti, head) = file.tracks.iter().enumerate().find_map(|(i, t)| match &t.codec {
-        deckcraft_matroska::Codec::Opus { head } => Some((i, head.clone())),
+        craft_media::matroska::Codec::Opus { head } => Some((i, head.clone())),
         _ => None,
     })?;
     Some((|| {
-        let mut dec = deckcraft_opus::Decoder::new(&head).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+        let mut dec = craft_audio::opus::Decoder::new(&head).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         dec.set_trim_pre_skip(true);
         let channels = dec.channels() as u16;
         let mut out = Vec::new();
         let n = file.tracks.get(ti).map(|t| t.samples.len()).unwrap_or(0);
         for i in 0..n {
+            if MAX_PCM_SAMPLES.saturating_sub(out.len()) < channels.max(1) as usize {
+                break;
+            }
             let Ok(p) = file.read_sample(src, ti, i) else { continue };
+            if p.is_empty() {
+                continue;
+            }
             match dec.decode(Some(&p)) {
                 Ok(planes) => Pcm::push_planar(&planes, &mut out),
                 Err(e) => log::debug!("opus packet {i}: {e}"),

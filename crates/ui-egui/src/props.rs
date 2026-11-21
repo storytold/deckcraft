@@ -32,10 +32,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         Some(s) => s,
         None => return,
     };
-    let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, &sh);
+    let x = deckcraft_engine::cmd::xfrm_on_slide(&st.doc, &st.selection, &sh);
     // Every selected layer's box, for values shown as Mixed and spacing.
     let boxes: Vec<(deckcraft_model::ShapeId, deckcraft_model::Xfrm)> =
-        shapes.iter().map(|s| (s.id, deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, s))).collect();
+        shapes.iter().map(|s| (s.id, deckcraft_engine::cmd::xfrm_on_slide(&st.doc, &st.selection, s))).collect();
     let multi = shapes.len() > 1;
     let texty = editing.is_some() || shapes.iter().any(|s| s.text.is_some() || matches!(s.kind, ShapeKind::Shape));
     let picture = matches!(sh.kind, ShapeKind::Picture { .. });
@@ -69,14 +69,14 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 fn text_tab(ui: &mut Ui, sh: &Shape) -> bool {
     let t = Tokens::get(ui.ctx());
     let text_first = sh.text_box || sh.ph.is_some();
-    let id = egui::Id::new(("props-text-tab", text_first));
+    let id = egui::Id::unique(("props-text-tab", text_first));
     let mut on = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(text_first);
     let w = ui.available_width();
     let (r, _) = ui.allocate_exact_size(vec2(w, 32.0), Sense::hover());
     ui.painter().rect_filled(r, CornerRadius::same(7), t.field);
     for (k, label) in ["Text", "Shape"].into_iter().enumerate() {
         let cell = Rect::from_min_size(pos2(r.min.x + k as f32 * w / 2.0, r.min.y), vec2(w / 2.0, r.height()));
-        let resp = ui.interact(cell, ui.id().with(("props-tab", label)), Sense::click());
+        let resp = ui.interact(cell, ui.scope_id().with(("props-tab", label)), Sense::click());
         let sel = (k == 0) == on;
         if sel {
             ui.painter().rect(cell.shrink(2.0), CornerRadius::same(6), t.card, Stroke::new(1.0, t.card_border), egui::StrokeKind::Inside);
@@ -85,7 +85,7 @@ fn text_tab(ui: &mut Ui, sh: &Shape) -> bool {
         }
         let font = if sel { theme::bold(13.0) } else { theme::font(13.0) };
         ui.painter().text(cell.center(), Align2::CENTER_CENTER, label, font, if sel { t.text } else { t.text_dim });
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, sel, format!("{label} tab")));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, sel, format!("{label} tab")));
         if resp.clicked() {
             on = k == 0;
         }
@@ -147,7 +147,7 @@ pub(crate) fn icon_button(ui: &mut Ui, icon: Icon, tip: &str, en: bool) -> egui:
         ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
     }
     icons::paint_mono(ui.painter(), r.shrink(5.0), icon, t.text, !en);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, en, tip));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, tip));
     resp.on_hover_text(tip)
 }
 
@@ -161,7 +161,7 @@ pub(crate) fn seg_group(ui: &mut Ui, items: &[(Icon, &str, bool)], width: f32, e
     let mut out = None;
     for (k, (icon, tip, on)) in items.iter().enumerate() {
         let cell = Rect::from_min_size(pos2(r.min.x + k as f32 * cw, r.min.y), vec2(cw, r.height()));
-        let resp = ui.interact(cell, ui.id().with(("seg", tip)), if en { Sense::click() } else { Sense::hover() });
+        let resp = ui.interact(cell, ui.scope_id().with(("seg", tip)), if en { Sense::click() } else { Sense::hover() });
         if *on {
             ui.painter().rect(cell.shrink(1.0), CornerRadius::same(5), t.card, Stroke::new(1.0, t.card_border), egui::StrokeKind::Inside);
         } else if en && resp.hovered() {
@@ -170,7 +170,7 @@ pub(crate) fn seg_group(ui: &mut Ui, items: &[(Icon, &str, bool)], width: f32, e
         let s = (cell.height() - 14.0).min(cell.width() - 6.0);
         let ink = if *on { t.text } else { t.text_dim };
         icons::paint_mono(ui.painter(), Rect::from_center_size(cell.center(), vec2(s, s)), *icon, ink, !en);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, en, *on, *tip));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, en, *on, *tip));
         if resp.on_hover_text(*tip).clicked() {
             out = Some(k);
         }
@@ -220,7 +220,7 @@ fn two(v: f64) -> f64 {
 struct MixedEdit(crate::field_math::Rel, f64, f64);
 
 fn mixed_edit_id(id: &str) -> egui::Id {
-    egui::Id::new(("props-mixed-edit", id.to_string()))
+    egui::Id::unique(("props-mixed-edit", id.to_string()))
 }
 
 /// The relative edit typed into Mixed field `id` this frame, as a function of each layer's value.
@@ -253,11 +253,11 @@ fn number_or_mixed(
     ui.painter().rect_filled(r, CornerRadius::same(6), t.field);
     let pre_w = if matches!(prefix, Prefix::None) { 8.0 } else { 28.0 };
     let pre = Rect::from_min_size(r.min, vec2(pre_w, r.height()));
-    let scrub = ui.interact(pre, ui.id().with((id, "scrub")), if en && !mixed { Sense::drag() } else { Sense::hover() });
+    let scrub = ui.interact(pre, ui.scope_id().with((id, "scrub")), if en && !mixed { Sense::drag() } else { Sense::hover() });
     if en && !mixed && (scrub.hovered() || scrub.dragged()) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
-    let skey = ui.id().with((id, "scrubbing"));
+    let skey = ui.scope_id().with((id, "scrubbing"));
     let mut out = None;
     let mut shown = value;
     // Scrubbing: a step per point dragged, ten with ⇧, a tenth with ⌥ (landing on tenths then,
@@ -285,8 +285,8 @@ fn number_or_mixed(
         Prefix::Icon(i) => icons::paint_mono(ui.painter(), Rect::from_center_size(pre.center(), vec2(14.0, 14.0)), i, ink, !en),
         Prefix::None => {}
     }
-    let tkey = ui.id().with((id, "typing"));
-    let edit_id = ui.id().with((id, "edit"));
+    let tkey = ui.scope_id().with((id, "typing"));
+    let edit_id = ui.scope_id().with((id, "edit"));
     let mut text: String =
         ui.data_mut(|d| d.get_temp(tkey)).unwrap_or_else(|| if mixed { String::new() } else { format!("{}{suffix}", widgets::fmt_num(shown, "")) });
     // ↑ / ↓ (⇧: by ten) while typing: applied at once, and the field keeps the keyboard. A Mixed
@@ -302,16 +302,18 @@ fn number_or_mixed(
     let er = Rect::from_min_max(pos2(pre.max.x, r.min.y), r.max).shrink2(vec2(2.0, 6.0));
     // In a child area, so the field doesn't move the row's cursor.
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(er).layout(egui::Layout::left_to_right(egui::Align::Center)));
-    let te = child.add_sized(
-        er.size(),
-        egui::TextEdit::singleline(&mut text)
-            .frame(egui::Frame::NONE)
-            .font(theme::font(12.5))
-            .text_color(t.text)
-            .hint_text(if mixed { "Mixed" } else { "" })
-            .interactive(en)
-            .id(edit_id),
-    );
+    let te = child
+        .add_sized(
+            er.size(),
+            egui::TextEdit::singleline(&mut text)
+                .frame(egui::Frame::NONE)
+                .font(theme::font(12.5))
+                .text_color(t.text)
+                .hint_text(if mixed { "Mixed" } else { "" })
+                .interactive(en)
+                .id(edit_id),
+        )
+        .accessible_name(id);
     field_frame(ui, r, te.has_focus());
     if te.has_focus() {
         ui.data_mut(|d| d.insert_temp(tkey, text.clone()));
@@ -357,7 +359,7 @@ pub(crate) fn pick_wide(ui: &mut Ui, id: &str, label: &str, width: f32, menu_w: 
         if en { t.text } else { t.text_faint },
     );
     icons::paint_mono(ui.painter(), Rect::from_center_size(pos2(r.max.x - 12.0, r.center().y), vec2(9.0, 9.0)), Icon::ChevronDown, t.caption, !en);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, en, format!("{id}: {label}")));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, en, format!("{id}: {label}")));
     egui::Popup::menu(&resp).width(menu_w).show(|ui| {
         egui::ScrollArea::vertical().max_height(360.0).show(ui, add);
     });
@@ -562,10 +564,10 @@ const MERGE_OPS: [(&str, &str); 5] =
 /// A URL or slide number, or a slide from the list.
 fn link_field(app: &mut SlideApp, ui: &mut Ui) {
     let slides = app.session.active().map(|d| d.doc.slides.len()).unwrap_or(0);
-    let id = ui.id().with("props-link");
+    let id = ui.scope_id().with("props-link");
     let mut url: String = ui.data_mut(|d| d.get_temp(id).unwrap_or_default());
     ui.label(egui::RichText::new("Link").font(theme::bold(12.5)));
-    let r = ui.add(egui::TextEdit::singleline(&mut url).hint_text("Add URL or slide number").desired_width(240.0));
+    let r = ui.add(egui::TextEdit::singleline(&mut url).hint_text("Add URL or slide number").desired_width(240.0)).accessible_name("Link");
     if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !url.trim().is_empty() {
         let v = url.trim().to_string();
         match v.parse::<usize>() {
@@ -697,7 +699,7 @@ fn padding(app: &mut SlideApp, ui: &mut Ui, sh: &Shape) {
     let [l, t, r, b] = insets(app, sh).map(|v| two(u.show(v)));
     let c = cols(ui);
     let en = enabled(app, "format.margins");
-    let sides_id = egui::Id::new("props-padding-sides");
+    let sides_id = egui::Id::unique("props-padding-sides");
     // Each side when asked for, or when the sides already differ.
     let sides = ui.ctx().data(|d| d.get_temp::<bool>(sides_id)).unwrap_or(l != r || t != b);
     caption(ui, "Padding");
@@ -834,7 +836,7 @@ fn layout(app: &mut SlideApp, ui: &mut Ui, sh: &Shape, x: &Xfrm, boxes: &[(Shape
     // Pictures and groups keep their proportions unless asked not to (as their handles do);
     // other layers don't. Each kind remembers its own setting.
     let picture = matches!(sh.kind, ShapeKind::Picture { .. } | ShapeKind::Group { .. }) && boxes.len() < 2;
-    let lock_id = egui::Id::new(("props-constrain", picture));
+    let lock_id = egui::Id::unique(("props-constrain", picture));
     let lock = ui.ctx().data(|d| d.get_temp::<bool>(lock_id)).unwrap_or(picture);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = GAP;
@@ -995,7 +997,7 @@ fn appearance(app: &mut SlideApp, ui: &mut Ui, shapes: &[Shape], boxes: &[(Shape
     let u = units::small(app);
     // The largest radius that fits: half the shorter side (of the smallest, for several).
     let max_radius = radii.iter().map(|r| two(u.show(r.3 / 2.0))).fold(f64::INFINITY, f64::min).min(1e6);
-    let each_id = egui::Id::new("props-corners-each");
+    let each_id = egui::Id::unique("props-corners-each");
     // Each corner on its own when asked for, or when one shape's corners already differ.
     let uneven = radii.len() == 1 && radii.first().is_some_and(|r| common(r.2).is_none());
     let each = ui.ctx().data(|d| d.get_temp::<bool>(each_id)).unwrap_or(uneven) && radii.len() == 1;
@@ -1101,7 +1103,7 @@ fn typography(app: &mut SlideApp, ui: &mut Ui, sh: &Shape) {
             });
         }
     }
-    let extras_id = egui::Id::new("props-type-extras");
+    let extras_id = egui::Id::unique("props-type-extras");
     let extras = ui.ctx().data(|d| d.get_temp::<bool>(extras_id)).unwrap_or(false);
     caption(ui, "Alignment");
     let c = cols(ui);
@@ -1220,7 +1222,7 @@ fn style_chip(app: &mut SlideApp, ui: &mut Ui, st: &Value, en: bool, current: &s
     let (r, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
     let detach_r = Rect::from_center_size(pos2(r.max.x - 18.0, r.center().y), vec2(24.0, 24.0));
     let body = Rect::from_min_max(r.min, pos2(detach_r.min.x - 2.0, r.max.y));
-    let resp = ui.interact(body, ui.id().with("style-chip"), if en { Sense::click() } else { Sense::hover() });
+    let resp = ui.interact(body, ui.scope_id().with("style-chip"), if en { Sense::click() } else { Sense::hover() });
     let hovered = resp.hovered() || ui.rect_contains_pointer(r);
     ui.painter().rect(
         r,
@@ -1232,11 +1234,11 @@ fn style_chip(app: &mut SlideApp, ui: &mut Ui, st: &Value, en: bool, current: &s
     let ag = ui.painter().text(pos2(r.min.x + 8.0, r.center().y), Align2::LEFT_CENTER, "Ag", theme::bold(15.0), t.text);
     let name = ui.painter().text(pos2(ag.max.x + 6.0, r.center().y), Align2::LEFT_CENTER, current, theme::font(12.5), t.text);
     ui.painter().text(pos2(name.max.x + 3.0, r.center().y), Align2::LEFT_CENTER, format!("· {metrics}"), theme::font(12.5), t.caption);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, en, format!("Text style: {current}")));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, en, format!("Text style: {current}")));
     crate::inspector::style_menu(app, &resp, current, w.max(220.0));
     // Detach: shown while the pointer is over the chip, as in canvas editors.
-    let dresp = ui.interact(detach_r, ui.id().with("style-detach"), if en { Sense::click() } else { Sense::hover() });
-    dresp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, en, "Detach style"));
+    let dresp = ui.interact(detach_r, ui.scope_id().with("style-detach"), if en { Sense::click() } else { Sense::hover() });
+    dresp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, "Detach style"));
     if hovered || dresp.hovered() {
         if dresp.hovered() {
             ui.painter().rect_filled(detach_r, CornerRadius::same(5), t.pressed);
@@ -1285,7 +1287,7 @@ pub(crate) fn color_row(
     let (r, _) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
     ui.painter().rect_filled(r, CornerRadius::same(6), t.field);
     let sw = Rect::from_center_size(pos2(r.min.x + 15.0, r.center().y), vec2(14.0, 14.0));
-    let sresp = ui.interact(sw.expand(3.0), ui.id().with((id, "swatch")), Sense::click());
+    let sresp = ui.interact(sw.expand(3.0), ui.scope_id().with((id, "swatch")), Sense::click());
     match rgba {
         Some(c) => {
             ui.painter().rect(
@@ -1300,7 +1302,7 @@ pub(crate) fn color_row(
             ui.painter().rect_stroke(sw, CornerRadius::same(2), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
         }
     }
-    sresp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{id} color")));
+    sresp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("{id} color")));
     let mut picked = None;
     widgets::color_popup(&sresp).show(|ui| {
         if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
@@ -1311,17 +1313,19 @@ pub(crate) fn color_row(
     if let Some(l) = label {
         ui.painter().text(pos2(hex_rect.min.x, r.center().y), Align2::LEFT_CENTER, l, theme::font(12.5), t.text);
     } else if let Some(c) = rgba {
-        let tkey = ui.id().with((id, "hex"));
+        let tkey = ui.scope_id().with((id, "hex"));
         let mut text: String = ui.data_mut(|d| d.get_temp(tkey)).unwrap_or_else(|| hex(c));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(hex_rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
-        let te = child.add_sized(
-            hex_rect.size(),
-            egui::TextEdit::singleline(&mut text)
-                .frame(egui::Frame::NONE)
-                .font(theme::font(12.5))
-                .text_color(t.text)
-                .id(ui.id().with((id, "hexedit"))),
-        );
+        let te = child
+            .add_sized(
+                hex_rect.size(),
+                egui::TextEdit::singleline(&mut text)
+                    .frame(egui::Frame::NONE)
+                    .font(theme::font(12.5))
+                    .text_color(t.text)
+                    .id(ui.scope_id().with((id, "hexedit"))),
+            )
+            .accessible_name(format!("{id} hex"));
         field_frame(ui, r, te.has_focus());
         if te.has_focus() {
             ui.data_mut(|d| d.insert_temp(tkey, text.clone()));
@@ -1547,7 +1551,7 @@ fn image(app: &mut SlideApp, ui: &mut Ui, sh: &Shape) {
 fn alt_text(app: &mut SlideApp, ui: &mut Ui, sh: &Shape) {
     let t = Tokens::get(ui.ctx());
     section(ui, "Alt text", sh.descr.is_empty(), &[]);
-    let key = ui.id().with(("props-alt", sh.id.0));
+    let key = ui.scope_id().with(("props-alt", sh.id.0));
     let mut text: String = ui.data_mut(|d| d.get_temp(key)).unwrap_or_else(|| sh.descr.clone());
     let w = cols(ui) * 2.0 + GAP;
     let r = egui::Frame::NONE.fill(t.field).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
@@ -1559,6 +1563,7 @@ fn alt_text(app: &mut SlideApp, ui: &mut Ui, sh: &Shape) {
                 .desired_width(w - 16.0)
                 .hint_text("Describe this for people who can't see it"),
         )
+        .accessible_name("Alt text")
     });
     if r.inner.has_focus() {
         ui.data_mut(|d| d.insert_temp(key, text.clone()));

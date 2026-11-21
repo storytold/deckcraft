@@ -138,8 +138,97 @@ fn border_look(ctx: &Ctx, b: &TableBorder) -> (Rgba, f64) {
     }
 }
 
+pub fn resolve_style<'a>(ctx: &'a Ctx, t: &Table) -> Option<&'a TableStyleDef> {
+    ctx.pres.table_styles.iter().find(|d| d.id.eq_ignore_ascii_case(&t.style))
+}
+
+#[allow(dead_code)]
 pub fn look(ctx: &Ctx, t: &Table, r: usize, c: usize) -> CellLook {
-    if let Some(def) = ctx.pres.table_styles.iter().find(|d| d.id.eq_ignore_ascii_case(&t.style)) {
+    look_with_def(ctx, resolve_style(ctx, t), t, r, c)
+}
+
+/// Which parts of the table a cell sits in, for the preset styles.
+#[derive(Clone, Copy)]
+struct PresetPart {
+    header: bool,
+    total: bool,
+    first_col: bool,
+    last_col: bool,
+    banded: bool,
+}
+
+impl PresetPart {
+    /// In a header, total, first or last column: the parts a preset style makes strong.
+    fn strong(self) -> bool {
+        self.header || self.total || self.first_col || self.last_col
+    }
+}
+
+/// Tint `k` of accent `a`.
+fn tint(a: Rgba, k: i32) -> Rgba {
+    deckcraft_color::apply(a, &[ColorTransform::Tint(k)])
+}
+
+fn light1_look(a: Rgba, p: PresetPart, on: impl Fn(Rgba) -> Rgba) -> CellLook {
+    let fill = p.banded.then(|| tint(a, 20000));
+    CellLook { fill, text: fill.map(on), bold: p.strong(), border: if p.header { Some((a, 1.0)) } else { None }, sides: [None; 4], paint: None }
+}
+
+fn light2_look(a: Rgba, p: PresetPart) -> CellLook {
+    CellLook {
+        fill: if p.header { Some(a) } else { None },
+        text: if p.header { Some(Rgba::WHITE) } else { None },
+        bold: p.header || p.total || p.first_col,
+        border: Some((a, 1.0)),
+        sides: [None; 4],
+        paint: None,
+    }
+}
+
+fn dark1_look(a: Rgba, p: PresetPart) -> CellLook {
+    CellLook {
+        fill: Some(if p.header {
+            Rgba::BLACK
+        } else if p.banded {
+            deckcraft_color::apply(a, &[ColorTransform::Shade(60000)])
+        } else {
+            deckcraft_color::apply(a, &[ColorTransform::Shade(75000)])
+        }),
+        text: Some(Rgba::WHITE),
+        bold: p.header || p.total || p.first_col,
+        border: Some((Rgba::WHITE, 1.0)),
+        sides: [None; 4],
+        paint: None,
+    }
+}
+
+fn medium4_look(a: Rgba, p: PresetPart, on: impl Fn(Rgba) -> Rgba) -> CellLook {
+    let fill = if p.header || p.banded { tint(a, 40000) } else { tint(a, 20000) };
+    CellLook { fill: Some(fill), text: Some(on(fill)), bold: p.strong(), border: Some((a, 0.75)), sides: [None; 4], paint: None }
+}
+
+/// medium2: strong header, banded light tints, white grid.
+fn medium2_look(a: Rgba, p: PresetPart, on: impl Fn(Rgba) -> Rgba) -> CellLook {
+    let strong = p.strong();
+    let fill = if strong {
+        a
+    } else if p.banded {
+        tint(a, 40000)
+    } else {
+        tint(a, 20000)
+    };
+    CellLook {
+        fill: Some(fill),
+        text: Some(if strong { Rgba::WHITE } else { on(fill) }),
+        bold: strong,
+        border: Some((Rgba::WHITE, 1.0)),
+        sides: [None; 4],
+        paint: None,
+    }
+}
+
+pub fn look_with_def(ctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize, c: usize) -> CellLook {
+    if let Some(def) = def {
         return look_def(ctx, def, t, r, c);
     }
     let a = accent(ctx, &t.style);
@@ -151,65 +240,23 @@ pub fn look(ctx: &Ctx, t: &Table, r: usize, c: usize) -> CellLook {
     let body_r = if t.first_row { r.wrapping_sub(1) } else { r };
     let band = t.band_row && !header && !total && body_r % 2 == 0;
     let band_c = t.band_col && c.is_multiple_of(2);
-    let tint = |k: i32| deckcraft_color::apply(a, &[ColorTransform::Tint(k)]);
-    let white = Rgba::WHITE;
-    let dark_text = ctx.color(&ColorRef::scheme(SchemeSlot::Tx1), None);
+    let p = PresetPart { header, total, first_col, last_col, banded: band || band_c };
+    let text_color = ctx.color(&ColorRef::scheme(SchemeSlot::Tx1), None);
+    // Text on a tinted cell never inherits the text colour, which a dark theme makes light and
+    // unreadable on the light tint: PowerPoint's medium styles set it to the theme's dark colour
+    // (dk1). A dark theme may keep that in dk1 and map tx1 away from it, or (Nocturne) put it in
+    // lt1, so of the two the one contrasting more with the cell's fill is used.
+    let dk1 = ctx.color(&ColorRef::scheme(SchemeSlot::Dk1), None);
+    let lt1 = ctx.color(&ColorRef::scheme(SchemeSlot::Lt1), None);
+    let on = |fill: Rgba| if dk1.contrast(fill) >= lt1.contrast(fill) { dk1 } else { lt1 };
     match kind {
         "none" => CellLook { fill: None, text: None, bold: false, border: None, sides: [None; 4], paint: None },
-        "grid" => CellLook { fill: None, text: None, bold: false, border: Some((dark_text, 0.75)), sides: [None; 4], paint: None },
-        "light1" => CellLook {
-            fill: if band || band_c { Some(tint(20000)) } else { None },
-            text: None,
-            bold: header || total || first_col || last_col,
-            border: if header { Some((a, 1.0)) } else { None },
-            sides: [None; 4],
-            paint: None,
-        },
-        "light2" => CellLook {
-            fill: if header { Some(a) } else { None },
-            text: if header { Some(white) } else { None },
-            bold: header || total || first_col,
-            border: Some((a, 1.0)),
-            sides: [None; 4],
-            paint: None,
-        },
-        "dark1" => CellLook {
-            fill: Some(if header {
-                Rgba::BLACK
-            } else if band || band_c {
-                deckcraft_color::apply(a, &[ColorTransform::Shade(60000)])
-            } else {
-                deckcraft_color::apply(a, &[ColorTransform::Shade(75000)])
-            }),
-            text: Some(white),
-            bold: header || total || first_col,
-            border: Some((white, 1.0)),
-            sides: [None; 4],
-            paint: None,
-        },
-        "medium4" => CellLook {
-            fill: Some(if header || band || band_c { tint(40000) } else { tint(20000) }),
-            text: None,
-            bold: header || total || first_col || last_col,
-            border: Some((a, 0.75)),
-            sides: [None; 4],
-            paint: None,
-        },
-        _ => CellLook {
-            // medium2: strong header, banded light tints, white grid.
-            fill: Some(if header || total || first_col || last_col {
-                a
-            } else if band || band_c {
-                tint(40000)
-            } else {
-                tint(20000)
-            }),
-            text: if header || total || first_col || last_col { Some(white) } else { None },
-            bold: header || total || first_col || last_col,
-            border: Some((white, 1.0)),
-            sides: [None; 4],
-            paint: None,
-        },
+        "grid" => CellLook { fill: None, text: None, bold: false, border: Some((text_color, 0.75)), sides: [None; 4], paint: None },
+        "light1" => light1_look(a, p, on),
+        "light2" => light2_look(a, p),
+        "dark1" => dark1_look(a, p),
+        "medium4" => medium4_look(a, p, on),
+        _ => medium2_look(a, p, on),
     }
 }
 
@@ -225,7 +272,11 @@ fn edges(sizes: &[f64]) -> Vec<f64> {
 
 /// A cell's text as drawn: its margins, anchor and direction, plus the table style's text colour and bold.
 pub fn cell_body(rctx: &Ctx, t: &Table, r: usize, c: usize, cell: &Cell) -> TextBody {
-    let lk = look(rctx, t, r, c);
+    cell_body_with_def(rctx, resolve_style(rctx, t), t, r, c, cell)
+}
+
+pub fn cell_body_with_def(rctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize, c: usize, cell: &Cell) -> TextBody {
+    let lk = look_with_def(rctx, def, t, r, c);
     let mut body = cell.text.clone();
     let [ml, mr, mt, mb] = cell.margins.unwrap_or([7.2, 7.2, 3.6, 3.6]);
     body.body.inset_l = Some(ml);
@@ -255,6 +306,11 @@ pub fn cell_body(rctx: &Ctx, t: &Table, r: usize, c: usize, cell: &Cell) -> Text
 /// text of each of its cells fits, as in PowerPoint. Files from pandoc or python-pptx store 0.
 /// Cells spanning several rows and vertical text keep the stored height.
 pub fn row_heights(rctx: &Ctx, t: &Table, fields: &dyn Fields) -> Vec<f64> {
+    row_heights_with_def(rctx, resolve_style(rctx, t), t, fields)
+}
+
+/// [`row_heights`] with the table's style already resolved, for a caller that needs it too.
+fn row_heights_with_def(rctx: &Ctx, style_def: Option<&TableStyleDef>, t: &Table, fields: &dyn Fields) -> Vec<f64> {
     let xs = edges(&t.cols);
     let mut out = Vec::with_capacity(t.rows.len());
     for (ri, row) in t.rows.iter().enumerate() {
@@ -265,8 +321,8 @@ pub fn row_heights(rctx: &Ctx, t: &Table, fields: &dyn Fields) -> Vec<f64> {
             }
             let c1 = ci.saturating_add(cell.grid_span.max(1) as usize).min(t.cols.len());
             let (Some(x0), Some(x1)) = (xs.get(ci), xs.get(c1)) else { continue };
-            let body = cell_body(rctx, t, ri, ci, cell);
-            let tmp = Shape { text: Some(body.clone()), ..Default::default() };
+            let body = cell_body_with_def(rctx, style_def, t, ri, ci, cell);
+            let tmp = Shape::table_cell(body.clone());
             let need = deckcraft_text::fit_height(rctx, &tmp, &body, Rect::new(*x0, 0.0, *x1, h.max(1.0)), fields);
             if need.is_finite() {
                 h = h.max(need.min(20_000.0));
@@ -330,16 +386,10 @@ pub fn draw(
     editing: bool,
 ) -> Option<kurbo::Rect> {
     let _ = pres;
-    let rects = cell_rects(t, &row_heights(rctx, t, fields));
+    let style_def = resolve_style(rctx, t);
+    let rects = cell_rects(t, &row_heights_with_def(rctx, style_def, t, fields));
     let covered = rects.iter().map(|(_, _, r)| *r).reduce(|a, b| a.union(b));
-    // Table backgrounds behind every cell: a file-defined style's, then the table's own fill.
-    let style_bg = rctx
-        .pres
-        .table_styles
-        .iter()
-        .find(|d| d.id.eq_ignore_ascii_case(&t.style))
-        .and_then(|d| d.background.as_ref())
-        .and_then(|b| style_fill(rctx, b));
+    let style_bg = style_def.and_then(|d| d.background.as_ref()).and_then(|b| style_fill(rctx, b));
     let own_bg = t.background.clone().map(|f| (f, None));
     if let Some(all) = rects.iter().map(|(_, _, r)| *r).reduce(|a, b| a.union(b)) {
         for (bg, ph) in style_bg.into_iter().chain(own_bg) {
@@ -349,7 +399,7 @@ pub fn draw(
     }
     for (r, c, rect) in &rects {
         let Some(cell) = t.cell(*r, *c) else { continue };
-        let lk = look(rctx, t, *r, *c);
+        let lk = look_with_def(rctx, style_def, t, *r, *c);
         ctx.set_transform(m);
         match &cell.fill {
             Some(f) => {
@@ -382,7 +432,7 @@ pub fn draw(
     // Borders: explicit cell borders, else the style's grid.
     for (r, c, rect) in &rects {
         let Some(cell) = t.cell(*r, *c) else { continue };
-        let lk = look(rctx, t, *r, *c);
+        let lk = look_with_def(rctx, style_def, t, *r, *c);
         let edges = [
             (rect.x0, rect.y0, rect.x0, rect.y1),
             (rect.x1, rect.y0, rect.x1, rect.y1),
@@ -422,8 +472,8 @@ pub fn draw(
         if (cell.text.is_empty() && !editing) || text_off_target(cell, *rect, m, (ctx.width(), ctx.height())) {
             continue;
         }
-        let body = cell_body(rctx, t, *r, *c, cell);
-        let tmp = Shape { text: Some(body.clone()), ..Default::default() };
+        let body = cell_body_with_def(rctx, style_def, t, *r, *c, cell);
+        let tmp = Shape::table_cell(body.clone());
         #[cfg(test)]
         TEXT_CELLS_DRAWN.with(|n| n.set(n.get() + 1));
         let mut l = deckcraft_text::layout(rctx, &tmp, &body, &deckcraft_text::Opts { rect: *rect, fields, prompt_color: None, no_shrink: false });

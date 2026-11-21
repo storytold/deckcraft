@@ -49,6 +49,10 @@ pub struct Textures {
     /// Thumbnails by (slide address, width in pixels): the slide list and the canvas shell's
     /// state strip show the same slide at two sizes at once.
     thumbs: HashMap<(usize, u32), Entry>,
+    /// Thumbnails actually rendered, over the life of this cache. The number *held*
+    /// ([`Textures::thumb_count`]) cannot see a pane that renders the same rows over and over --
+    /// the cache thrash behind #969 -- because the count settles while the work does not.
+    thumb_renders: u64,
     /// SmartArt gallery pictures by layout, style and colours (and, for hover previews, the
     /// outline's hash).
     smartart: HashMap<String, TextureHandle>,
@@ -63,15 +67,13 @@ impl Textures {
     }
 
     /// A SmartArt layout drawn small for a gallery (`nodes` for a preview of the selected
-    /// graphic's own outline), cached; drawn with the active presentation's theme.
+    /// graphic's own outline), cached; `look` is the layout kind, style and colours; drawn with the active presentation's theme.
     pub fn smartart(
         &mut self,
         ctx: &egui::Context,
         p: &deckcraft_model::Presentation,
         slide: usize,
-        kind: &str,
-        style: &str,
-        colors: &str,
+        (kind, style, colors): (&str, &str, &str),
         nodes: Option<&[deckcraft_model::DiagramNode]>,
         width_px: u32,
     ) -> Option<TextureHandle> {
@@ -347,6 +349,12 @@ impl Textures {
         self.thumbs.len()
     }
 
+    /// How many thumbnails this cache has rendered, ever. A pane that is done asks for no more:
+    /// the number stops climbing, which is what tells a thrashing pane from a settled one.
+    pub fn thumb_renders(&self) -> u64 {
+        self.thumb_renders
+    }
+
     /// Force the canvas to re-render next time (fonts loaded, theme changed in place…).
     pub fn invalidate(&mut self) {
         self.canvas = None;
@@ -355,9 +363,19 @@ impl Textures {
         self.thumbs.clear();
     }
 
-    /// A thumbnail texture; renders at most `budget` new thumbnails per frame (returns None when
-    /// it is over budget, so the caller draws a placeholder and asks for another frame).
-    pub fn thumb(&mut self, ctx: &egui::Context, p: &Presentation, index: usize, width_px: u32, budget: &mut u32) -> Option<TextureHandle> {
+    /// A thumbnail texture; renders at most `budget` new thumbnails per frame. Over budget it
+    /// returns the slide's previous thumbnail if there is one (and asks for another frame), else
+    /// None, so the caller draws a placeholder.
+    /// When `grayscale` is true, the thumbnail renders in black-and-white (matching Grayscale view).
+    pub fn thumb(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Presentation,
+        index: usize,
+        width_px: u32,
+        grayscale: bool,
+        budget: &mut u32,
+    ) -> Option<TextureHandle> {
         let slide = p.slides.get(index)?.clone();
         let master = master_of(p, &slide);
         let h = (width_px as f64 * p.slide_size.height / p.slide_size.width.max(1.0)).round().max(1.0) as u32;
@@ -366,7 +384,7 @@ impl Textures {
             master: master.as_ref().map(|m| Arc::as_ptr(m) as usize).unwrap_or(0),
             size: (width_px, h),
             edit: false,
-            extra: 0,
+            extra: grayscale as u64,
             want: Region::slide(width_px, h),
             editing_text: None,
         };
@@ -380,14 +398,16 @@ impl Textures {
             return Some(e.tex.clone());
         }
         if *budget == 0 {
-            // Keep showing the stale thumbnail while the new one waits.
+            // Keep showing the stale thumbnail while the new one waits; request a repaint to finish rendering.
+            ctx.request_repaint();
             return self.thumbs.get(&slot).or_else(|| self.thumbs.iter().find(|(k, _)| k.0 == key.slide).map(|(_, e)| e)).map(|e| e.tex.clone());
         }
         *budget -= 1;
         let (tw, th) = fit_size((width_px, h), max_side(ctx));
         let scale = tw as f64 / p.slide_size.width.max(1.0);
         let img = deckcraft_render::render_slide(p, index, &RenderOpts { scale, size: Some((tw, th)), threads: 0, ..Default::default() });
-        let tex = upload_editor(ctx, format!("thumb-{index}"), to_color_image(&img, false));
+        self.thumb_renders += 1;
+        let tex = upload_editor(ctx, format!("thumb-{index}"), to_color_image(&img, grayscale));
         // Keep two sizes of a slide at most (dragging the slide list wider makes a new one each
         // step): drop the least recently used other size. Entries for slides that no longer
         // exist age out.
@@ -434,6 +454,20 @@ mod tests {
         assert!((s.height() / px.1 as f32 * ppp - 1.0).abs() < 1e-3);
         let aligned = Rect::from_min_max(pos2(1.0, 2.5), pos2(80.0, 40.0));
         assert_eq!(device_pixel_rect(aligned, ppp), aligned);
+    }
+
+    #[test]
+    fn to_color_image_turns_colors_to_grayscale_when_flag_is_set() {
+        let img = deckcraft_render::Image { width: 2, height: 1, pixels: vec![0, 0, 255, 255, 255, 0, 0, 255] };
+        let color = super::to_color_image(&img, false);
+        assert_eq!(color.pixels[0], egui::Color32::from_rgba_premultiplied(0, 0, 255, 255));
+        assert_eq!(color.pixels[1], egui::Color32::from_rgba_premultiplied(255, 0, 0, 255));
+
+        let gray = super::to_color_image(&img, true);
+        assert_eq!(gray.pixels[0].r(), gray.pixels[0].g());
+        assert_eq!(gray.pixels[0].g(), gray.pixels[0].b());
+        assert_eq!(gray.pixels[1].r(), gray.pixels[1].g());
+        assert_eq!(gray.pixels[1].g(), gray.pixels[1].b());
     }
 
     #[test]

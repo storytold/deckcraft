@@ -88,7 +88,7 @@ pub fn button(ui: &mut Ui, label: &str, primary: bool) -> Response {
     let galley = ui.painter().layout_no_wrap(label.to_owned(), theme::medium(13.0), fg);
     let size = vec2((galley.size().x + 28.0).max(BUTTON_MIN_W), BUTTON_H);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
     let down = resp.is_pointer_button_down_on();
     let bg = if primary { t.accent } else { t.field };
     let fill = if down {
@@ -142,7 +142,7 @@ pub fn checkbox(ui: &mut Ui, on: &mut bool, text: &str) -> Response {
         resp.mark_changed();
     }
     let value = *on;
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, value, text));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, value, text));
     resp
 }
 
@@ -163,7 +163,7 @@ pub fn list_row(ui: &mut Ui, text: &str, selected: bool, width: f32) -> Response
         if selected { theme::bold(12.5) } else { theme::font(12.5) },
         t.text,
     );
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, text));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, text));
     resp
 }
 
@@ -214,6 +214,7 @@ pub fn text(ui: &mut Ui, value: &mut String, width: f32, hint: &str) -> Response
         inner.size(),
         egui::TextEdit::singleline(value).frame(egui::Frame::NONE).font(theme::font(12.5)).text_color(t.text).hint_text(hint),
     );
+    let te = te.accessible_name(if hint.is_empty() { "Text" } else { hint });
     field_frame(ui, r, te.has_focus());
     te
 }
@@ -231,6 +232,7 @@ pub fn text_area(ui: &mut Ui, value: &mut String, width: f32, rows: usize, hint:
                 .desired_width(width - 16.0)
                 .hint_text(hint),
         )
+        .accessible_name(if hint.is_empty() { "Text" } else { hint })
     });
     field_frame(ui, out.response.rect, out.inner.has_focus());
     out.inner
@@ -248,8 +250,8 @@ pub fn number(ui: &mut Ui, id: &str, value: f64, unit: &str, step: f64, (lo, hi)
     if !unit.is_empty() {
         ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, unit, theme::font(12.0), t.text_dim);
     }
-    let key = ui.id().with((id, "typing"));
-    let edit = ui.id().with((id, "edit"));
+    let key = ui.scope_id().with((id, "typing"));
+    let edit = ui.scope_id().with((id, "edit"));
     let mut text: String = ui.data(|d| d.get_temp(key)).unwrap_or_else(|| crate::widgets::fmt_num(value, ""));
     let mut out = None;
     if let Some(d) = crate::widgets::arrow_step(ui, edit, step) {
@@ -260,7 +262,8 @@ pub fn number(ui: &mut Ui, id: &str, value: f64, unit: &str, step: f64, (lo, hi)
     let inner = Rect::from_min_max(pos2(r.min.x + 8.0, r.min.y + 5.0), pos2(r.max.x - 6.0 - unit_w, r.max.y - 5.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
     let te = child
-        .add_sized(inner.size(), egui::TextEdit::singleline(&mut text).frame(egui::Frame::NONE).font(theme::font(12.5)).text_color(t.text).id(edit));
+        .add_sized(inner.size(), egui::TextEdit::singleline(&mut text).frame(egui::Frame::NONE).font(theme::font(12.5)).text_color(t.text).id(edit))
+        .accessible_name(id);
     te.widget_info(|| egui::WidgetInfo::text_edit(true, "", &text, id));
     field_frame(ui, r, te.has_focus());
     if te.has_focus() {
@@ -289,7 +292,7 @@ pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, add: impl FnOn
     let text_r = Rect::from_min_max(pos2(r.min.x + 8.0, r.min.y), pos2(r.max.x - 22.0, r.max.y));
     ui.painter().with_clip_rect(text_r).text(pos2(text_r.min.x, r.center().y), Align2::LEFT_CENTER, current, theme::font(12.5), t.text);
     crate::widgets::chevron(ui.painter(), pos2(r.max.x - 12.0, r.center().y), 3.0, t.text_dim);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, format!("{id}: {current}")));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, format!("{id}: {current}")));
     egui::Popup::menu(&resp).width(width.max(160.0)).show(|ui| {
         egui::ScrollArea::vertical().max_height(320.0).show(ui, add);
     });
@@ -306,7 +309,7 @@ pub fn tabs(ui: &mut Ui, items: &[&str], current: usize) -> Option<usize> {
     let n = items.len().max(1) as f32;
     for (k, l) in items.iter().enumerate() {
         let cell = Rect::from_min_size(pos2(r.min.x + k as f32 * w / n, r.min.y), vec2(w / n, r.height()));
-        let resp = ui.interact(cell, ui.id().with(("form-tab", k)), Sense::click());
+        let resp = ui.interact(cell, ui.scope_id().with(("form-tab", k)), Sense::click());
         let on = k == current;
         if on {
             ui.painter().rect(cell.shrink(2.0), CornerRadius::same(6), t.card, Stroke::new(1.0, t.card_border), StrokeKind::Inside);
@@ -320,7 +323,7 @@ pub fn tabs(ui: &mut Ui, items: &[&str], current: usize) -> Option<usize> {
             if on { theme::bold(12.5) } else { theme::font(12.5) },
             if on { t.text } else { t.text_dim },
         );
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, *l));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, *l));
         if resp.clicked() {
             out = Some(k);
         }

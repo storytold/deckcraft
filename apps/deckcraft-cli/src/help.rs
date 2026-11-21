@@ -19,15 +19,16 @@ The shapes of one slide, with their ids, boxes and text, come from the slide.ins
     },
     Subcommand {
         name: "render",
-        usage: "render (FILE | --sample) [--slide N | --all] [--scale S] [--edit] OUT",
+        usage: "render (FILE | --sample) [--slide N | --all] [--scale S] [--edit] [--transparent] OUT",
         summary: "draw slides as PNG images",
         details: "Draws slides of FILE, or of the sample presentation with --sample, as PNG images. FILE comes first;
 OUT is the image to write. With --all, OUT is a folder that gets one slide-01.png, slide-02.png… per
 slide. Prints each image's path and size.
 
-  --slide N   the slide at index N; indices start at 0, and 0 is the default
-  --scale S   pixels per point, 2 by default: a 960×540 slide becomes 1920×1080
-  --edit      draw what the editor shows: placeholder prompts and their dashed outlines
+  --slide N        the slide at index N; indices start at 0, and 0 is the default
+  --scale S        pixels per point, 2 by default: a 960×540 slide becomes 1920×1080
+  --edit           draw what the editor shows: placeholder prompts and their dashed outlines
+  --transparent    leave the slide background out, so only what is on the slide is drawn
 
   deckcraft-cli render deck.deckcraft --slide 2 slide-3.png",
     },
@@ -57,7 +58,7 @@ animated GIF with one frame per slide. Other extensions are refused. Prints OUT.
     },
     Subcommand {
         name: "run",
-        usage: "run [--in FILE | --sample] [--cmd COMMAND[=PARAMS]]... [--save OUT] [--export OUT [--export-params JSON]] [--print]",
+        usage: "run [--in FILE | --sample] [--cmd COMMAND[=PARAMS] | --cmd-file FILE]... [--save OUT] [--export OUT [--export-params JSON]] [--print]",
         summary: "run commands on a presentation, then save or export it",
         details: "Runs commands, in order, on one presentation: FILE with --in, the sample presentation with --sample,
 else a new one with an empty title slide. Then --save writes the presentation: .deckcraft keeps
@@ -69,6 +70,15 @@ slide). --export-params passes file.export options as one JSON object, such as
 
 Each --cmd is one command: COMMAND is a command id, then `=`, then the command's parameters as one
 JSON object. Quote it for the shell. A command that needs no parameters is just its id.
+
+--cmd-file FILE reads the same commands from a UTF-8 text file, one per line, avoiding shell quoting
+and command-line length limits. Each line can be up to 16 MiB, including commands with embedded
+media data. Blank lines and full-line # comments are ignored, as is surrounding whitespace. CRLF
+line endings and an optional UTF-8 BOM at the start of the file are accepted.
+Repeat --cmd-file or mix it with --cmd: commands execute in the order those options appear.
+File errors name the path; line-reading, JSON and command errors also name the line number.
+
+  deckcraft-cli run --cmd-file commands.txt --cmd slide.next --save result.deckcraft
 
   deckcraft-cli run \\
     --cmd 'slide.new={\"layout\":\"titleOnly\",\"title\":\"Q3 results\"}' \\
@@ -126,16 +136,16 @@ and prints its answer as JSON. COMMAND [PARAMS] runs a command, as run --cmd doe
     },
     Subcommand {
         name: "mcp",
-        usage: "mcp [--connect PORT] [--sample] [--automation-read-root DIR] [--automation-write-root DIR]",
+        usage: "mcp [--connect PORT] [--sample] [--automation-read-root DIR]... [--automation-write-root DIR]...",
         summary: "serve the commands to an agent over MCP on stdio",
         details: "Runs a Model Context Protocol server on stdin and stdout. It works on its own presentation without a
 window, or with --connect PORT (or host:port) on the DeckCraft app started with --control PORT.
 --sample opens the sample presentation.
 
 --automation-read-root DIR and --automation-write-root DIR confine every file the agent's commands read
-(open, pictures, audio, video) and write (save, export, PDF) to those folders, links followed; a root left
-out grants none of its access. They run the in-process server, so they conflict with --connect (a running
-app is not confined by them).",
+(open, pictures, audio, video) and write (save, export, PDF) to those folders, links followed. Repeat either
+flag to grant access to more folders; a root left out grants none of its access. They run the in-process
+server, so they conflict with --connect (a running app is not confined by them).",
     },
     Subcommand {
         name: "bench",
@@ -179,7 +189,10 @@ A presentation is edited by running commands on it:
   deckcraft-cli run --cmd 'slide.new={{\"title\":\"Q3 results\"}}' --save q3.deckcraft
 
 `deckcraft-cli help SUBCOMMAND`, or `deckcraft-cli SUBCOMMAND --help`, explains one subcommand;
-`deckcraft-cli help run` explains how to write a command.",
+`deckcraft-cli help run` explains how to write a command.
+
+If an output reader closes early, run, render, render-transition and convert continue; their exit
+status reflects the work, not output delivery. Stop the process to cancel them.",
         list.join("\n")
     )
 }

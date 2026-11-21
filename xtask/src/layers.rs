@@ -34,21 +34,10 @@ impl Class {
 /// prefix.
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
-    // Codecs and containers (ported from FilmCraft): L0 standalone leaves, L1 codecs over
-    // `bitstream`, and `media` (probe, decode, playback mixer) at L2.
-    ("bitstream", Class::Standalone),
-    ("matroska", Class::Standalone),
-    ("ogg", Class::Standalone),
-    ("opus", Class::Standalone),
-    ("h264", Class::Layer(1)),
-    ("hevc", Class::Layer(1)),
-    ("vp9", Class::Layer(1)),
-    ("av1", Class::Layer(1)),
-    ("isobmff", Class::Layer(1)),
+    // `media` (probe, decode, playback mixer) at L2. Containers, the Opus decoder and the video
+    // decoders come from craft-libs (craft-media, craft-audio, craft-video).
     ("media", Class::Layer(2)),
     ("color", Class::Layer(0)),
-    // WMF/EMF reader (ported from WordCraft).
-    ("metafile", Class::Layer(0)),
     ("model", Class::Layer(1)),
     ("fonts", Class::Layer(1)),
     ("text", Class::Layer(2)),
@@ -56,6 +45,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("format", Class::Layer(2)),
     ("render", Class::Layer(3)),
     ("pptx", Class::Layer(3)),
+    ("ppt", Class::Layer(3)),
     ("pdf", Class::Layer(4)),
     ("engine", Class::Layer(5)),
     ("ui-egui", Class::Layer(6)),
@@ -69,8 +59,8 @@ pub const TABLE: &[(&str, Class)] = &[
 ];
 
 /// Upward dev-dependencies allowed for integration tests: the PPTX round-trip tests drive the
-/// engine (build a deck with commands, export, re-import).
-pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine")];
+/// engine (build a deck with commands, export, re-import), and the PPT tests open a file through it.
+pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine"), ("ppt", "engine")];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
 pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];
@@ -183,11 +173,11 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
                 match classify(&d.name) {
                     // Unregistered deps are reported on their own entry.
                     None => {}
-                    Some(Class::Testkit) => {
-                        if d.kind != DepKind::Dev {
-                            out.push(Violation::TestkitAsNormalDep { krate: c.name.clone() });
-                        }
+                    Some(Class::Testkit) if d.kind != DepKind::Dev => {
+                        out.push(Violation::TestkitAsNormalDep { krate: c.name.clone() });
                     }
+                    // Test support is allowed as a dev-dependency, regardless of its layer.
+                    Some(Class::Testkit) => {}
                     Some(dc) => {
                         let to = dc.layer().unwrap_or(u8::MAX);
                         let dev_ok = d.kind == DepKind::Dev && DEV_EXCEPTIONS.contains(&(short_name(&c.name), short_name(&d.name)));
@@ -207,7 +197,7 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
             }
         }
     }
-    out.sort_by_key(|v| v.to_string());
+    out.sort_by_key(ToString::to_string);
     out.dedup();
     out
 }

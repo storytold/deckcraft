@@ -37,9 +37,15 @@ pub fn small(app: &SlideApp) -> Unit {
     if pixels(app) { PX } else { PT }
 }
 
-/// Sizes and positions of objects.
+/// Sizes and positions of objects: pixels in the canvas layout, else the unit chosen in
+/// Preferences (inches or centimetres).
 pub fn length(app: &SlideApp) -> Unit {
-    if pixels(app) { PX } else { INCH }
+    if pixels(app) {
+        PX
+    } else {
+        let u = app.session.prefs.units;
+        Unit { per_pt: 1.0 / u.points_per_unit(), suffix: u.suffix() }
+    }
 }
 
 /// Zoom as shown: in pixels, 100% is one slide pixel per screen point (so a 1920 px slide fits a

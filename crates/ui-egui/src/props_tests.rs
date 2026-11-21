@@ -153,7 +153,7 @@ fn model_helpers() {
     let id = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [0, 0, 200, 100]})).unwrap()["id"].as_u64().unwrap();
     let st = s.doc().unwrap();
     let sh = st.shape(ShapeId(id as u32)).unwrap().clone();
-    let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, &sh);
+    let x = deckcraft_engine::cmd::xfrm_on_slide(&st.doc, &st.selection, &sh);
     let r = corner_radius(&sh, &x).unwrap();
     assert!((r - 16.667).abs() < 0.01, "{r}: 16.667% of the short side");
     assert_eq!(kind_label(&sh), "Rectangle: Rounded Corners", "the shape catalog's name");
@@ -378,7 +378,7 @@ fn corner_radii_round_trip_through_the_presets_pptx_has() {
     let get = |s: &Session| {
         let st = s.doc().unwrap();
         let sh = st.shape(ShapeId(id as u32)).unwrap().clone();
-        let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, &sh);
+        let x = deckcraft_engine::cmd::xfrm_on_slide(&st.doc, &st.selection, &sh);
         corners(&sh, &x).unwrap().map(|v| (v * 100.0).round() / 100.0)
     };
     assert_eq!(get(&s), [0.0; 4], "a rectangle has square corners");

@@ -184,10 +184,10 @@ fn text_field(ui: &mut Ui, id: Id, value: &str, w: f32) -> Option<String> {
     let t = Tokens::get(ui.ctx());
     let key = id.with("typing");
     let mut text: String = ui.data(|d| d.get_temp(key)).unwrap_or_else(|| value.to_string());
-    let r =
-        egui::Frame::NONE.fill(t.field).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
-            ui.add(egui::TextEdit::singleline(&mut text).frame(egui::Frame::NONE).font(theme::font(12.0)).desired_width(w - 12.0).id(id))
-        });
+    let r = egui::Frame::NONE.fill(t.field).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
+        ui.add(egui::TextEdit::singleline(&mut text).frame(egui::Frame::NONE).font(theme::font(12.0)).desired_width(w - 12.0).id(id))
+            .accessible_name("Hex")
+    });
     let te = r.inner;
     if te.has_focus() {
         ui.data_mut(|d| d.insert_temp(key, text.clone()));
@@ -229,7 +229,7 @@ fn sv_square(ui: &mut Ui, rect: Rect, hsb: &mut Hsb, id: Id) -> (bool, bool) {
     let knob = pos2(rect.min.x + hsb.s * rect.width(), rect.min.y + (1.0 - hsb.b) * rect.height());
     ui.painter().circle_stroke(knob, 6.0, Stroke::new(2.0, Color32::WHITE));
     ui.painter().circle_stroke(knob, 7.0, Stroke::new(1.0, Color32::from_black_alpha(80)));
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Saturation and brightness"));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Slider, true, "Saturation and brightness"));
     (changed, resp.drag_stopped() || resp.clicked())
 }
 
@@ -259,7 +259,7 @@ fn hue_slider(ui: &mut Ui, rect: Rect, hsb: &mut Hsb, id: Id) -> (bool, bool) {
 
 fn slider_knob(ui: &mut Ui, rect: Rect, t: f32, id: Id, label: &str) -> Option<(f32, bool)> {
     let resp = ui.interact(rect.expand(4.0), id, Sense::click_and_drag());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Slider, true, label));
     let x = rect.min.x + t.clamp(0.0, 1.0) * rect.width();
     ui.painter().circle_stroke(pos2(x, rect.center().y), rect.height() / 2.0 + 1.0, Stroke::new(2.0, Color32::WHITE));
     ui.painter().circle_stroke(pos2(x, rect.center().y), rect.height() / 2.0 + 2.0, Stroke::new(1.0, Color32::from_black_alpha(80)));

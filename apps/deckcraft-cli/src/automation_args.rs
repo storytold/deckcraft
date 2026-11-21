@@ -4,29 +4,24 @@
 use std::path::PathBuf;
 
 pub struct AutomationArgs {
-    pub read_root: Option<PathBuf>,
-    pub write_root: Option<PathBuf>,
-    read_given: bool,
-    write_given: bool,
+    pub read_roots: Vec<PathBuf>,
+    pub write_roots: Vec<PathBuf>,
 }
 
 impl AutomationArgs {
     pub fn new(read_root: Option<PathBuf>, write_root: Option<PathBuf>) -> Self {
-        Self { read_root, write_root, read_given: false, write_given: false }
+        Self { read_roots: read_root.into_iter().collect(), write_roots: write_root.into_iter().collect() }
     }
 
-    /// Returns whether this argument is a root flag. A second occurrence of a flag is an error,
-    /// including when the two spellings (`--flag DIR`, `--flag=DIR`) are mixed.
+    /// Returns whether this argument is a root flag. Both spellings (`--flag DIR` and
+    /// `--flag=DIR`) may be repeated.
     pub fn consume(&mut self, arg: &str, args: &mut impl Iterator<Item = String>) -> Result<bool, String> {
         let (flag, inline) = arg.split_once('=').map_or((arg, None), |(flag, value)| (flag, Some(value)));
-        let (root, given) = match flag {
-            "--automation-read-root" => (&mut self.read_root, &mut self.read_given),
-            "--automation-write-root" => (&mut self.write_root, &mut self.write_given),
+        let roots = match flag {
+            "--automation-read-root" => &mut self.read_roots,
+            "--automation-write-root" => &mut self.write_roots,
             _ => return Ok(false),
         };
-        if *given {
-            return Err(format!("{flag} given twice"));
-        }
         let value = match inline {
             Some(value) => value.to_owned(),
             None => {
@@ -40,8 +35,7 @@ impl AutomationArgs {
         if value.is_empty() {
             return Err(format!("{flag} needs a non-empty folder"));
         }
-        *root = Some(value.into());
-        *given = true;
+        roots.push(value.into());
         Ok(true)
     }
 }
@@ -51,17 +45,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn roots_are_taken_once_and_other_arguments_are_left() {
+    fn roots_are_repeated_and_other_arguments_are_left() {
         let mut roots = AutomationArgs::new(None, None);
         let mut args = ["a folder".to_owned(), "deck.pptx".to_owned()].into_iter();
         assert!(roots.consume("--automation-read-root", &mut args).unwrap());
+        assert!(roots.consume("--automation-read-root=other", &mut args).unwrap());
         assert!(roots.consume("--automation-write-root=out", &mut args).unwrap());
         assert!(!roots.consume("--sample", &mut args).unwrap());
-        assert_eq!(roots.read_root, Some("a folder".into()));
-        assert_eq!(roots.write_root, Some("out".into()));
+        assert_eq!(roots.read_roots, [PathBuf::from("a folder"), PathBuf::from("other")]);
+        assert_eq!(roots.write_roots, [PathBuf::from("out")]);
         assert_eq!(args.next().as_deref(), Some("deck.pptx"));
-        assert!(roots.consume("--automation-read-root=other", &mut args).is_err());
-        assert_eq!(roots.read_root, Some("a folder".into()));
     }
 
     #[test]
@@ -71,8 +64,8 @@ mod tests {
                 let mut roots = AutomationArgs::new(Some("read".into()), Some("write".into()));
                 let mut args = operand.map(str::to_owned).into_iter();
                 assert!(roots.consume(flag, &mut args).is_err(), "{flag} {operand:?}");
-                assert_eq!(roots.read_root, Some("read".into()));
-                assert_eq!(roots.write_root, Some("write".into()));
+                assert_eq!(roots.read_roots, [PathBuf::from("read")]);
+                assert_eq!(roots.write_roots, [PathBuf::from("write")]);
             }
             let mut roots = AutomationArgs::new(None, None);
             assert!(roots.consume(&format!("{flag}="), &mut std::iter::empty()).is_err());
@@ -84,7 +77,7 @@ mod tests {
         let mut roots = AutomationArgs::new(None, None);
         assert!(roots.consume("--automation-read-root=-folder", &mut std::iter::empty()).unwrap());
         assert!(roots.consume("--automation-write-root", &mut ["./-folder".to_owned()].into_iter()).unwrap());
-        assert_eq!(roots.read_root, Some("-folder".into()));
-        assert_eq!(roots.write_root, Some("./-folder".into()));
+        assert_eq!(roots.read_roots, [PathBuf::from("-folder")]);
+        assert_eq!(roots.write_roots, [PathBuf::from("./-folder")]);
     }
 }

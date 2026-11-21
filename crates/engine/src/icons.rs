@@ -60,7 +60,7 @@ pub fn stroke_width(icon: &Icon, w: f64, h: f64) -> f64 {
 }
 
 fn parsed() -> &'static HashMap<&'static str, BezPath> {
-    static CACHE: OnceLock<HashMap<&'static str, BezPath>> = OnceLock::new();
+    static CACHE: OnceLock<HashMap<&str, BezPath>> = OnceLock::new();
     CACHE.get_or_init(|| {
         let mut m = HashMap::new();
         for icon in ICONS {

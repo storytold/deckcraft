@@ -139,13 +139,13 @@ fn hidden_panel_buttons(app: &mut SlideApp, ui: &mut Ui) {
         }
         let at = if left { pos2(area.min.x + 10.0, area.min.y + 10.0) } else { pos2(area.max.x - 42.0, area.min.y + 10.0) };
         let r = Rect::from_min_size(at, vec2(32.0, 32.0));
-        let resp = ui.interact(r, ui.id().with(("show-panel", left)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("show-panel", left)), Sense::click());
         let p = ui.painter();
         p.add(egui::epaint::Shadow { offset: [0, 1], blur: 6, spread: 0, color: t.shadow }.as_shape(r, CornerRadius::same(8)));
         p.rect(r, CornerRadius::same(8), if resp.hovered() { t.hover } else { t.card }, Stroke::new(1.0, t.card_border), egui::StrokeKind::Inside);
         icons::paint_mono(p, r.shrink(8.0), if left { Icon::PanelLeft } else { Icon::PanelRight }, t.text, false);
         let tip = if left { "Show the left panel (⌥⌘.)" } else { "Show the design panel (⌘.)" };
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
         if resp.on_hover_text(tip).clicked() {
             if left {
                 app.ui.hide_left = false;
@@ -178,7 +178,7 @@ fn master_row(app: &mut SlideApp, ui: &mut Ui) {
                 egui::StrokeKind::Inside,
             );
             ui.painter().text(r.center(), Align2::CENTER_CENTER, "Close masters", theme::font(13.0), t.text);
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close masters"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close masters"));
             if resp.on_hover_text("Back to the slides").clicked() {
                 let _ = app.run("view.closeMaster", json!({}));
             }
@@ -191,7 +191,7 @@ fn master_row(app: &mut SlideApp, ui: &mut Ui) {
                 egui::StrokeKind::Inside,
             );
             icons::paint(ui.painter(), pr.shrink(7.0), Icon::Plus, t.text, false);
-            presp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "New layout"));
+            presp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "New layout"));
             if presp.on_hover_text("New layout").clicked() {
                 let _ = app.run("master.insertLayout", json!({}));
             }
@@ -390,7 +390,7 @@ fn panel_tabs(app: &mut SlideApp, ui: &mut Ui) {
     for (k, (id, label)) in [("design", "Design"), ("animate", "Animate")].into_iter().enumerate() {
         let cell = Rect::from_min_size(pos2(r.min.x + k as f32 * w / 2.0, r.min.y), vec2(w / 2.0, r.height()));
         let enabled = id == "design" || can_animate;
-        let resp = ui.interact(cell, ui.id().with(("panel-tab", id)), if enabled { Sense::click() } else { Sense::hover() });
+        let resp = ui.interact(cell, ui.scope_id().with(("panel-tab", id)), if enabled { Sense::click() } else { Sense::hover() });
         let on = app.ui.inspector_tab == id || (id == "design" && app.ui.inspector_tab != "animate");
         if on {
             ui.painter().rect(cell.shrink(2.0), CornerRadius::same(6), t.card, Stroke::new(1.0, t.card_border), egui::StrokeKind::Inside);
@@ -405,7 +405,7 @@ fn panel_tabs(app: &mut SlideApp, ui: &mut Ui) {
             t.text_dim
         };
         ui.painter().text(cell.center(), Align2::CENTER_CENTER, label, if on { theme::bold(13.0) } else { theme::font(13.0) }, ink);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, on, label));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, label));
         let resp = if enabled { resp } else { resp.on_hover_text("Animating is for slides: back to a single slide to animate") };
         if resp.clicked() {
             app.ui.inspector_tab = id.into();
@@ -507,7 +507,7 @@ fn tool_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, on: bool, enable
         p.rect_filled(r, CornerRadius::same(8), t.hover);
     }
     icons::paint(&p, r.shrink(9.0), icon, if filled { t.accent_text } else { t.text }, !enabled);
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, label));
     resp.on_hover_text(tip)
 }
 

@@ -61,6 +61,7 @@ pub fn note_missing_fonts(app: &mut SlideApp) {
     }
 }
 
+/// Draw the notices and drop the ones whose time is up, without disturbing the document.
 pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let now = crate::now_ms();
     app.toasts.retain(|n| now - n.at <= if n.error { ERROR_MS } else { SHOW_MS });
@@ -70,7 +71,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     let mut close = None;
     // Above the floating toolbar / status bar, clear of the right panel's edge.
-    egui::Area::new(egui::Id::new("notices")).anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -76.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("notices")).anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -76.0)).order(egui::Order::Foreground).show(ctx, |ui| {
         ui.set_max_width(360.0);
         for (k, n) in app.toasts.iter().enumerate() {
             egui::Frame::NONE
@@ -86,7 +87,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                         ui.add(egui::Label::new(title).wrap());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
-                            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close"));
+                            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));
                             if resp.hovered() {
                                 ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);
                             }

@@ -49,7 +49,7 @@ fn tokenize(s: &str) -> Vec<Tok> {
                     n1.is_ascii_digit() || ((n1 == '-' || n1 == '+') && n2.is_ascii_digit())
                 } {
                     i += 2;
-                    while cs.get(i).is_some_and(|d| d.is_ascii_digit()) {
+                    while cs.get(i).is_some_and(char::is_ascii_digit) {
                         i += 1;
                     }
                     break;

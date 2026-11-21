@@ -2,8 +2,8 @@
 
 use serde_json::{Value, json};
 
+use crate::Session;
 use crate::tools::{Mods, PointerEvent, PointerKind};
-use crate::*;
 
 /// A blank slide with A, B, C (back to front) and G = group [D, H = group [E, F]] in front.
 fn deck() -> (Session, Vec<u32>) {
@@ -133,6 +133,14 @@ fn eye_show_all_and_hide_all() {
     assert!(flags(&s, a).0 && flags(&s, e).0);
     undo(&mut s);
     assert!(!flags(&s, a).0 && flags(&s, g).0 && flags(&s, e).0);
+}
+
+#[test]
+fn lock_group_with_its_child_targeted_leaves_child_locked() {
+    let (mut s, ids) = deck();
+    let (d, g) = (ids[3], ids[7]);
+    s.execute("shape.lock", &json!({"ids": [g, d, d]})).unwrap();
+    assert!(flags(&s, g).1 && flags(&s, d).1);
 }
 
 #[test]

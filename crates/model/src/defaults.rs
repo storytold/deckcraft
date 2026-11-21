@@ -49,7 +49,7 @@ struct B {
 }
 
 impl B {
-    fn shape(&mut self, name: &str, kind: PhType, idx: u32, x: f64, y: f64, w: f64, h: f64) -> Shape {
+    fn shape(&mut self, name: &str, kind: PhType, idx: u32, [x, y, w, h]: [f64; 4]) -> Shape {
         self.next += 1;
         Shape {
             id: ShapeId(self.next),
@@ -164,9 +164,9 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         let (x1, y1, w1, h1) = r(60.0, 500.0, 216.0, 28.0);
         let (x2, _, w2, _) = r(318.0, 500.0, 324.0, 28.0);
         let (x3, _, w3, _) = r(684.0, 500.0, 216.0, 28.0);
-        let mut d = b.shape("Date Placeholder", PhType::Date, 10, x1, y1, w1, h1);
-        let mut f = b.shape("Footer Placeholder", PhType::Footer, 11, x2, y1, w2, h1);
-        let mut n = b.shape("Slide Number Placeholder", PhType::SlideNum, 12, x3, y1, w3, h1);
+        let mut d = b.shape("Date Placeholder", PhType::Date, 10, [x1, y1, w1, h1]);
+        let mut f = b.shape("Footer Placeholder", PhType::Footer, 11, [x2, y1, w2, h1]);
+        let mut n = b.shape("Slide Number Placeholder", PhType::SlideNum, 12, [x3, y1, w3, h1]);
         let small = |align| {
             let mut ls = ListStyle::default();
             ls.set(
@@ -202,13 +202,13 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
     };
     let title_box = |b: &mut B| {
         let (x, y, ww, hh) = r(60.0, 29.0, 840.0, 104.0);
-        let mut s = b.shape("Title 1", PhType::Title, 0, x, y, ww, hh);
+        let mut s = b.shape("Title 1", PhType::Title, 0, [x, y, ww, hh]);
         s.text = Some(body_with(Some(Anchor::Middle), Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 })));
         s
     };
     let body_box = |b: &mut B, name: &str, idx: u32, x: f64, y: f64, ww: f64, hh: f64| {
         let (x, y, ww, hh) = r(x, y, ww, hh);
-        let mut s = b.shape(name, PhType::Body, idx, x, y, ww, hh);
+        let mut s = b.shape(name, PhType::Body, idx, [x, y, ww, hh]);
         s.text = Some(body_with(Some(Anchor::Top), Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 })));
         s
     };
@@ -251,7 +251,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
     // Title Slide
     {
         let (x, y, ww, hh) = r(120.0, 88.0, 720.0, 188.0);
-        let mut t = b.shape("Title 1", PhType::CtrTitle, 0, x, y, ww, hh);
+        let mut t = b.shape("Title 1", PhType::CtrTitle, 0, [x, y, ww, hh]);
         let mut ls = ListStyle::default();
         ls.set(
             0,
@@ -270,7 +270,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
             paragraphs: vec![],
         });
         let (x, y, ww, hh) = r(120.0, 284.0, 720.0, 130.0);
-        let mut st = b.shape("Subtitle 2", PhType::SubTitle, 1, x, y, ww, hh);
+        let mut st = b.shape("Subtitle 2", PhType::SubTitle, 1, [x, y, ww, hh]);
         let mut ls = ListStyle::default();
         ls.set(
             0,
@@ -309,7 +309,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
     // Section Header
     {
         let (x, y, ww, hh) = r(65.0, 135.0, 830.0, 225.0);
-        let mut t = b.shape("Title 1", PhType::Title, 0, x, y, ww, hh);
+        let mut t = b.shape("Title 1", PhType::Title, 0, [x, y, ww, hh]);
         let mut ls = ListStyle::default();
         ls.set(0, LevelStyle { run: RunProps { size: Some(60.0), ..Default::default() }, ..Default::default() });
         t.text = Some(TextBody { body: BodyProps { anchor: Some(Anchor::Bottom), ..Default::default() }, list_style: ls, paragraphs: vec![] });
@@ -347,7 +347,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         let t = title_box(&mut b);
         let head = |b: &mut B, name: &str, idx: u32, x: f64| {
             let (x, y, ww, hh) = r(x, 133.0, 412.0, 62.0);
-            let mut s = b.shape(name, PhType::Body, idx, x, y, ww, hh);
+            let mut s = b.shape(name, PhType::Body, idx, [x, y, ww, hh]);
             let mut ls = ListStyle::default();
             ls.set(
                 0,
@@ -381,7 +381,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
     // Content with Caption
     {
         let (x, y, ww, hh) = r(60.0, 36.0, 322.0, 126.0);
-        let mut t = b.shape("Title 1", PhType::Title, 0, x, y, ww, hh);
+        let mut t = b.shape("Title 1", PhType::Title, 0, [x, y, ww, hh]);
         let mut ls = ListStyle::default();
         ls.set(0, LevelStyle { run: RunProps { size: Some(32.0), ..Default::default() }, ..Default::default() });
         t.text = Some(TextBody { body: BodyProps { anchor: Some(Anchor::Bottom), ..Default::default() }, list_style: ls, paragraphs: vec![] });
@@ -405,12 +405,12 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
     // Picture with Caption
     {
         let (x, y, ww, hh) = r(60.0, 36.0, 322.0, 126.0);
-        let mut t = b.shape("Title 1", PhType::Title, 0, x, y, ww, hh);
+        let mut t = b.shape("Title 1", PhType::Title, 0, [x, y, ww, hh]);
         let mut ls = ListStyle::default();
         ls.set(0, LevelStyle { run: RunProps { size: Some(32.0), ..Default::default() }, ..Default::default() });
         t.text = Some(TextBody { body: BodyProps { anchor: Some(Anchor::Bottom), ..Default::default() }, list_style: ls, paragraphs: vec![] });
         let (x, y, ww, hh) = r(412.0, 78.0, 488.0, 384.0);
-        let p = b.shape("Picture Placeholder 2", PhType::Picture, 1, x, y, ww, hh);
+        let p = b.shape("Picture Placeholder 2", PhType::Picture, 1, [x, y, ww, hh]);
         let mut cap = body_box(&mut b, "Text Placeholder 3", 2, 60.0, 162.0, 322.0, 300.0);
         let mut ls = ListStyle::default();
         ls.set(
@@ -444,7 +444,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
     // Vertical Title and Text
     {
         let (x, y, ww, hh) = r(687.0, 29.0, 213.0, 458.0);
-        let mut t = b.shape("Vertical Title 1", PhType::Title, 0, x, y, ww, hh);
+        let mut t = b.shape("Vertical Title 1", PhType::Title, 0, [x, y, ww, hh]);
         t.text = Some(TextBody { body: BodyProps { vert: Some(TextDir::EaVertical), ..Default::default() }, ..Default::default() });
         if let Some(p) = t.ph.as_mut() {
             p.vertical = true;

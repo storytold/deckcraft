@@ -11,7 +11,7 @@ use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::{PhType, Placeholder, Presentation, Shape, ShapeId, ShapeKind, Xfrm};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, Result, Session, bad, bool_or, cmd, has_doc, has_slide, id_param, ids_param, str_param};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![

@@ -127,11 +127,12 @@ mod tests {
     fn saving_round_trips_and_leaves_no_temporary_file() {
         let d = dir("save");
         let ui = UiState { zoom: Some(1.5), recent: vec!["/a.pptx".into()], ..Default::default() };
-        let prefs = Prefs { author: "Ann".into(), ..Default::default() };
+        let prefs = Prefs { author: "Ann".into(), units: deckcraft_geom::Unit::Centimeters, ..Default::default() };
         save(&d.join("nested"), &ui, &prefs);
         let (u, p) = load(&d.join("nested"));
         assert_eq!(u.unwrap().zoom, Some(1.5));
-        assert_eq!(p.unwrap().author, "Ann");
+        let p = p.unwrap();
+        assert_eq!((p.author.as_str(), p.units), ("Ann", deckcraft_geom::Unit::Centimeters));
         let names: Vec<String> =
             std::fs::read_dir(d.join("nested")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
         assert!(names.iter().all(|n| !n.ends_with(".tmp")), "{names:?}");

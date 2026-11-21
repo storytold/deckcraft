@@ -5,7 +5,7 @@
 use serde_json::json;
 
 use crate::Session;
-use crate::cmd::xfrm_of;
+use crate::cmd::xfrm_on_slide;
 
 /// A title slide and three Title and Content slides.
 fn deck() -> Session {
@@ -27,7 +27,7 @@ fn title_at(s: &mut Session, i: usize) -> (f64, f64, bool) {
     s.execute("slide.go", &json!({"index": i})).unwrap();
     let st = s.doc().unwrap();
     let sh = st.shape(deckcraft_model::ShapeId(id)).unwrap();
-    let x = xfrm_of(&st.doc, &st.selection, sh);
+    let x = xfrm_on_slide(&st.doc, &st.selection, sh);
     (x.x, x.y, sh.xfrm.is_some())
 }
 

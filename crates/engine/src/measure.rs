@@ -8,7 +8,7 @@ use deckcraft_geom::{Point, Rect};
 use deckcraft_model::ShapeId;
 
 use crate::Session;
-use crate::cmd::xfrm_of;
+use crate::cmd::xfrm_on_slide;
 
 /// Lines shorter than this (points) aren't drawn.
 const EPS: f64 = 1e-6;
@@ -163,7 +163,7 @@ impl Session {
     pub fn measure_drag(&self) -> Vec<Measure> {
         let Some(ids) = self.tool.moving_ids() else { return vec![] };
         let Some(st) = self.active() else { return vec![] };
-        let boxes: Vec<Rect> = ids.iter().filter_map(|id| st.shape(*id)).map(|sh| xfrm_of(&st.doc, &st.selection, sh).bounds()).collect();
+        let boxes: Vec<Rect> = ids.iter().filter_map(|id| st.shape(*id)).map(|sh| xfrm_on_slide(&st.doc, &st.selection, sh).bounds()).collect();
         let Some(sel) = boxes.iter().copied().reduce(|a, b| a.union(b)) else { return vec![] };
         let list = st.shapes();
         // The other layers beside them: their group's other layers, else the slide's.
@@ -172,7 +172,7 @@ impl Session {
             None => list.iter().collect(),
         };
         let others: Vec<Rect> =
-            siblings.into_iter().filter(|s| !s.hidden && !ids.contains(&s.id)).map(|s| xfrm_of(&st.doc, &st.selection, s).bounds()).collect();
+            siblings.into_iter().filter(|s| !s.hidden && !ids.contains(&s.id)).map(|s| xfrm_on_slide(&st.doc, &st.selection, s).bounds()).collect();
         let size = st.doc.slide_size;
         neighbours(sel, &others, Rect::new(0.0, 0.0, size.width, size.height))
     }
@@ -182,11 +182,13 @@ impl Session {
     pub fn measure_hover(&self, p: Point, tol: f64, deep: bool) -> (Vec<Measure>, Option<Rect>) {
         let Some(st) = self.active() else { return (vec![], None) };
         let boxes: Vec<Rect> =
-            st.selection.shapes.iter().filter_map(|id| st.shape(*id)).map(|sh| xfrm_of(&st.doc, &st.selection, sh).bounds()).collect();
+            st.selection.shapes.iter().filter_map(|id| st.shape(*id)).map(|sh| xfrm_on_slide(&st.doc, &st.selection, sh).bounds()).collect();
         let Some(sel) = boxes.iter().copied().reduce(|a, b| a.union(b)) else { return (vec![], None) };
         let hit = if deep { self.deep_shape_at(p, tol) } else { self.shape_at(p, tol) };
-        let target =
-            hit.filter(|id| !st.selection.shapes.contains(id)).and_then(|id| st.shape(id)).map(|sh| xfrm_of(&st.doc, &st.selection, sh).bounds());
+        let target = hit
+            .filter(|id| !st.selection.shapes.contains(id))
+            .and_then(|id| st.shape(id))
+            .map(|sh| xfrm_on_slide(&st.doc, &st.selection, sh).bounds());
         let size = st.doc.slide_size;
         let slide = Rect::new(0.0, 0.0, size.width, size.height);
         match target {

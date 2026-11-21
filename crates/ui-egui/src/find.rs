@@ -88,7 +88,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let mut step: Option<isize> = None;
     let mut changed = false;
     let top = if app.ui.shell == crate::Shell::Canvas { 112.0 } else { 160.0 };
-    egui::Area::new(egui::Id::new("find-bar")).anchor(Align2::CENTER_TOP, vec2(0.0, top)).order(egui::Order::Foreground).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("find-bar")).anchor(Align2::CENTER_TOP, vec2(0.0, top)).order(egui::Order::Foreground).show(ctx, |ui| {
         egui::Frame::NONE
             .fill(t.card)
             .stroke(Stroke::new(1.0, t.card_border))
@@ -146,7 +146,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                         ui.painter().rect_filled(cr, CornerRadius::same(4), t.hover);
                     }
                     icons::paint_mono(ui.painter(), cr.shrink(5.0), Icon::Close, t.text_dim, false);
-                    cresp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close find"));
+                    cresp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close find"));
                     if cresp.on_hover_text("Close (Esc)").clicked() {
                         close = true;
                     }

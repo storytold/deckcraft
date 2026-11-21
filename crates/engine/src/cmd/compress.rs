@@ -8,7 +8,7 @@ use deckcraft_model::style::PictureFill;
 use deckcraft_model::{MediaId, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, f64_param, has_doc, targets};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -116,16 +116,31 @@ fn pack(data: &[u8], crop: [f64; 4], w_pt: f64, h_pt: f64, ppi: f64, delete_crop
     Some(Packed { bytes, content_type, crop: new_crop })
 }
 
-/// Picture shapes in `shapes` (groups included) that `want` accepts.
-fn pictures_mut<'a>(shapes: &'a mut [Shape], want: &dyn Fn(ShapeId) -> bool, out: &mut Vec<&'a mut Shape>, depth: usize) {
+/// Pictures accepted by `want`, with width and height measured in slide space through group transforms.
+fn pictures_mut<'a>(
+    shapes: &'a mut [Shape],
+    want: &dyn Fn(ShapeId) -> bool,
+    out: &mut Vec<(&'a mut Shape, f64, f64)>,
+    to_slide: deckcraft_geom::Affine,
+    depth: usize,
+) {
     if depth > 64 {
         return;
     }
     for sh in shapes {
-        if matches!(sh.kind, ShapeKind::Picture { .. }) && want(sh.id) {
-            out.push(sh);
-        } else if let Some(ch) = sh.children_mut() {
-            pictures_mut(ch, want, out, depth + 1);
+        let Some(xfrm) = sh.xfrm else { continue };
+        let local_to_slide = to_slide * xfrm.affine();
+        if matches!(&sh.kind, ShapeKind::Picture { .. }) && want(sh.id) {
+            let origin = local_to_slide * deckcraft_geom::Point::ZERO;
+            let across = local_to_slide * deckcraft_geom::Point::new(xfrm.w, 0.0);
+            let down = local_to_slide * deckcraft_geom::Point::new(0.0, xfrm.h);
+            out.push((sh, (across - origin).hypot(), (down - origin).hypot()));
+            continue;
+        }
+        if let ShapeKind::Group { children, child } = &mut sh.kind {
+            let child_rect = deckcraft_geom::Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
+            let child_to_slide = to_slide * deckcraft_geom::group_child_affine(&xfrm, child_rect);
+            pictures_mut(children, want, out, child_to_slide, depth + 1);
         }
     }
 }
@@ -155,10 +170,9 @@ fn compress(s: &mut Session, p: &Value) -> Result<Value> {
             let Some(slide) = doc.slides.get(i).cloned() else { continue };
             let mut slide = slide.as_ref().clone();
             let mut pics = vec![];
-            pictures_mut(&mut slide.shapes, &want, &mut pics, 0);
+            pictures_mut(&mut slide.shapes, &want, &mut pics, deckcraft_geom::Affine::IDENTITY, 0);
             let mut touched = false;
-            for sh in pics {
-                let (w, h) = sh.xfrm.map(|x| (x.w, x.h)).unwrap_or((0.0, 0.0));
+            for (sh, w, h) in pics {
                 let ShapeKind::Picture { fill } = &mut sh.kind else { continue };
                 let PictureFill { media, crop, .. } = fill.clone();
                 let key = (media.0, crop.map(f64::to_bits), w.to_bits(), h.to_bits());
@@ -230,6 +244,114 @@ mod tests {
         assert!(pack(&png(100, 50), [0.0; 4], 72.0, 36.0, 150.0, true).is_none());
         // Not a raster we re-encode.
         assert!(pack(b"<svg xmlns='http://www.w3.org/2000/svg'/>", [0.0; 4], 72.0, 72.0, 150.0, true).is_none());
+    }
+
+    #[test]
+    fn grouped_pictures_use_their_displayed_size() {
+        let mut s = Session::with_new();
+        let original = png(600, 600);
+        s.edit(|doc, _| {
+            let media = doc.add_media("grouped.png", "image/png", original.clone()).ok_or_else(|| bad("test", "media"))?;
+            let picture = Shape {
+                id: ShapeId(70_101),
+                xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0)),
+                kind: ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } },
+                ..Default::default()
+            };
+            let nested = Shape {
+                id: ShapeId(70_102),
+                xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0)),
+                kind: ShapeKind::Group { children: vec![picture], child: deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0) },
+                ..Default::default()
+            };
+            let group = Shape {
+                id: ShapeId(70_103),
+                xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 720.0, 720.0)),
+                kind: ShapeKind::Group { children: vec![nested], child: deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0) },
+                ..Default::default()
+            };
+            let slide = doc.slides.first_mut().ok_or_else(|| bad("test", "slide"))?;
+            Arc::make_mut(slide).shapes.push(group);
+            Ok(())
+        })
+        .unwrap();
+
+        let result = s.execute("picture.compress", &json!({"all": true, "ppi": 96, "deleteCropped": false})).unwrap();
+        assert_eq!(result["pictures"], 0, "a 600 px image displayed at 720×720 pt is already below the requested sampling density");
+        assert!(
+            s.doc().unwrap().doc.media.iter().any(|m| m.data.as_slice() == original.as_slice()),
+            "the under-target original media must remain untouched"
+        );
+    }
+
+    #[test]
+    fn anisotropic_nested_group_scaling_controls_sampling_dimensions() {
+        let mut s = Session::with_new();
+        let original = png(2000, 1000);
+        s.edit(|doc, _| {
+            let media = doc.add_media("scaled-group.png", "image/png", original).ok_or_else(|| bad("test", "media"))?;
+            let picture = Shape {
+                id: ShapeId(70_111),
+                xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0)),
+                kind: ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } },
+                ..Default::default()
+            };
+            let nested = Shape {
+                id: ShapeId(70_112),
+                xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0)),
+                kind: ShapeKind::Group { children: vec![picture], child: deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0) },
+                ..Default::default()
+            };
+            let group = Shape {
+                id: ShapeId(70_113),
+                xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 720.0, 360.0)),
+                kind: ShapeKind::Group { children: vec![nested], child: deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0) },
+                ..Default::default()
+            };
+            let slide = doc.slides.first_mut().ok_or_else(|| bad("test", "slide"))?;
+            Arc::make_mut(slide).shapes.push(group);
+            Ok(())
+        })
+        .unwrap();
+
+        let result = s.execute("picture.compress", &json!({"all": true, "ppi": 96, "deleteCropped": false})).unwrap();
+        assert_eq!(result["pictures"], 1);
+        let slide = s.doc().unwrap().doc.slides.first().unwrap();
+        let picture = slide.shapes.iter().find(|sh| sh.id == ShapeId(70_113)).unwrap();
+        let ShapeKind::Group { children, .. } = &picture.kind else { panic!("outer group expected") };
+        let ShapeKind::Group { children, .. } = &children[0].kind else { panic!("nested group expected") };
+        let ShapeKind::Picture { fill } = &children[0].kind else { panic!("picture expected") };
+        let media = s.doc().unwrap().doc.media(fill.media).unwrap();
+        let image = image::load_from_memory(&media.data).unwrap();
+        assert_eq!((image.width(), image.height()), (960, 480));
+    }
+
+    #[test]
+    fn ungrouped_picture_still_compresses_and_deletes_its_crop() {
+        let mut s = Session::with_new();
+        let original = png(800, 800);
+        s.edit(|doc, _| {
+            let media = doc.add_media("cropped.png", "image/png", original).ok_or_else(|| bad("test", "media"))?;
+            let slide = doc.slides.first_mut().ok_or_else(|| bad("test", "slide"))?;
+            Arc::make_mut(slide).shapes.push(Shape {
+                id: ShapeId(70_104),
+                xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0)),
+                kind: ShapeKind::Picture { fill: PictureFill { media, crop: [0.5, 0.0, 0.0, 0.0], ..Default::default() } },
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
+
+        let result = s.execute("picture.compress", &json!({"all": true, "ppi": 96, "deleteCropped": true})).unwrap();
+        assert_eq!(result["pictures"], 1);
+        let slide = s.doc().unwrap().doc.slides.first().unwrap();
+        let picture = slide.shapes.iter().find(|sh| sh.id == ShapeId(70_104)).unwrap();
+        let ShapeKind::Picture { fill } = &picture.kind else { panic!("picture expected") };
+        assert_eq!(fill.crop, [0.0; 4]);
+        let media = s.doc().unwrap().doc.media(fill.media).unwrap();
+        let image = image::load_from_memory(&media.data).unwrap();
+        assert_eq!((image.width(), image.height()), (96, 192));
     }
 
     #[test]

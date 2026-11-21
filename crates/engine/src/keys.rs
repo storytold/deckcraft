@@ -49,17 +49,21 @@ impl Session {
     /// `ArrowLeft`…, `Home`, `End`, `PageUp`, `PageDown`, `F5`) or a character (`b`, `]`).
     /// Returns `{handled: bool, …}`.
     pub fn key(&mut self, key: &str, mods: Mods) -> Result<Value> {
-        self.end_composition();
+        self.settle_composition();
         let editing = self.active().is_some_and(|d| d.selection.text.is_some());
         let has_shapes = self.active().is_some_and(|d| !d.selection.shapes.is_empty());
         let k = key_token(key);
         let k = k.as_str();
+        if matches!(k, "escape" | "esc") && self.cancel_point_drag() {
+            return Ok(json!({"handled": true}));
+        }
         if self.tool.drawing_freeform() && matches!(k, "enter" | "return" | "escape") {
             return self.finish_freeform(false);
         }
         if self.tool.edit_points.is_some() && matches!(k, "enter" | "return" | "escape") {
             self.tool.edit_points = None;
             self.tool.edit_vertex = None;
+            self.tool.edit_segment = None;
             return Ok(json!({"handled": true, "command": "shape.editPoints"}));
         }
         if editing && let Some((id, params)) = self.text_key(k, mods) {
@@ -86,6 +90,21 @@ impl Session {
             };
             if let Some(r) = r {
                 r?;
+                return Ok(json!({"handled": true}));
+            }
+        }
+        if !editing && has_shapes && !mods.cmd && mods.shift && !mods.alt {
+            // Shift+arrow grows or shrinks a selected range of table cells.
+            let d = match k {
+                "left" => Some((0, -1)),
+                "right" => Some((0, 1)),
+                "up" => Some((-1, 0)),
+                "down" => Some((1, 0)),
+                _ => None,
+            };
+            if let Some((dr, dc)) = d
+                && crate::cmd::table::extend_selected_cells(self, dr, dc)?
+            {
                 return Ok(json!({"handled": true}));
             }
         }
@@ -245,6 +264,16 @@ impl Session {
             return Ok(json!({"handled": false}));
         }
         self.execute("text.commit", &json!({"text": text}))
+    }
+
+    /// Remove text around the composition caret or selection, as an input method asks
+    /// (`ImeEvent::DeleteSurrounding`/`DeleteSurroundingBytes`). Counts are characters or UTF-8
+    /// bytes of the logical text the surrounding query publishes, so a range may cross a
+    /// paragraph mark (read as one `\n` byte) and whole scalars only are removed; out-of-range
+    /// counts are clamped. A deletion while composing stays inside the composition's single undo
+    /// step.
+    pub fn delete_surrounding(&mut self, before: usize, after: usize, bytes: bool) -> Result<Value> {
+        self.execute("text.deleteSurrounding", &json!({"before": before, "after": after, "bytes": bytes}))
     }
 
     /// Ready to take typed `text`: editing text already, or one selected shape whose text editing

@@ -66,109 +66,16 @@ pub(crate) fn levels_lang(text: &str, chars: &[char], rtl: bool, rtl_lang: &[boo
     if classes.iter().any(|c| matches!(c, LRE | RLE | LRO | RLO | PDF | LRI | RLI | FSI | PDI)) {
         return levels(text, chars, rtl);
     }
-    let n = chars.len();
-    let rl = |i: usize| rtl_lang.get(i).copied().unwrap_or(false);
-    let sos = if rtl { Dir::R } else { Dir::L };
-    // W1: combining marks take the class of the character they sit on.
-    let mut cls = classes;
-    for i in 0..n {
-        if cls.get(i) == Some(&NSM) {
-            let prev = if i == 0 { if rtl { R } else { L } } else { cls.get(i - 1).copied().unwrap_or(L) };
-            if let Some(c) = cls.get_mut(i) {
-                *c = prev;
-            }
-        }
-    }
-    let mut dir = vec![Dir::Open; n];
-    // Strong letters and digits.
-    let mut last_strong: Option<BidiClass> = None;
-    for i in 0..n {
-        let c = cls.get(i).copied().unwrap_or(ON);
-        let d = match c {
-            L => Dir::L,
-            R | AL => Dir::R,
-            AN => Dir::Num,
-            EN if !rl(i) => Dir::L,
-            // W7: European digits after left-to-right text are left to right.
-            EN if last_strong == Some(L) => Dir::L,
-            EN => Dir::Num,
-            _ => Dir::Open,
-        };
-        if matches!(c, L | R | AL) {
-            last_strong = Some(c);
-        }
-        if let Some(x) = dir.get_mut(i) {
-            *x = d;
-        }
-    }
-    // W4/W5 in right-to-left runs: a separator between digits, and currency or percent signs next
-    // to them, belong to the number. `after_et[i]` is the first index after `i` that is not ET,
-    // computed once so a long run of currency signs costs linear work, not a scan per sign.
-    let after_et = next_non_et(&cls);
-    for i in 0..n {
-        if !rl(i) || dir.get(i) != Some(&Dir::Open) {
-            continue;
-        }
-        let c = cls.get(i).copied().unwrap_or(ON);
-        let num = |j: Option<usize>| j.and_then(|j| dir.get(j)).is_some_and(|d| *d == Dir::Num);
-        let joined = match c {
-            ES | CS => num(i.checked_sub(1)) && num(Some(i + 1)),
-            ET => num(i.checked_sub(1)) || num(after_et.get(i).copied().flatten()),
-            _ => false,
-        };
-        if joined && let Some(x) = dir.get_mut(i) {
-            *x = Dir::Num;
-        }
-    }
+    let cls = resolve_nsm(classes, rtl);
+    let mut dir = initial_dirs(&cls, rtl_lang);
+    join_numbers_in_rtl_runs(&mut dir, &cls, rtl_lang);
     // Punctuation in left-to-right runs is left to right.
-    for i in 0..n {
-        if !rl(i)
-            && dir.get(i) == Some(&Dir::Open)
-            && !matches!(cls.get(i), Some(WS | S))
-            && let Some(x) = dir.get_mut(i)
-        {
-            *x = Dir::L;
+    for (i, d) in dir.iter_mut().enumerate() {
+        if !in_rtl_lang(rtl_lang, i) && *d == Dir::Open && !matches!(cls.get(i), Some(WS | S)) {
+            *d = Dir::L;
         }
     }
-    // Neutrals in right-to-left runs: the direction around them when both sides agree, else
-    // right to left. Unresolved spaces of left-to-right runs are looked through.
-    let strong_at = |dir: &[Dir], j: usize| match dir.get(j) {
-        Some(Dir::L) => Some(Dir::L),
-        Some(Dir::R | Dir::Num) => Some(Dir::R),
-        _ => None,
-    };
-    // Resolving a span only changes characters before the scan position, so the nearest strong
-    // direction after a span can be computed once up front, and the one before it is carried along:
-    // linear work however many neutral spans the paragraph has.
-    let mut next_strong: Vec<Option<Dir>> = vec![None; n + 1];
-    for j in (0..n).rev() {
-        let here = strong_at(&dir, j).or(next_strong.get(j + 1).copied().flatten());
-        if let Some(x) = next_strong.get_mut(j) {
-            *x = here;
-        }
-    }
-    let mut last_strong: Option<Dir> = None;
-    let mut i = 0;
-    while i < n {
-        if !(rl(i) && dir.get(i) == Some(&Dir::Open)) {
-            last_strong = strong_at(&dir, i).or(last_strong);
-            i += 1;
-            continue;
-        }
-        let start = i;
-        while i < n && rl(i) && dir.get(i) == Some(&Dir::Open) {
-            i += 1;
-        }
-        let before = last_strong.unwrap_or(sos);
-        let after = next_strong.get(i).copied().flatten().unwrap_or(sos);
-        let d = if before == after { before } else { Dir::R };
-        for x in dir.get_mut(start..i).into_iter().flatten() {
-            *x = d;
-        }
-        if start < i {
-            last_strong = Some(if d == Dir::Num { Dir::R } else { d });
-        }
-    }
+    resolve_rtl_neutrals(&mut dir, rtl_lang, if rtl { Dir::R } else { Dir::L });
     // Spaces in left-to-right runs follow the character before them.
     let mut prev = Dir::L;
     for d in dir.iter_mut() {
@@ -185,6 +92,115 @@ pub(crate) fn levels_lang(text: &str, chars: &[char], rtl: bool, rtl_lang: &[boo
             (Dir::Num, true) => base + 1,
         })
         .collect()
+}
+
+fn in_rtl_lang(rtl_lang: &[bool], i: usize) -> bool {
+    rtl_lang.get(i).copied().unwrap_or(false)
+}
+
+/// W1: combining marks take the class of the character they sit on.
+fn resolve_nsm(mut cls: Vec<BidiClass>, rtl: bool) -> Vec<BidiClass> {
+    for i in 0..cls.len() {
+        if cls.get(i) == Some(&NSM) {
+            let prev = if i == 0 { if rtl { R } else { L } } else { cls.get(i - 1).copied().unwrap_or(L) };
+            if let Some(c) = cls.get_mut(i) {
+                *c = prev;
+            }
+        }
+    }
+    cls
+}
+
+/// Strong letters and digits get a direction; everything else stays open.
+fn initial_dirs(cls: &[BidiClass], rtl_lang: &[bool]) -> Vec<Dir> {
+    let mut last_strong: Option<BidiClass> = None;
+    cls.iter()
+        .enumerate()
+        .map(|(i, &c)| {
+            let d = match c {
+                L => Dir::L,
+                R | AL => Dir::R,
+                AN => Dir::Num,
+                EN if !in_rtl_lang(rtl_lang, i) => Dir::L,
+                // W7: European digits after left-to-right text are left to right.
+                EN if last_strong == Some(L) => Dir::L,
+                EN => Dir::Num,
+                _ => Dir::Open,
+            };
+            if matches!(c, L | R | AL) {
+                last_strong = Some(c);
+            }
+            d
+        })
+        .collect()
+}
+
+/// W4/W5 in right-to-left runs: a separator between digits, and currency or percent signs next
+/// to them, belong to the number. `after_et[i]` is the first index after `i` that is not ET,
+/// computed once so a long run of currency signs costs linear work, not a scan per sign.
+fn join_numbers_in_rtl_runs(dir: &mut [Dir], cls: &[BidiClass], rtl_lang: &[bool]) {
+    let after_et = next_non_et(cls);
+    for i in 0..dir.len() {
+        if !in_rtl_lang(rtl_lang, i) || dir.get(i) != Some(&Dir::Open) {
+            continue;
+        }
+        let c = cls.get(i).copied().unwrap_or(ON);
+        let num = |j: Option<usize>| j.and_then(|j| dir.get(j)).is_some_and(|d| *d == Dir::Num);
+        let joined = match c {
+            ES | CS => num(i.checked_sub(1)) && num(Some(i + 1)),
+            ET => num(i.checked_sub(1)) || num(after_et.get(i).copied().flatten()),
+            _ => false,
+        };
+        if joined && let Some(x) = dir.get_mut(i) {
+            *x = Dir::Num;
+        }
+    }
+}
+
+fn strong_at(dir: &[Dir], j: usize) -> Option<Dir> {
+    match dir.get(j) {
+        Some(Dir::L) => Some(Dir::L),
+        Some(Dir::R | Dir::Num) => Some(Dir::R),
+        _ => None,
+    }
+}
+
+/// Neutrals in right-to-left runs: the direction around them when both sides agree, else right to
+/// left. Unresolved spaces of left-to-right runs are looked through.
+///
+/// Resolving a span only changes characters before the scan position, so the nearest strong
+/// direction after a span can be computed once up front, and the one before it is carried along:
+/// linear work however many neutral spans the paragraph has.
+fn resolve_rtl_neutrals(dir: &mut [Dir], rtl_lang: &[bool], sos: Dir) {
+    let n = dir.len();
+    let rl = |dir: &[Dir], i: usize| in_rtl_lang(rtl_lang, i) && dir.get(i) == Some(&Dir::Open);
+    let mut next_strong: Vec<Option<Dir>> = vec![None; n + 1];
+    for j in (0..n).rev() {
+        let here = strong_at(dir, j).or(next_strong.get(j + 1).copied().flatten());
+        if let Some(x) = next_strong.get_mut(j) {
+            *x = here;
+        }
+    }
+    let mut last_strong: Option<Dir> = None;
+    let mut i = 0;
+    while i < n {
+        if !rl(dir, i) {
+            last_strong = strong_at(dir, i).or(last_strong);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && rl(dir, i) {
+            i += 1;
+        }
+        let before = last_strong.unwrap_or(sos);
+        let after = next_strong.get(i).copied().flatten().unwrap_or(sos);
+        let d = if before == after { before } else { Dir::R };
+        for x in dir.get_mut(start..i).into_iter().flatten() {
+            *x = d;
+        }
+        last_strong = Some(if d == Dir::Num { Dir::R } else { d });
+    }
 }
 
 /// For each index, the first later index whose class is not ET (`None` when only ET follows).

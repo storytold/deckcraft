@@ -204,7 +204,7 @@ pub fn animate(app: &mut SlideApp, ui: &mut Ui) {
     }
     build_section(app, ui);
     section(ui, "Effects on this slide");
-    let id = ui.id().with("states-effects");
+    let id = ui.scope_id().with("states-effects");
     let mut open: bool = ui.data_mut(|d| d.get_temp(id).unwrap_or(false));
     if ui.button(if open { "Hide entrance, emphasis and exit effects" } else { "Entrance, emphasis and exit effects…" }).clicked() {
         open = !open;
@@ -358,7 +358,7 @@ pub fn strip_bar(app: &mut SlideApp, ui: &mut Ui) {
             ui.spacing_mut().item_spacing.x = 6.0;
             let (lr, _) = ui.allocate_exact_size(vec2(44.0, th), Sense::hover());
             ui.painter().text(pos2(lr.min.x, lr.center().y), Align2::LEFT_CENTER, "States", theme::bold(12.0), t.text_dim);
-            let drag_id = egui::Id::new("states-strip-drag");
+            let drag_id = egui::Id::unique("states-strip-drag");
             let mut thumbs: Vec<Rect> = vec![];
             for (k, i) in run.clone().enumerate() {
                 if k > 0 {
@@ -369,7 +369,7 @@ pub fn strip_bar(app: &mut SlideApp, ui: &mut Ui) {
                 if resp.drag_started() {
                     ui.ctx().data_mut(|d| d.insert_temp(drag_id, k));
                 }
-                match app.textures.thumb(ui.ctx(), &doc, i, (tw * ppp).round() as u32, &mut budget) {
+                match app.textures.thumb(ui.ctx(), &doc, i, (tw * ppp).round() as u32, app.ui.grayscale, &mut budget) {
                     Some(tex) => {
                         ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                     }
@@ -398,7 +398,7 @@ pub fn strip_bar(app: &mut SlideApp, ui: &mut Ui) {
                 );
                 builds_ticks(ui, &doc, i, r, &t);
                 let label = format!("State {}", k + 1);
-                resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, &label));
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &label));
                 if resp.clicked() || resp.drag_started() {
                     app.states_focus = true;
                     app.slides_focus = false;
@@ -433,7 +433,7 @@ pub fn strip_bar(app: &mut SlideApp, ui: &mut Ui) {
                 ui.painter().line_segment([c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)], Stroke::new(1.5, t.text_dim));
                 ui.painter().line_segment([c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)], Stroke::new(1.5, t.text_dim));
                 let plus = format!("Add a state after state {}", k + 1);
-                presp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &plus));
+                presp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &plus));
                 if presp.on_hover_text(&plus).clicked() {
                     add_state_after(app, i);
                 }
@@ -511,13 +511,13 @@ fn timing_chip(app: &mut SlideApp, ui: &mut Ui, doc: &Presentation, i: usize, k:
     ui.painter().line_segment([pos2(pill.min.x + 9.5, y + 2.5), pos2(pill.min.x + 12.0, y)], Stroke::new(1.2, t.text_dim));
     ui.painter().galley(pos2(pill.min.x + 15.0, y - galley.size().y / 2.0), galley, t.text_dim);
     let label = format!("Morph into state {}", k + 1);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
     let resp = resp.on_hover_text(format!("{label}: timing"));
     egui::Popup::menu(&resp).width(220.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
         ui.label(egui::RichText::new(&label).font(theme::bold(12.5)));
         ui.horizontal(|ui| {
             ui.label("Duration");
-            if let Some(v) = crate::widgets::spinner(ui, &format!("strip-duration-{i}"), secs, 0.25, " s", 60.0) {
+            if let Some(v) = crate::widgets::spinner(ui, &format!("strip-duration-{i}"), "Duration", secs, 0.25, " s", 60.0) {
                 let ms = (v.clamp(0.01, 59.0) * 1000.0).round();
                 let _ = app.run("transition.timing", json!({"duration": ms, "index": i}));
             }
@@ -608,7 +608,7 @@ fn transition(app: &mut SlideApp, ui: &mut Ui, doc: &Presentation, cur: usize) {
     ui.horizontal(|ui| {
         ui.label("Duration");
         let secs = tr.duration_ms as f64 / 1000.0;
-        if let Some(v) = crate::widgets::spinner(ui, "state-duration", secs, 0.25, " s", 60.0) {
+        if let Some(v) = crate::widgets::spinner(ui, "state-duration", "Duration", secs, 0.25, " s", 60.0) {
             let ms = (v.clamp(0.01, 59.0) * 1000.0).round();
             let _ = app.run("transition.timing", json!({"duration": ms}));
         }

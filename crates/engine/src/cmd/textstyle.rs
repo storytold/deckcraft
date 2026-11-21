@@ -10,7 +10,7 @@ use deckcraft_model::text::{ListStyle, ParaProps, Spacing};
 use deckcraft_model::{Fill, PhType, Presentation, RunProps, Shape};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, Result, Session, bad, bool_param, cmd, color_param, f64_param, has_doc, ok, str_param, usize_param};
 use crate::Target;
 
 pub fn specs() -> Vec<CommandSpec> {

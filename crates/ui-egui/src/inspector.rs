@@ -59,7 +59,7 @@ fn seg(ui: &mut Ui, icon: Icon, tip: &str, on: bool, en: bool) -> egui::Response
         p.rect_filled(r, CornerRadius::same(5), t.hover);
     }
     icons::paint(&p, r.shrink(7.0), icon, if on { t.accent } else { t.text }, !en);
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, en, on, tip));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, en, on, tip));
     resp.on_hover_text(tip)
 }
 
@@ -443,10 +443,11 @@ fn template(app: &mut SlideApp, ui: &mut Ui) {
             ui.label(egui::RichText::new("Layout").font(theme::bold(13.0)).color(t.text));
             ui.add_space(4.0);
             caption(ui, "Name");
-            let key = ui.id().with(("layout-name", mi, li));
+            let key = ui.scope_id().with(("layout-name", mi, li));
             let mut name: String = ui.data_mut(|d| d.get_temp(key)).unwrap_or_else(|| l.name.clone());
             let r = egui::Frame::NONE.fill(t.field).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut name).frame(egui::Frame::NONE).font(theme::font(12.5)).desired_width(full - 16.0))
+                    .accessible_name("Layout name")
             });
             let te = r.inner;
             if te.has_focus() {
@@ -536,30 +537,32 @@ fn slot_color(ui: &mut Ui, id: &str, c: deckcraft_color::Rgba, width: f32) -> Op
     let (r, _) = ui.allocate_exact_size(vec2(width, crate::props::ROW_H), Sense::hover());
     ui.painter().rect_filled(r, CornerRadius::same(6), t.field);
     let sw = Rect::from_center_size(pos2(r.min.x + 15.0, r.center().y), vec2(14.0, 14.0));
-    let sresp = ui.interact(sw.expand(3.0), ui.id().with(("theme-slot", id)), Sense::click());
+    let sresp = ui.interact(sw.expand(3.0), ui.scope_id().with(("theme-slot", id)), Sense::click());
     ui.painter().rect(sw, CornerRadius::same(2), theme::to_color32(c), Stroke::new(1.0, Color32::from_black_alpha(25)), egui::StrokeKind::Inside);
-    sresp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Theme color {id}")));
+    sresp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Theme color {id}")));
     let mut out = None;
     widgets::color_popup(&sresp).show(|ui| {
-        if let Some(p) = crate::colorpick::picker(ui, ui.id().with(("theme-slot-pick", id)), c, false)
+        if let Some(p) = crate::colorpick::picker(ui, ui.scope_id().with(("theme-slot-pick", id)), c, false)
             && p.done
         {
             out = Some(format!("#{:02X}{:02X}{:02X}", p.color.r, p.color.g, p.color.b));
         }
     });
     let hex_rect = Rect::from_min_max(pos2(sw.max.x + 8.0, r.min.y), r.max).shrink2(vec2(0.0, 6.0));
-    let tkey = ui.id().with(("theme-slot-hex", id));
+    let tkey = ui.scope_id().with(("theme-slot-hex", id));
     let now = format!("{:02X}{:02X}{:02X}", c.r, c.g, c.b);
     let mut text: String = ui.data_mut(|d| d.get_temp(tkey)).unwrap_or_else(|| now.clone());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(hex_rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
-    let te = child.add_sized(
-        hex_rect.size(),
-        egui::TextEdit::singleline(&mut text)
-            .frame(egui::Frame::NONE)
-            .font(theme::font(12.5))
-            .text_color(t.text)
-            .id(ui.id().with(("theme-slot-edit", id))),
-    );
+    let te = child
+        .add_sized(
+            hex_rect.size(),
+            egui::TextEdit::singleline(&mut text)
+                .frame(egui::Frame::NONE)
+                .font(theme::font(12.5))
+                .text_color(t.text)
+                .id(ui.scope_id().with(("theme-slot-edit", id))),
+        )
+        .accessible_name(format!("Theme color {id} hex"));
     if te.has_focus() {
         ui.data_mut(|d| d.insert_temp(tkey, text.clone()));
     } else {
@@ -606,7 +609,7 @@ fn theme_fonts(app: &mut SlideApp, ui: &mut Ui, m: &deckcraft_model::Master) {
 
 /// Which text style the panel is editing (an index into `textstyles::styles`), if any.
 fn editing_style_id() -> egui::Id {
-    egui::Id::new("canvas-inspector-editing-style")
+    egui::Id::unique("canvas-inspector-editing-style")
 }
 
 pub fn edit_text_style(ctx: &egui::Context, index: Option<usize>) {
@@ -639,7 +642,7 @@ fn text_styles(app: &mut SlideApp, ui: &mut Ui) {
         ui.painter().text(pos2(r.min.x + 8.0, r.max.y - 4.0), Align2::LEFT_BOTTOM, detail, theme::font(11.0), t.text_dim);
         widgets::chevron(ui.painter(), pos2(r.max.x - 12.0, r.center().y), 3.0, t.text_faint);
         let label = format!("Edit text style {}", s.name);
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
         if resp.on_hover_text("Edit this style for the whole presentation").clicked() {
             edit_text_style(ui.ctx(), Some(k));
         }

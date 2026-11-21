@@ -6,7 +6,7 @@ use std::sync::Arc;
 use deckcraft_model::text::Action;
 use deckcraft_model::{AnimClass, AnimStart, Animation, Presentation, Shape, ShapeId, Slide, SlideId, Transition, Xfrm};
 
-use crate::*;
+use crate::{Click, HitShape, LinkJump, ShowAction, ShowState, Target, Timeline};
 
 fn shape(id: u32) -> Shape {
     Shape { id: ShapeId(id), name: format!("S{id}"), xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)), ..Default::default() }
@@ -323,6 +323,23 @@ fn a_slide_comes_back_the_way_it_was_left() {
     s.goto(&pres, 2);
     assert_eq!(s.prev(&pres), ShowAction::Slide(1));
     assert_eq!(s.step, ShowState::steps(&pres, 1));
+}
+
+#[test]
+fn a_slide_entered_going_forward_again_starts_over() {
+    // #2090: the show advances to slide 2 a second time; its triggered animation is undone too.
+    let s1 = slide(1000, vec![], vec![], true);
+    let s2 = slide(1001, vec![shape(4)], vec![exit_on_click(4, 4, 0)], true);
+    let pres = Presentation { slides: vec![s1, s2], ..Default::default() };
+    let mut r = Run::new(pres, vec![vec![], vec![hit(4, None)]]);
+    assert_eq!(r.show.next(&r.pres), ShowAction::Slide(1));
+    assert_eq!(r.click(), Click::Animated);
+    assert!(!r.visible(ShapeId(4)));
+    assert_eq!(r.show.prev(&r.pres), ShowAction::Slide(0));
+    assert_eq!(r.show.prev(&r.pres), ShowAction::None);
+    assert_eq!(r.show.next(&r.pres), ShowAction::Slide(1));
+    assert!(r.visible(ShapeId(4)), "the shape is back");
+    assert!(r.show.trigger_plays().is_empty());
 }
 
 #[test]

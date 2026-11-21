@@ -51,7 +51,7 @@ const ASSET_EXT: &[&str] = &[
 const ASSET_DIRS: &[&str] = &["assets/", "docs/images/", "docs/brand/", "examples/"];
 
 pub fn is_asset(path: &str) -> bool {
-    let ext = Path::new(path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+    let ext = Path::new(path).extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase).unwrap_or_default();
     ASSET_DIRS.iter().any(|d| path.starts_with(d)) || ASSET_EXT.contains(&ext.as_str())
 }
 
@@ -61,16 +61,23 @@ pub fn missing(files: &[String], assets_md: &str) -> Vec<String> {
     files.iter().filter(|f| is_asset(f) && !patterns.iter().any(|p| glob(p, f))).cloned().collect()
 }
 
-/// `*` matches any run of characters except `/`; everything else literally.
+/// `*` matches any run of characters except `/`; everything else literally. Matched with a
+/// table over the pattern, so a pattern with many `*` costs pattern length times name length
+/// rather than exploring every way to split the name.
 fn glob(pat: &str, s: &str) -> bool {
-    match pat.split_once('*') {
-        None => pat == s,
-        Some((head, tail)) => {
-            let Some(rest) = s.strip_prefix(head) else { return false };
-            let ends = rest.char_indices().map(|(i, _)| i).chain(std::iter::once(rest.len()));
-            ends.take_while(|&i| !rest[..i].contains('/')).any(|i| glob(tail, &rest[i..]))
+    let t: Vec<char> = s.chars().collect();
+    // `row[k]`: the pattern so far matches the first k characters of the name.
+    let mut row = vec![false; t.len() + 1];
+    row[0] = true;
+    for pc in pat.chars() {
+        let mut next = vec![false; t.len() + 1];
+        next[0] = pc == '*' && row[0];
+        for k in 1..=t.len() {
+            next[k] = if pc == '*' { row[k] || (next[k - 1] && t[k - 1] != '/') } else { row[k - 1] && t[k - 1] == pc };
         }
+        row = next;
     }
+    row[t.len()]
 }
 
 /// Splits `git ls-files -z` output into real file names (no display quoting of Unicode or special characters).
@@ -118,6 +125,15 @@ mod tests {
         assert!(!glob("assets/*/x.png", "assets/ż/ó/x.png"));
         assert!(missing(&["assets/żółć/x.png".into()], "`assets/*/x.png`").is_empty());
         assert_eq!(missing(&["assets/é.png".into()], "`assets/*.svg`"), vec!["assets/é.png".to_string()]);
+    }
+
+    #[test]
+    fn many_wildcards_on_a_failing_name_finish_at_once() {
+        let pat = format!("{}b", "a*".repeat(40));
+        assert!(!glob(&pat, &"a".repeat(60)));
+        assert!(glob(&pat, &format!("{}b", "a".repeat(60))));
+        assert!(!glob("a*b", "a/b"));
+        assert!(glob("a*b", "ab"));
     }
 
     #[test]

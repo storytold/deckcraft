@@ -330,7 +330,7 @@ fn definition() -> Vec<(&'static str, MenuRole, Vec<Row>)> {
                 Cmd("insert.chart", "Chart"),
                 Sub("Media", vec![Cmd("app.insertVideoDialog", "Video…"), Cmd("app.insertAudioDialog", "Audio…")]),
                 Sep,
-                Cmd("insert.wordArt", "WordArt"),
+                Cmd("insert.wordArt", "Decorative Text"),
                 Cmd("insert.dateTime", "Date and Time"),
                 Cmd("insert.slideNumber", "Slide Number"),
             ],
