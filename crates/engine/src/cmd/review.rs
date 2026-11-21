@@ -260,7 +260,7 @@ fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
                     | deckcraft_model::ShapeKind::Chart(_)
                     | deckcraft_model::ShapeKind::Media(_)
                     | deckcraft_model::ShapeKind::Group { .. }
-            );
+            ) || matches!(&sh.fill, Some(deckcraft_model::Fill::Picture(_)));
             if needs_alt && sh.descr.trim().is_empty() && !sh.decorative {
                 out.push(json!({"slide": i, "shape": sh.id, "name": sh.name, "issue": "Missing alternative text"}));
             }
@@ -818,6 +818,32 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+
+    #[test]
+    fn accessibility_requires_alt_text_for_picture_fills() {
+        use deckcraft_model::{Fill, Shape, ShapeId, style::PictureFill};
+
+        let mut s = Session::with_new();
+        s.edit(|doc, _| {
+            let media = doc.add_media("sample.png", "image/png", vec![]).unwrap();
+            let filled = Shape { id: ShapeId(100), fill: Some(Fill::Picture(PictureFill { media, ..Default::default() })), ..Default::default() };
+            let plain = Shape { id: ShapeId(101), ..Default::default() };
+            let described = Shape { id: ShapeId(102), descr: "Illustration".into(), ..filled.clone() };
+            let decorative = Shape { id: ShapeId(103), decorative: true, ..filled.clone() };
+            Arc::make_mut(doc.slides.first_mut().expect("slide")).shapes = vec![filled, plain, described, decorative];
+            Ok(())
+        })
+        .unwrap();
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        let ids: Vec<_> = issues
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|issue| issue["issue"] == "Missing alternative text")
+            .filter_map(|issue| issue["shape"].as_u64())
+            .collect();
+        assert_eq!(ids, vec![100], "{issues}");
+    }
 
     #[test]
     fn previous_and_next_comment_walk_the_deck() {
