@@ -175,7 +175,12 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             let col = if contextual { t.contextual } else { t.text };
             let f = if active { theme::bold(13.0) } else { font };
             ui.painter().text(r.center(), Align2::CENTER_CENTER, label, f, col);
-            if resp.clicked() {
+            if resp.double_clicked() {
+                // The second click must not reopen what the first click just collapsed.
+                app.ui.tab = name.to_string();
+                app.ui.ribbon_collapsed = true;
+                ui.ctx().request_repaint();
+            } else if resp.clicked() {
                 ui.ctx().request_repaint();
                 if active {
                     app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;

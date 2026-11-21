@@ -456,9 +456,8 @@ fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> 
     let row = rect.shrink2(vec2(6.0, 1.0));
     let animate = ui.style().animation_time > 0.0;
     let hover = ui.ctx().animate_bool_with_time(resp.id.with("hover"), resp.hovered(), if animate { 0.15 } else { 0.0 });
-    let selection = ui.ctx().animate_bool_with_time(resp.id.with("selected"), selected, if animate { 0.15 } else { 0.0 });
-    if hover > 0.0 || selection > 0.0 {
-        p.rect_filled(row, CornerRadius::same(2), t.hover.gamma_multiply(hover.max(selection * 0.5)));
+    if hover > 0.0 {
+        p.rect_filled(row, CornerRadius::same(2), t.hover.gamma_multiply(hover));
     }
     if bs.focus == Some(index) || selected {
         // The current page (and the keyboard focus) is outlined, as in PowerPoint.

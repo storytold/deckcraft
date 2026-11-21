@@ -357,6 +357,64 @@ fn change_file_type_png_can_leave_the_background_transparent() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Export › Change File Type exports every slide as its own picture, PNG or JPEG (#2019).
+#[test]
+fn change_file_type_exports_all_slides_as_pictures() {
+    let dir = temp_dir("all-slides");
+    let (services, asked) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    let title = h.state().session.active().unwrap().title();
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Change File Type");
+    h.run_steps(3);
+    click_on_page(&h, "JPEG Pictures, all slides (*.jpg)");
+    h.run_steps(2);
+    assert!(h.query_by_label("Transparent background").is_none(), "JPEG has no transparency");
+    click_on_page(&h, "Save As");
+    h.run_steps(3);
+    for k in 1..=3 {
+        let jpg = std::fs::read(dir.join(format!("{title}{k}.jpg"))).unwrap();
+        assert!(jpg.starts_with(&[0xFF, 0xD8]), "slide {k} is a JPEG");
+    }
+    assert!(!dir.join(format!("{title}4.jpg")).exists(), "one picture per slide");
+
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Change File Type");
+    h.run_steps(3);
+    click_on_page(&h, "PNG Pictures, all slides (*.png)");
+    h.run_steps(2);
+    h.get_by_label("Transparent background").click();
+    h.run_steps(2);
+    click_on_page(&h, "Save As");
+    h.run_steps(3);
+    for k in 1..=3 {
+        let png = std::fs::read(dir.join(format!("{title}{k}.png"))).unwrap();
+        let img = deckcraft_render::decode_image(&png).unwrap();
+        assert_eq!(img.get_pixel(2, 2).0[3], 0, "slide {k} leaves the background out");
+    }
+    assert_eq!(*asked.borrow(), vec![format!("{title}.jpg"), format!("{title}.png")]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Save As shows every type in its open list: the last one is picked by a click, not hidden
+/// below the list's default height (#2019).
+#[test]
+fn save_as_type_list_shows_every_type() {
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Save as type").click();
+    h.run_steps(3);
+    let (last, label, _) = crate::backstage::SAVE_TYPES[crate::backstage::SAVE_TYPES.len() - 1];
+    h.get_by_label(label).click();
+    h.run_steps(3);
+    assert_eq!(h.state().backstage.as_ref().map(|b| b.file_type), Some(last));
+}
+
 /// Close closes a saved presentation at once and asks about unsaved changes first.
 #[test]
 fn close_closes_and_asks_about_unsaved_changes() {
@@ -889,7 +947,8 @@ fn exiting_file_keeps_paint_but_cannot_close_the_presentation() {
 #[ignore = "writes screenshots for visual review"]
 fn file_transition_screenshots() {
     let _gpu = crate::gpu_lock::gpu_lock();
-    std::fs::create_dir_all("/private/tmp/deckcraft-ui-review").unwrap();
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plan/ui-review");
+    std::fs::create_dir_all(&output).unwrap();
     for (name, brightness) in [("light", crate::theme::Brightness::Light), ("dark", crate::theme::Brightness::Dark)] {
         let mut app = new_app();
         app.ui.brightness = brightness;
@@ -897,21 +956,21 @@ fn file_transition_screenshots() {
         h.run_steps(20);
         h.event(egui::Event::PointerMoved(egui::pos2(100.0, 130.0)));
         h.run_steps(20);
-        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-ribbon.png")).unwrap();
+        h.render().unwrap().save(output.join(format!("{name}-ribbon.png"))).unwrap();
         h.state_mut().open_backstage(Page::Open);
         h.run_steps(5);
-        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-entry.png")).unwrap();
+        h.render().unwrap().save(output.join(format!("{name}-entry.png"))).unwrap();
         h.run_steps(20);
         h.state_mut().open_backstage(Page::New);
         h.run_steps(5);
-        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-new.png")).unwrap();
+        h.render().unwrap().save(output.join(format!("{name}-new.png"))).unwrap();
         h.run_steps(20);
         h.state_mut().open_backstage(Page::Print);
         h.run_steps(20);
-        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-print.png")).unwrap();
+        h.render().unwrap().save(output.join(format!("{name}-print.png"))).unwrap();
         h.state_mut().close_backstage();
         h.run_steps(5);
-        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-exit.png")).unwrap();
+        h.render().unwrap().save(output.join(format!("{name}-exit.png"))).unwrap();
     }
 }
 
@@ -965,6 +1024,42 @@ fn ribbon_tab_transition_screenshots() {
     }
 }
 
+/// A double-click must preserve the original collapse behavior on active and inactive tabs.
+#[test]
+fn double_clicking_a_ribbon_tab_leaves_the_ribbon_collapsed() {
+    for tab in ["Home", "Insert"] {
+        let mut h = harness_with_dt(new_app(), 1.0 / 60.0);
+        h.run_steps(20);
+        // The title bar also has a Home button; the ribbon tab is below it.
+        let pos = h.query_all_by_label(tab).find(|n| n.rect().top() > 40.0).unwrap().rect().center();
+        h.hover_at(pos);
+        h.step();
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+                h.step();
+            }
+        }
+        h.run_steps(20);
+        assert!(h.state().ui.ribbon_collapsed, "double-clicking {tab} should collapse the card");
+        assert_eq!(h.state().ui.tab, tab);
+        assert!(h.query_by_label("Cut").is_none());
+        assert!(h.query_by_label("Table").is_none());
+    }
+}
+
+#[test]
+fn selected_sidebar_items_keep_their_outline_without_a_new_fill() {
+    let ctx = egui::Context::default();
+    let bs = Backstage::new(Page::Home, (1, Some(1)));
+    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        super::nav_item(ui, Nav::Page(Page::Home), &bs, 0, &crate::theme::Tokens::light());
+    });
+    out.textures_delta.clear();
+    assert!(!out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r)
+        if r.rect.width() == NAV_W - 12.0 && r.rect.height() == super::ITEM_H - 2.0 && r.fill.a() > 0)));
+}
+
 /// A single click hides the card, keeps tabs available, and any tab brings it back.
 #[test]
 fn ribbon_single_click_slides_closed_and_open() {
@@ -972,21 +1067,21 @@ fn ribbon_single_click_slides_closed_and_open() {
     h.run_steps(20);
     let canvas_top = |h: &Harness<'_, SlideApp>| h.state().canvas_rect.unwrap().top();
     let expanded = canvas_top(&h);
-    h.get_by_label("Home").click();
+    h.query_all_by_label("Home").find(|n| n.rect().top() > 40.0).unwrap().click();
     h.step();
     assert!(h.state().ui.ribbon_collapsed);
     h.run_steps(4);
     assert!(canvas_top(&h) < expanded, "panel height shrinks while the card slides up");
     h.run_steps(20);
     assert!(h.query_by_label("Cut").is_none());
-    h.get_by_label("Home").click();
+    h.query_all_by_label("Home").find(|n| n.rect().top() > 40.0).unwrap().click();
     h.step();
     assert!(!h.state().ui.ribbon_collapsed);
     h.run_steps(4);
     let entering = canvas_top(&h);
     h.run_steps(20);
     assert!(entering < canvas_top(&h), "panel height grows while the card slides down");
-    h.get_by_label("Home").click();
+    h.query_all_by_label("Home").find(|n| n.rect().top() > 40.0).unwrap().click();
     h.run_steps(20);
     h.get_by_label("Insert").click();
     h.run_steps(20);
@@ -1041,7 +1136,7 @@ fn ribbon_reveal_screenshots() {
         let mut h = harness_with_dt(app, 1.0 / 60.0);
         h.run_steps(20);
         h.render().unwrap().save(output.join(format!("{name}-expanded.png"))).unwrap();
-        h.get_by_label("Home").click();
+        h.query_all_by_label("Home").find(|n| n.rect().top() > 40.0).unwrap().click();
         h.run_steps(4);
         h.render().unwrap().save(output.join(format!("{name}-closing.png"))).unwrap();
         h.run_steps(20);

@@ -47,17 +47,26 @@ pub(crate) fn paint(painter: &Painter, first: usize, file: bool, animate: bool, 
     let rect = ctx.content_rect();
     let scale = ctx.pixels_per_point();
     let now = ctx.input(|i| i.time);
-    let mut live = Vec::new();
-    let mut index = 0;
-    painter.for_each_shape(|s| {
-        if index >= first && live.len() < MAX_SHAPES {
-            live.push(s.clone());
-        }
-        index += 1;
-    });
     let previous = ctx.data(|d| d.get_temp::<Screen>(id));
     // Text meshes depend on pixel density; old geometry also does not fit a resized window.
     let previous = previous.filter(|s| s.rect == rect && s.scale == scale);
+    // Keep a fresh snapshot for commands that can open File between any two frames, but do not
+    // allocate or clone the paint again while the screen is unchanged and no transition runs.
+    if let Some(previous) = &previous
+        && previous.file == file
+        && previous.leaving.is_none()
+        && same_paint(painter, first, &previous.presented)
+    {
+        return;
+    }
+    let mut live = Vec::new();
+    visit_live(painter, first, |shape, source| {
+        live.push(ClippedShape {
+            clip_rect: source.clip_rect,
+            shape: shape.clone(),
+            transform_after_tessellation: source.transform_after_tessellation,
+        });
+    });
     let mut screen = Screen { file, rect, scale, presented: Arc::new(Vec::new()), leaving: None, start: now };
     if let Some(previous) = previous {
         if previous.file != file {
@@ -78,14 +87,19 @@ pub(crate) fn paint(painter: &Painter, first: usize, file: bool, animate: bool, 
                     continue;
                 }
                 let mut faded = s.clone();
-                faded.shape.translate(offset);
-                faded.clip_rect = faded.clip_rect.translate(offset).intersect(rect);
+                faded.transform(egui::emath::TSTransform::from_translation(offset));
+                faded.clip_rect = faded.clip_rect.intersect(rect);
                 egui::epaint::shape_transform::adjust_colors(&mut faded.shape, move |c| {
                     if *c != egui::Color32::PLACEHOLDER {
                         *c = c.gamma_multiply(1.0 - eased);
                     }
                 });
-                painter.with_clip_rect(faded.clip_rect).add(faded.shape.clone());
+                let slot = painter.with_clip_rect(faded.clip_rect).add(faded.shape.clone());
+                ctx.graphics_mut(|graphics| {
+                    graphics.entry(painter.layer_id()).mutate_shape(slot, |shape| {
+                        shape.transform_after_tessellation = faded.transform_after_tessellation;
+                    });
+                });
                 live.push(faded);
             }
             ctx.request_repaint();
@@ -96,6 +110,47 @@ pub(crate) fn paint(painter: &Painter, first: usize, file: bool, animate: bool, 
     // Keep the composed frame so reversing the transition starts from what was actually visible.
     screen.presented = Arc::new(live);
     ctx.data_mut(|d| d.insert_temp(id, screen));
+}
+
+/// Flatten groups before cloning: the budget covers containers and leaves together, and a deep
+/// or wide group cannot hide unbounded recursive work behind one top-level shape.
+fn visit_live(painter: &Painter, first: usize, mut visit: impl FnMut(&Shape, &ClippedShape)) {
+    let mut budget = MAX_SHAPES;
+    let mut index = 0;
+    painter.for_each_shape(|s| {
+        if index >= first {
+            visit_shape(&s.shape, s, 0, &mut budget, &mut visit);
+        }
+        index += 1;
+    });
+}
+
+fn visit_shape(shape: &Shape, source: &ClippedShape, depth: usize, budget: &mut usize, visit: &mut impl FnMut(&Shape, &ClippedShape)) {
+    if *budget == 0 || depth > 16 {
+        return;
+    }
+    *budget -= 1;
+    match shape {
+        Shape::Vec(shapes) => {
+            for shape in shapes.iter().take(*budget) {
+                visit_shape(shape, source, depth + 1, budget, visit);
+            }
+        }
+        Shape::Callback(_) => {}
+        _ => visit(shape, source),
+    }
+}
+
+fn same_paint(painter: &Painter, first: usize, cached: &[ClippedShape]) -> bool {
+    let mut index = 0;
+    let mut equal = true;
+    visit_live(painter, first, |shape, source| {
+        equal &= cached.get(index).is_some_and(|old| {
+            old.clip_rect == source.clip_rect && old.transform_after_tessellation == source.transform_after_tessellation && old.shape == *shape
+        });
+        index += 1;
+    });
+    equal && index == cached.len()
 }
 
 /// Skip backend callbacks and expired textures; bound traversal of nested paint groups.
@@ -210,5 +265,56 @@ mod tests {
         assert!(replayable(&ctx, &shape, 0));
         drop(texture);
         assert!(!replayable(&ctx, &shape, 0));
+    }
+
+    #[test]
+    fn unchanged_frames_reuse_the_snapshot_but_changed_paint_refreshes_it() {
+        let ctx = egui::Context::default();
+        let id = id(&ctx);
+        frame(&ctx, false, 0.0, true, 800.0);
+        let saved = ctx.data(|d| d.get_temp::<Screen>(id)).unwrap().presented;
+        frame(&ctx, false, 1.0, true, 800.0);
+        let same = ctx.data(|d| d.get_temp::<Screen>(id)).unwrap().presented;
+        assert!(Arc::ptr_eq(&saved, &same), "steady frames must not clone or allocate a new snapshot");
+        frame(&ctx, false, 2.0, true, 900.0);
+        let resized = ctx.data(|d| d.get_temp::<Screen>(id)).unwrap().presented;
+        assert!(!Arc::ptr_eq(&same, &resized));
+    }
+
+    #[test]
+    fn nested_paint_counts_against_the_budget_before_cloning() {
+        let leaf = Shape::rect_filled(Rect::from_min_size(Pos2::ZERO, vec2(10.0, 10.0)), 0.0, EDITOR);
+        let wide = Shape::Vec(vec![leaf.clone(); MAX_SHAPES * 2]);
+        let shape = Shape::Vec(vec![wide, leaf.clone()]);
+        let mut budget = MAX_SHAPES;
+        let mut leaves = 0;
+        let source = ClippedShape::new(Rect::EVERYTHING, Shape::Noop);
+        visit_shape(&shape, &source, 0, &mut budget, &mut |_, _| leaves += 1);
+        assert_eq!(budget, 0);
+        assert_eq!(leaves, MAX_SHAPES - 2, "both containers use a budget slot");
+        let deep = (0..32).fold(leaf, |shape, _| Shape::Vec(vec![shape]));
+        let mut budget = MAX_SHAPES;
+        visit_shape(&deep, &source, 0, &mut budget, &mut |_, _| panic!("deep paint must be skipped"));
+        assert_eq!(budget, MAX_SHAPES - 17);
+    }
+
+    #[test]
+    fn flattening_and_replay_preserve_post_tessellation_transforms() {
+        let ctx = egui::Context::default();
+        let transform = egui::emath::TSTransform::from_translation(vec2(3.0, 4.0));
+        let raw = RawInput { time: Some(0.0), screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), ..Default::default() };
+        ctx.run_ui(raw, |ui| {
+            let first = shape_count(ui.painter());
+            let slot = ui.painter().add(Shape::Vec(vec![Shape::rect_filled(ui.max_rect(), 0.0, EDITOR)]));
+            ctx.graphics_mut(|g| g.entry(ui.layer_id()).mutate_shape(slot, |s| s.transform_after_tessellation = transform));
+            paint(ui.painter(), first, false, true, false);
+        })
+        .drop_without_applying_deltas();
+        let id = id(&ctx);
+        let saved = ctx.data(|d| d.get_temp::<Screen>(id)).unwrap().presented;
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].transform_after_tessellation, transform);
+        let entering = frame(&ctx, true, 1.0, true, 800.0);
+        assert_eq!(entering.last().unwrap().transform_after_tessellation, transform);
     }
 }

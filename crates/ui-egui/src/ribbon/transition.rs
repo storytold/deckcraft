@@ -119,9 +119,10 @@ pub(super) fn reveal(ctx: &egui::Context, collapsed: bool, now: f64, animate: bo
 
 /// Coordinate input must wait until both the tab entry and the card's vertical motion settle.
 pub(crate) fn moving(ctx: &egui::Context, now: f64) -> bool {
+    let viewport = ctx.viewport_id();
     ctx.data(|d| {
-        let tab = d.get_temp::<TabChange>(egui::Id::unique(("ribbon_tab_change", ctx.viewport_id())));
-        let card = d.get_temp::<Reveal>(egui::Id::unique(("ribbon_reveal", ctx.viewport_id())));
+        let tab = d.get_temp::<TabChange>(egui::Id::unique(("ribbon_tab_change", viewport)));
+        let card = d.get_temp::<Reveal>(egui::Id::unique(("ribbon_reveal", viewport)));
         tab.is_some_and(|t| t.dir != 0.0 && now - t.start < CONTENT_SWITCH_SECS)
             || card.is_some_and(|r| r.from != r.to && now - r.start < REVEAL_SECS)
     })
@@ -130,6 +131,35 @@ pub(crate) fn moving(ctx: &egui::Context, now: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queued_coordinates_wait_and_already_injected_coordinates_are_retracted() {
+        for injected in [false, true] {
+            let ctx = egui::Context::default();
+            let mut app = crate::SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+            app.ui.tab = "Insert".into();
+            app.queue_input(egui::Event::PointerMoved(egui::pos2(150.0, 100.0)));
+            let mut raw = egui::RawInput { time: Some(1.0), ..Default::default() };
+            if injected {
+                app.raw_input_hook(&ctx, &mut raw);
+                assert_eq!(raw.events.len(), 1);
+            }
+            tab_content_entry(&ctx, "Home", 0, 0.0, true);
+            tab_content_entry(&ctx, "Insert", 1, 1.0, true);
+            raw.time = Some(1.04);
+            app.raw_input_hook(&ctx, &mut raw);
+            assert!(raw.events.is_empty(), "coordinates cannot reach a moving tab, injected={injected}");
+            if injected {
+                assert!(app.synthetic.is_empty(), "the stale injected coordinates are discarded");
+                app.queue_input(egui::Event::PointerMoved(egui::pos2(150.0, 100.0)));
+            } else {
+                assert!(!app.synthetic.is_empty(), "uninjected coordinates wait for settled geometry");
+            }
+            raw.time = Some(1.3);
+            app.raw_input_hook(&ctx, &mut raw);
+            assert_eq!(raw.events.len(), 1, "settled ribbon input still works");
+        }
+    }
 
     fn underline(ctx: &egui::Context, tab: &str, x: f32, time: f64, animate: bool) -> egui::Rect {
         let mut out = ctx.run_ui(egui::RawInput { time: Some(time), ..Default::default() }, |ui| {

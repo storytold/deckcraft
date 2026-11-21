@@ -1,9 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** trivial (File and ribbon transitions; animated single-click ribbon collapse; queued-click motion guard; per-theme motion restoration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-
-
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-21 · **Change:** trivial (motion review fixes and compatibility with current main; File › Export › Change File Type and Save As export every slide as PNG or JPEG, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -60,10 +57,10 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Open | Recent, Shared with Me, OneDrive, This PC, Add a Place, Browse; Presentations / Folders; Recover Unsaved Presentations | Recent and Browse (`app.openDialog`), recent presentations with a search box (`file.open`), Recover Unsaved Presentations (`file.recovery.open`). No cloud places or Folders tab |
 | Info | Name and path, Upload / Share / Copy path / Open file location; Protect, Inspect, Version History, Manage Presentation; Properties, Related Dates, Related People | Name and path, Copy path, Open file location; Inspect Presentation (Accessibility Checker), Manage Presentation (Revert); Size, Slides, Hidden slides and editable Title, Subject, Tags, Categories, Company, Comments, Author (`file.info`, `file.properties`). No Protect, Version History or dates |
 | Save | Saves; a presentation never saved goes to Save As | Same (`file.save`) |
-| Save As | Places, folder, file name, type, Save, More options | Type (PowerPoint, DeckCraft, PDF, Outline, PNG, JPEG) and Save, which opens the system Save dialog (web: Download). .pptx/.deckcraft take the new file; the others are copies (`file.saveAs`, `file.export`) |
+| Save As | Places, folder, file name, type, Save, More options | Type (PowerPoint, DeckCraft, PDF, Outline, PNG, JPEG, and PNG or JPEG of every slide, #2019) and Save, which opens the system Save dialog (web: Download). .pptx/.deckcraft take the new file; the others are copies (`file.saveAs`, `file.export`) |
 | Print | Print and Copies, Printer, Print All / Selection / Current / Custom Range, Slides box, layout (Full Page Slides, Notes Pages, Outline, Handouts 1–9), sides, collation, colour, Edit Header & Footer; page preview with pager and zoom | Print, Print All Slides / Current Slide / Custom Range, Slides box (`1-3, 5`), Full Page Slides / Notes Pages / Handouts 1–9, Print Hidden Slides, Frame Slides, Edit Header & Footer; preview with pager. DeckCraft prints through a PDF (`file.export`) opened in the system viewer, which has the printers (web: downloaded). No printer list, copies, sides or colour |
 | Share | Cloud sharing | Not offered |
-| Export | Create PDF/XPS Document, Create a Video, Create an Animated GIF, Package Presentation for CD, Create Handouts, Change File Type | Create PDF Document, Create Handouts (a PDF), Change File Type (PNG with an optional transparent background, #784). No video, GIF or CD package |
+| Export | Create PDF/XPS Document, Create a Video, Create an Animated GIF, Package Presentation for CD, Create Handouts, Change File Type | Create PDF Document, Create Handouts (a PDF), Change File Type (PNG or JPEG of the current slide or of every slide, #2019; PNG with an optional transparent background, #784). No video, GIF or CD package |
 | Close | Closes; asks Save / Don't Save / Cancel about unsaved changes | Same (`file.close` after the prompt); Ctrl+W asks too |
 | Account | User information, sign-in, Office Background and Office Theme, product information, About | About: product information, project links, contributor/model credits and appearance (light/dark, `view.dark`). No Account entry |
 | Options | Opens the PowerPoint Options dialog | Opens Preferences |
@@ -175,12 +172,14 @@ consistency is open (#73, #56).
 ## File transitions and ribbon highlights
 
 Adapted from [WordCraft #6643](https://github.com/storytold/wordcraft/pull/6643).
-File pages fade in from 30% opacity and lift 10 pt over 180 ms. Sidebar hover and selection
-fills fade in place. Entering and leaving File retains only the outgoing screen's paint for a
+File pages fade in from 30% opacity and lift 10 pt over 180 ms. Sidebar hover fills fade in
+place; selection keeps its existing outline. Entering and leaving File retains only the outgoing screen's paint for a
 220 ms crossfade and a short slide toward the navigation edge. Its buttons and accessibility
 nodes are not retained. Rapid reversal starts from the composed frame. Each viewport keeps its
 own state; resize, DPI changes and reduced motion discard cached paint, and released textures
-are skipped. Closing or replacing the active presentation during layout disables replay.
+are skipped. Unchanged frames reuse their cached snapshot without cloning its shapes again.
+The 4096-node cache budget counts nested containers and leaves; groups are flattened with a
+16-level depth limit before cloning. Closing or replacing the active presentation during layout disables replay.
 
 Switching upper ribbon tabs follows WordCraft: incoming content fades from 20% opacity and
 slides 14 pt from the side of the selected tab over 160 ms; the accent underline glides to the
@@ -193,7 +192,8 @@ and changes the panel height over 200 ms, reversing from its current position on
 Closing controls are disabled and clipped to the visible card. Reduced motion settles the height
 immediately. Synthetic coordinate input waits for ribbon motion to settle; an already injected
 batch is retracted if motion begins before delivery. Each theme restores its own animation duration
-after the host reenables motion.
+after the host reenables motion. Double-clicking an active or inactive tab leaves the ribbon
+collapsed, preserving the earlier double-click behavior.
 
 Ribbon groups have an inset accent glow at their lower edge, peaking at 20% opacity and fading
 to transparent on all four edges, including a 2 pt tail in the ribbon padding. Both themes use
@@ -205,6 +205,8 @@ These visual choices do not change PowerPoint parity scores.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-21 | trivial | Resolve current-main conflicts and motion review findings; readiness unchanged. |
+| 2026-11-10 | trivial | Change File Type and Save As export every slide as PNG or JPEG (#2019); scores unchanged |
 | 2026-11-14 | trivial | Single-click ribbon slide in/out with reversal, queued coordinate-input motion guard, per-theme animation-duration restoration; parity scores unchanged. |
 | 2026-11-14 | trivial | File/editor crossfade, page fade/lift, sliding ribbon tab content and underline, animated side-menu feedback and feathered ribbon hover; system reduced motion; parity scores unchanged. |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
