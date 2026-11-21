@@ -89,6 +89,25 @@ fn scheme(app: &SlideApp) -> deckcraft_color::ColorScheme {
     app.session.active().and_then(|d| d.doc.masters.first().map(|m| m.scheme())).unwrap_or_else(|| deckcraft_model::Theme::default().colors)
 }
 
+/// The color scheme of the page being edited: the scheme of the master a slide uses, with its
+/// color map, or of the master or layout open in Slide Master view. Falls back to [`scheme`].
+fn edited_scheme(app: &SlideApp) -> deckcraft_color::ColorScheme {
+    use deckcraft_engine::Target;
+    use deckcraft_model::resolve::Ctx;
+    let edited = app.session.active().and_then(|d| {
+        let doc = &d.doc;
+        match d.selection.target {
+            Target::Slides => doc.slides.get(d.selection.slide).and_then(|s| Ctx::for_slide(doc, s)).map(|c| c.scheme),
+            Target::Master { master } => doc.masters.get(master).map(|m| m.scheme()),
+            Target::Layout { master, layout } => {
+                doc.masters.get(master).and_then(|m| m.layouts.get(layout).map(|l| Ctx::for_layout(doc, m, l).scheme))
+            }
+            t @ (Target::Handout | Target::NotesMaster) => deckcraft_engine::page_master(doc, t).map(|m| m.scheme()),
+        }
+    });
+    edited.unwrap_or_else(|| scheme(app))
+}
+
 fn color_button(
     app: &mut SlideApp,
     ui: &mut Ui,
@@ -142,6 +161,32 @@ mod tests {
     use super::{fill_transparency_to_apply, solid_fill_transparency_percent};
     use crate::{Services, SlideApp};
 
+    /// The fill panels resolve colors in the scheme of the master the edited slide uses, not the
+    /// first master's.
+    #[test]
+    fn edited_scheme_is_the_scheme_of_the_slides_master() {
+        use deckcraft_color::Rgba;
+        let half_red = Rgba::rgba(255, 0, 0, 128);
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.edit(|doc, sel| {
+            let mut m = (*doc.masters[0]).clone();
+            m.id = deckcraft_model::MasterId(m.id.0 + 1000);
+            for l in &mut m.layouts {
+                l.id = deckcraft_model::LayoutId(l.id.0 + 10_000);
+            }
+            m.theme.colors.set(SchemeSlot::Accent1, half_red);
+            let layout = m.layouts[0].id;
+            doc.masters.push(std::sync::Arc::new(m));
+            std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).layout = layout;
+            Ok(())
+        })
+        .unwrap();
+        let app = SlideApp::new(s, Services::default());
+        assert_ne!(super::scheme(&app).get(SchemeSlot::Accent1), half_red);
+        assert_eq!(super::edited_scheme(&app).get(SchemeSlot::Accent1), half_red);
+    }
+
     #[test]
     fn solid_fill_transparency_reads_the_alpha_shape_fill_writes() {
         assert_eq!(solid_fill_transparency_percent(None), 0.0);
@@ -164,6 +209,40 @@ mod tests {
         assert_eq!(fill_transparency_to_apply(f32::NAN, 40.0), None);
         assert_eq!(fill_transparency_to_apply(55.0, 40.0), Some(0.55));
         assert_eq!(fill_transparency_to_apply(0.0, 40.0), Some(0.0));
+    }
+
+    /// The Fill slider shows every alpha a fill draws with: an RGB color's alpha byte, `alphaMod`
+    /// and `alphaOff`, and the alpha of the color an automatic fill inherits. A move to 0% is then a
+    /// change that the pane sends to `shape.fill`.
+    #[test]
+    fn fill_transparency_slider_shows_every_alpha_the_fill_draws_with() {
+        let inherited = |s: &mut Session| {
+            s.edit(|doc, sel| {
+                let id = sel.shapes[0];
+                let sh = std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).shape_mut(id).unwrap();
+                sh.style.as_mut().unwrap().fill_ref.1 = ColorRef::scheme(SchemeSlot::Accent1).with(ColorTransform::Alpha(50_000));
+                Ok(())
+            })
+            .unwrap();
+        };
+        let mut failures = vec![];
+        for (name, fill) in [
+            ("alpha byte", Some(json!({"color": "#ff000080"}))),
+            ("alphaMod", Some(json!({"color": {"rgb": "#ff0000", "alphaMod": 50_000}}))),
+            ("alphaOff", Some(json!({"color": {"rgb": "#ff0000", "alphaOff": -50_000}}))),
+            ("inherited", None),
+        ] {
+            let mut h = fill_pane(fill.clone());
+            if fill.is_none() {
+                inherited(&mut h.state_mut().session);
+                h.run_steps(3);
+            }
+            let shown = slider_values(&h);
+            if !shown.iter().any(|v| (*v - 50.0).abs() < 0.6) {
+                failures.push(format!("{name}: shows {shown:?}, not 50%"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     fn solid_alpha(app: &SlideApp, id: u32) -> Option<i32> {

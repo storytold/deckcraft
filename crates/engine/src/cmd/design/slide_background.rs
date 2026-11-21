@@ -234,11 +234,7 @@ fn set_picture_transparency(pf: &mut deckcraft_model::style::PictureFill, t: f64
 }
 
 fn set_solid_transparency(color: &mut deckcraft_model::ColorRef, t: f64) {
-    color.mods.retain(|m| !matches!(m, deckcraft_color::ColorTransform::Alpha(_)));
-    let t = t.clamp(0.0, 1.0);
-    if t > 0.0 {
-        color.mods.push(deckcraft_color::ColorTransform::Alpha(((1.0 - t) * 100_000.0).round() as i32));
-    }
+    color.set_alpha(1.0 - t.clamp(0.0, 1.0));
 }
 
 /// Picture-fill options for Format Background (tile, offsets, scale, alignment, mirror, stretch).

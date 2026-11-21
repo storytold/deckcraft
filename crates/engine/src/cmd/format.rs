@@ -4,7 +4,7 @@
 use deckcraft_model::edit as ed;
 use deckcraft_model::resolve;
 use deckcraft_model::text::{Align, Anchor, AutoFit, Bullet, Caps, ParaProps, RunProps, Spacing, Strike, TabStop, TextDir};
-use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot, Shape, ShapeKind};
+use deckcraft_model::{ColorRef, Effects, Fill, Line, SchemeSlot, Shape, ShapeKind};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -421,6 +421,101 @@ mod tests {
         assert_eq!(params["bold"], false);
         assert!(params["family"].as_str().is_some_and(|f| !f.is_empty()));
         assert!(params["size"].as_f64().is_some_and(|n| n > 0.0));
+    }
+
+    /// The Font dialog opens with the alpha of an RGB text color, so OK keeps the transparency.
+    #[test]
+    fn font_dialog_keeps_the_alpha_byte_of_the_text_color() {
+        let mut s = shape();
+        s.execute("format.color", &json!({"color": "#ff000080"})).unwrap();
+        s.ui_requests.clear();
+        s.execute("format.fontDialog", &json!({})).unwrap();
+        let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
+        assert_eq!(params["color"], json!("#FF000080"));
+    }
+
+    /// OK in the Font dialog with only the size changed leaves a system or preset text color,
+    /// its transparency included, as it was.
+    #[test]
+    fn font_dialog_ok_keeps_a_system_or_preset_color_and_its_transparency() {
+        for color in [json!({"system": "windowText", "last": "#000000"}), json!({"preset": "red"})] {
+            let mut s = shape();
+            s.execute("format.color", &json!({"color": color})).unwrap();
+            s.execute("format.textTransparency", &json!({"value": 0.4})).unwrap();
+            let before = props(&s).fill;
+            s.ui_requests.clear();
+            s.execute("format.fontDialog", &json!({})).unwrap();
+            let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
+            let sent = params["color"].clone();
+            s.execute("format.fontDialog", &json!({"size": 30, "color": sent})).unwrap();
+            assert_eq!(props(&s).fill, before, "{color}");
+        }
+    }
+
+    /// OK in the Font dialog with only the size changed keeps a text color whose transforms repeat,
+    /// have no value or come in an order other than key order.
+    #[test]
+    fn font_dialog_ok_keeps_every_transform_of_the_text_color() {
+        use deckcraft_color::ColorTransform::{AlphaMod, Gray, LumMod, Shade};
+        for mods in [vec![AlphaMod(50000), AlphaMod(50000)], vec![Gray], vec![Shade(50000), LumMod(75000)]] {
+            let mut s = shape();
+            let color = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: mods.clone() };
+            format_run(&mut s, &move |r| r.fill = Some(Fill::solid(color.clone()))).unwrap();
+            let before = props(&s).fill;
+            s.ui_requests.clear();
+            s.execute("format.fontDialog", &json!({})).unwrap();
+            let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
+            let sent = params["color"].clone();
+            s.execute("format.fontDialog", &json!({"size": 30, "color": sent})).unwrap();
+            assert_eq!(props(&s).fill, before, "{mods:?}");
+            assert_eq!(props(&s).size, Some(30.0));
+        }
+    }
+
+    /// A color sent to the Font dialog replaces the run's color, even when the run's transforms
+    /// repeat that color's one transform.
+    #[test]
+    fn font_dialog_color_replaces_repeated_transforms() {
+        use deckcraft_color::ColorTransform::AlphaMod;
+        let mut s = shape();
+        format_run(&mut s, &|r| {
+            r.fill = Some(Fill::solid(ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![AlphaMod(50000), AlphaMod(50000)] }))
+        })
+        .unwrap();
+        s.execute("format.fontDialog", &json!({"size": 30, "color": {"preset": "red", "alphaMod": 50000}})).unwrap();
+        let want = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![AlphaMod(50000)] };
+        assert_eq!(props(&s).fill, Some(Fill::solid(want)));
+    }
+
+    /// A preset name the color parser does not know opens in the Font dialog as the color it draws
+    /// with, so OK applies it.
+    #[test]
+    fn font_dialog_ok_accepts_an_unknown_preset_name() {
+        use deckcraft_color::ColorTransform::AlphaMod;
+        for mods in [vec![], vec![AlphaMod(50000)]] {
+            let mut s = shape();
+            let color = ColorRef { base: ColorBase::Preset { name: "notAColor".into() }, mods: mods.clone() };
+            format_run(&mut s, &move |r| r.fill = Some(Fill::solid(color.clone()))).unwrap();
+            s.ui_requests.clear();
+            s.execute("format.fontDialog", &json!({})).unwrap();
+            let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
+            let sent = params["color"].clone();
+            s.execute("format.fontDialog", &json!({"size": 30, "color": sent})).unwrap();
+            let want = ColorRef { base: ColorBase::Rgb { rgb: deckcraft_color::Rgba::BLACK }, mods };
+            assert_eq!(props(&s).fill, Some(Fill::solid(want)));
+            assert_eq!(props(&s).size, Some(30.0));
+        }
+    }
+
+    /// `mods` must list `[name, value]` pairs of known transforms.
+    #[test]
+    fn font_dialog_rejects_a_bad_mods_list() {
+        for mods in [json!("alphaMod"), json!([["alphaMod"]]), json!([["nope", 1]]), json!([["alphaMod", "x"]])] {
+            let mut s = shape();
+            let before = props(&s);
+            assert!(s.execute("format.fontDialog", &json!({"color": {"preset": "red", "mods": mods}})).is_err(), "{mods}");
+            assert_eq!(props(&s), before);
+        }
     }
 
     #[test]

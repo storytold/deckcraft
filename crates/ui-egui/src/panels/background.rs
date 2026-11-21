@@ -1,7 +1,7 @@
-use super::{Fill, SlideApp, Ui, Value, cref_param, json, run, scheme, theme, vec2, widgets};
+use super::{Fill, SlideApp, Ui, Value, cref_param, edited_scheme, json, run, theme, vec2, widgets};
 
 pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
-    let sc = scheme(app);
+    let sc = edited_scheme(app);
     let bg = app.session.active().and_then(|d| d.current_slide().and_then(|s| s.background.clone()));
     let fill = match &bg {
         Some(deckcraft_model::Background::Fill { fill }) => Some(fill.clone()),

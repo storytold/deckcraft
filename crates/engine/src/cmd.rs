@@ -377,7 +377,8 @@ pub(crate) fn ok() -> Result<Value> {
 
 /// Parse a colour param: `"#RRGGBB"`, `"accent1"`…, or `{"scheme":"accent2","lumMod":75000}`.
 /// A preset or system colour keeps its base: `{"preset":"red"}`,
-/// `{"system":"windowText","last":"#000000"}`.
+/// `{"system":"windowText","last":"#000000"}`. `"mods"` lists transforms in order:
+/// `{"preset":"red","mods":[["alphaMod",50000],["alphaMod",50000]]}`.
 pub(crate) fn color_param(p: &Value, key: &str) -> Option<deckcraft_model::ColorRef> {
     let v = p.get(key)?;
     color_value(v)
@@ -415,6 +416,14 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
             for (k, val) in o {
                 if let Some(t) = deckcraft_color::ColorTransform::from_xml(k, val.as_i64().and_then(|x| i32::try_from(x).ok())) {
                     c.mods.push(t);
+                }
+            }
+            // `"mods": [["alphaMod", 50000], ["gray", null]]` adds transforms in order, repeats included.
+            if let Some(list) = o.get("mods") {
+                for m in list.as_array()? {
+                    let [name, val] = m.as_array()?.as_slice() else { return None };
+                    let val = if val.is_null() { None } else { Some(val.as_i64().and_then(|x| i32::try_from(x).ok())?) };
+                    c.mods.push(deckcraft_color::ColorTransform::from_xml(name.as_str()?, val)?);
                 }
             }
             Some(c)

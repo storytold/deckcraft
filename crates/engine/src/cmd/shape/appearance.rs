@@ -433,7 +433,7 @@ pub(super) fn effects(s: &mut Session, p: &Value) -> Result<Value> {
                 x.color = with_alpha(c, a);
             }
             if let Some(t) = num(v, "transparency") {
-                x.color = with_alpha(x.color.clone(), 1.0 - t.clamp(0.0, 1.0));
+                x.color.set_alpha(1.0 - t.clamp(0.0, 1.0));
             }
             if let Some(b) = num(v, "blur") {
                 x.blur = b.clamp(0.0, 100.0);
@@ -460,7 +460,7 @@ pub(super) fn effects(s: &mut Session, p: &Value) -> Result<Value> {
                 g.color = with_alpha(c, a);
             }
             if let Some(t) = num(v, "transparency") {
-                g.color = with_alpha(g.color.clone(), 1.0 - t.clamp(0.0, 1.0));
+                g.color.set_alpha(1.0 - t.clamp(0.0, 1.0));
             }
             if let Some(r) = num(v, "radius") {
                 g.radius = r.clamp(0.0, 150.0);
@@ -499,12 +499,9 @@ fn num(v: &Value, key: &str) -> Option<f64> {
     v.get(key).and_then(Value::as_f64).filter(|x| x.is_finite())
 }
 
-/// `c` with its alpha set to `a` (0–1); fully opaque drops the transform.
+/// `c` with its alpha set to `a` (0–1), replacing every alpha it had.
 fn with_alpha(mut c: ColorRef, a: f64) -> ColorRef {
-    c.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_)));
-    if a < 1.0 {
-        c.mods.push(ColorTransform::Alpha((a.clamp(0.0, 1.0) * 100_000.0).round() as i32));
-    }
+    c.set_alpha(a);
     c
 }
 
