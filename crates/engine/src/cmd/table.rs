@@ -1,7 +1,7 @@
 //! Table Design and Table Layout tabs.
 
 use deckcraft_geom::{Affine, Point, Rect};
-use deckcraft_model::{Shape, ShapeKind, Table};
+use deckcraft_model::{Cell, Shape, ShapeKind, Table};
 use serde_json::{Value, json};
 
 use super::{
@@ -24,18 +24,24 @@ pub fn specs() -> Vec<CommandSpec> {
             "rowBelow",
             "table.insertRowBelow"
         )),
-        cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colLeft",
-            "table.insertColumnLeft"
-        )),
-        cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colRight",
-            "table.insertColumnRight"
-        )),
+        cmd!(
+            "table.insertColumnLeft",
+            "Insert Left",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, keepWidth?: bool (default false, as in PowerPoint: the table grows by the new column and the other widths stay; true: the other columns shrink in proportion so the table keeps its width), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside",
+            has_selection,
+            |s, p| rows_cols(s, p, "colLeft", "table.insertColumnLeft")
+        ),
+        cmd!(
+            "table.insertColumnRight",
+            "Insert Right",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, keepWidth?: bool (default false, as in PowerPoint: the table grows by the new column and the other widths stay; true: the other columns shrink in proportion so the table keeps its width), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside",
+            has_selection,
+            |s, p| rows_cols(s, p, "colRight", "table.insertColumnRight")
+        ),
         cmd!("table.deleteRow", "Delete Rows", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
             s,
             p,
@@ -322,6 +328,15 @@ fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> R
 
 fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result<Value> {
     let (r, c) = at(s, p, name)?;
+    // Absent: the table grows, as in PowerPoint; present, it must be a bool, so a mistyped value is refused
+    // rather than silently taken as the default.
+    let keep_width = match (op, p.get("keepWidth")) {
+        (_, None) | (_, Some(Value::Null)) => false,
+        (_, Some(Value::Bool(b))) => *b,
+        ("colLeft", Some(_)) => return Err(bad("table.insertColumnLeft", "`keepWidth` must be true or false")),
+        ("colRight", Some(_)) => return Err(bad("table.insertColumnRight", "`keepWidth` must be true or false")),
+        _ => false,
+    };
     let op = op.to_string();
     with_table(s, p, name, move |t| {
         match op.as_str() {
@@ -329,8 +344,8 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
                 let ok = match op.as_str() {
                     "rowAbove" => t.insert_row(r),
                     "rowBelow" => t.insert_row(r.saturating_add(1)),
-                    "colLeft" => t.insert_col(c),
-                    _ => t.insert_col(c.saturating_add(1)),
+                    "colLeft" => insert_col_like(t, c, c, keep_width),
+                    _ => insert_col_like(t, c.saturating_add(1), c, keep_width),
                 };
                 if !ok {
                     return Err(bad(name, format!("the table is at its {}-cell limit", deckcraft_model::table::MAX_CELLS)));
@@ -349,6 +364,90 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
         }
         Ok(())
     })
+}
+
+/// Insert a column before `at` that looks like column `neighbour` (the one it is inserted beside):
+/// its width, and in every row the neighbour cell's explicit formatting with no text. With
+/// `keep_width` the columns then shrink in proportion so the table keeps its total width;
+/// otherwise (PowerPoint's behaviour) the table grows by the new column and the widths stay.
+/// Returns false, leaving the table as it was, when the column would take it past the cell limit.
+fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool) -> bool {
+    let total = t.width();
+    let neighbour = neighbour.min(t.cols.len().saturating_sub(1));
+    let w = t.cols.get(neighbour).copied();
+    // A neighbour covered by a merge (horizontally or vertically) is formatted as its anchor, which is what shows.
+    let covered = |r: usize, c: usize| t.rows.get(r).and_then(|row| row.cells.get(c)).is_some_and(|x| x.h_merge || x.v_merge);
+    let templates: Vec<Option<Cell>> = (0..t.rows.len())
+        .map(|r0| {
+            let (mut r, mut n) = (r0, neighbour);
+            while covered(r, n) {
+                let cell = &t.rows[r].cells[n];
+                if cell.h_merge && n > 0 {
+                    n -= 1;
+                } else if cell.v_merge && r > 0 {
+                    r -= 1;
+                } else {
+                    break;
+                }
+            }
+            // Only the formatting is kept: the anchor's text is not copied once per covered row.
+            t.rows[r].cells.get(n).map(|src| {
+                let mut tpl = Cell::new("");
+                copy_cell_format(&mut tpl, src);
+                tpl
+            })
+        })
+        .collect();
+    if !t.insert_col(at) {
+        return false;
+    }
+    let at = at.min(t.cols.len().saturating_sub(1));
+    if let (Some(w), Some(slot)) = (w, t.cols.get_mut(at)) {
+        *slot = w;
+    }
+    for (row, tpl) in t.rows.iter_mut().zip(templates) {
+        if let (Some(cell), Some(tpl)) = (row.cells.get_mut(at), tpl) {
+            copy_cell_format(cell, &tpl);
+        }
+    }
+    let grown = t.width();
+    if keep_width && total > 1e-9 && grown > 1e-9 {
+        let k = total / grown;
+        for cw in &mut t.cols {
+            *cw *= k;
+        }
+    }
+    true
+}
+
+/// `dst` takes `src`'s formatting (fill, borders, margins, anchor, text direction and the text
+/// properties of its first paragraph, kept on the end mark of an empty paragraph) and keeps its
+/// own spans and merge cover. Hyperlinks are not copied.
+fn copy_cell_format(dst: &mut Cell, src: &Cell) {
+    dst.fill.clone_from(&src.fill);
+    dst.borders.clone_from(&src.borders);
+    dst.diag_down.clone_from(&src.diag_down);
+    dst.diag_up.clone_from(&src.diag_up);
+    dst.margins = src.margins;
+    dst.anchor = src.anchor;
+    dst.vertical = src.vertical;
+    dst.anchor_ctr = src.anchor_ctr;
+    dst.horz_overflow = src.horz_overflow;
+    let para = src.text.paragraphs.first().map(|p0| {
+        let mut end_props = p0.runs.first().map_or_else(|| p0.end_props.clone(), |r| r.props.clone());
+        end_props.link = None;
+        end_props.hover = None;
+        let mut def_props = p0.def_props.clone();
+        def_props.link = None;
+        def_props.hover = None;
+        deckcraft_model::text::Paragraph { level: p0.level, props: p0.props.clone(), runs: vec![], def_props, end_props }
+    });
+    let mut list_style = src.text.list_style.clone();
+    for l in list_style.levels.iter_mut().flatten() {
+        l.run.link = None;
+        l.run.hover = None;
+    }
+    dst.text = deckcraft_model::text::TextBody { body: src.text.body.clone(), list_style, paragraphs: vec![para.unwrap_or_default()] };
 }
 
 fn merge(s: &mut Session, p: &Value) -> Result<Value> {
