@@ -33,6 +33,14 @@ arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
 cpal = "0.16"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# The user name a first start takes (#2209): the account's first and last name, else its display
+# name, read through the Windows Runtime's `Windows.System.User` — a safe API, where the Win32
+# `GetUserNameExW` needs unsafe, which our workspace forbids. Already in the build through wgpu,
+# gpu-allocator and AccessKit, at this version; this adds only the `System` bindings, the namespace
+# `User`, `KnownUserProperties` and their properties live in.
+windows = { version = "0.62", features = ["System"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # Finder double-click, Open With, Dock drops and `open -a DeckCraft deck.pptx` arrive as a
 # kAEOpenDocuments Apple event, which winit 0.30 doesn't handle. This audited crate (also used by
@@ -42,3 +50,8 @@ fmv-macos-events = "=0.1.0"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+# The account's uid, for the `user_name` passwd lookup: the environment's logon name can say
+# anything, and a non-dumpable process's `/proc/self` belongs to root (proc(5)), so neither says
+# which account this process runs as. `getuid` through `libc` needs unsafe, which the workspace
+# forbids; rustix is already in the build at this version, and this adds only its `process` module.
+rustix = { version = "1.1", default-features = false, features = ["std", "process"] }

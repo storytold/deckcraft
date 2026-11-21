@@ -161,6 +161,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | PPTX: a slide whose notes slide has empty text retains its notesSlide part and relationship on save and reopen (#2025); empty notes slides survive native round trips |
+| 2026-11-11 | A first start takes the operating system account's name as Preferences ▸ "Your name (comments)" instead of the placeholder "Presenter": the account's first and last name on Windows, the full name in its `/etc/passwd` entry on Linux and the BSDs, Directory Services' name (`/usr/bin/id -F`) on macOS, else the logon name. The system is asked once at start-up, only while the name is still the placeholder, never by a `DECKCRAFT_NO_PREFS` run; a name set in the dialog always wins and a name cleared there stays cleared (storytold/wordcraft#2209, the same change as in WordCraft) |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-09 | PowerPoint 97–2003 `.ppt`, `.pot` and `.pps` files open (#239): a new `crates/ppt` reads the compound file, the presentation records and the OfficeArt drawings into the model (masters, title masters as layouts, slides, styled text, shapes, pictures, notes). Saving asks for a new name; a `.pps` from the system starts the show |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
@@ -354,6 +355,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-16 | trivial | Progress log: export all slides as PNG or JPEG from the File tab (#2019); scores unchanged |
 | 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
 | 2026-11-11 | minor | Progress log: empty notes slides preserved on PPTX/native save (#2025); parity scores unchanged |
+| 2026-11-11 | trivial | Progress log: a first start takes the system account's name as the comment author; parity scores and milestone names unchanged |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
 | 2026-11-07 | trivial | Progress log: text in scaled groups is placed for export where it is drawn; parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
