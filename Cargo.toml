@@ -9,7 +9,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
 repository = "https://github.com/storytold/deckcraft"
-
+homepage = "https://getartcraft.com/apps/deckcraft"
 [workspace.dependencies]
 # OPC part-name primitives and package reader/writer.
 craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "8048f8ef92da80fb3ce5a056d59ca591ee66faf1", version = "0.1.0" }
