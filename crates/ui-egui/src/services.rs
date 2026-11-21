@@ -2,7 +2,8 @@ pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;
 
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 
-pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
+/// Purpose or suggested name, starting directory → selected path. `None` keeps the OS default.
+pub type PickFn = Box<dyn FnMut(&str, Option<&std::path::Path>) -> Option<String>>;
 
 /// `(purpose, request id)`. The host shows a picker and later pushes an [`InboxEvent`]
 /// carrying that same id. Completing a cancelled or unknown id does nothing: the file is
@@ -42,9 +43,9 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<InboxEvent>>>;
 pub struct Services {
     /// Browser-owned presenter popup; absent on native hosts.
     pub presenter: Option<Box<dyn crate::presenter::Host>>,
-    /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) → path.
+    /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) and directory → path.
     pub pick_open: Option<PickFn>,
-    /// Save dialog with a suggested name → path.
+    /// Save dialog with a suggested name and directory → path.
     pub pick_save: Option<PickFn>,
     pub read: Option<ReadFn>,
     pub write: Option<WriteFn>,

@@ -20,8 +20,8 @@ fn album_item_label(v: &Value) -> String {
 }
 
 fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
-    let path = if let Some(pick) = app.services.pick_open.as_mut() {
-        pick("picture")
+    let path = if app.services.pick_open.is_some() {
+        app.pick_open_file("picture")
     } else {
         app.set_status("Pass pictures to insert.photoAlbum");
         None

@@ -75,6 +75,8 @@ pub struct UiState {
     pub zoom: Option<f32>,
     pub sorter_zoom: f32,
     pub recent: Vec<String>,
+    /// Last local directory selected through a native file dialog, shared by Open and Save As.
+    pub file_dialog_directory: Option<std::path::PathBuf>,
     pub presenter_view: bool,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows never hide a still pointer,
     /// for decks with clickable choices (#1445).
@@ -117,6 +119,7 @@ impl Default for UiState {
             zoom: None,
             sorter_zoom: 1.0,
             recent: vec![],
+            file_dialog_directory: None,
             presenter_view: true,
             show_keep_cursor: false,
             ui_scale: 1.0,

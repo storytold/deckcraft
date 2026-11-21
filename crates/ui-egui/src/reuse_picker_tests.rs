@@ -27,7 +27,7 @@ fn harness(file: &Rc<RefCell<Vec<u8>>>) -> Harness<'static, SlideApp> {
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     let f = Rc::clone(file);
     let services = Services {
-        pick_open: Some(Box::new(|_| Some("/tmp/src.deckcraft".to_string()))),
+        pick_open: Some(Box::new(|_, _| Some("/tmp/src.deckcraft".to_string()))),
         read: Some(Box::new(move |_| Ok(f.borrow().clone()))),
         ..Services::default()
     };

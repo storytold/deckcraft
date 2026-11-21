@@ -49,7 +49,7 @@ fn insert_ribbon_opens_the_dialog_without_editing() {
 fn create_inserts_the_album_in_one_step() {
     let bytes = png();
     let services = Services {
-        pick_open: Some(Box::new(|_| Some("/tmp/cat.png".into()))),
+        pick_open: Some(Box::new(|_, _| Some("/tmp/cat.png".into()))),
         read: Some(Box::new(move |_| Ok(bytes.clone()))),
         ..Default::default()
     };
