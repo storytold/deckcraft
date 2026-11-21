@@ -52,12 +52,17 @@ fn grid(n: usize, area: Xfrm, aspect: f64) -> Vec<Xfrm> {
 }
 
 fn indices(p: &Value, key: &str, n: usize, what: &str) -> Result<Vec<usize>> {
-    let Some(Value::Array(a)) = p.get(key) else { return Ok(vec![]) };
+    // A malformed explicit selection must not become Summary Zoom's section defaults.
+    let a = match p.get(key) {
+        None | Some(Value::Null) => return Ok(vec![]),
+        Some(Value::Array(a)) => a,
+        Some(_) => return Err(bad("insert.zoom", format!("`{key}` must be a list of {what} indices (0-based)"))),
+    };
     let mut v = vec![];
     for x in a {
         let i = x
             .as_u64()
-            .map(|i| i as usize)
+            .and_then(|i| usize::try_from(i).ok())
             .filter(|i| *i < n)
             .ok_or_else(|| bad("insert.zoom", format!("there is no {what} {x} (indices count from 0)")))?;
         if !v.contains(&i) {
@@ -189,4 +194,67 @@ fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
         sel.text = None;
         Ok(json!({"kind": kind, "ids": ids, "returnToZoom": back, "slide": sel.slide}))
     })
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::indices;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn target_lists_preserve_optional_defaults_order_and_deduplication() {
+        for key in ["slides", "sections"] {
+            assert_eq!(indices(&json!({}), key, 3, "target").unwrap(), Vec::<usize>::new());
+            let mut params = json!({});
+            for value in [Value::Null, json!([])] {
+                params[key] = value;
+                assert_eq!(indices(&params, key, 3, "target").unwrap(), Vec::<usize>::new());
+            }
+            params[key] = json!([2, 0, 2, 1]);
+            assert_eq!(indices(&params, key, 3, "target").unwrap(), [2, 0, 1]);
+        }
+    }
+
+    #[test]
+    fn target_lists_reject_wrong_outer_types_and_invalid_members() {
+        for key in ["slides", "sections"] {
+            let mut params = json!({});
+            for value in [json!(false), json!(0), json!("0"), json!({})] {
+                params[key] = value;
+                let err = indices(&params, key, 3, "target").unwrap_err().to_string();
+                assert!(err.contains(key), "{err}");
+            }
+            for value in [
+                json!(-1),
+                json!(1.5),
+                Value::Null,
+                json!(true),
+                json!("1"),
+                json!({}),
+                json!([]),
+                json!(3),
+                json!(4_294_967_296u64),
+                json!(u64::MAX),
+            ] {
+                params[key] = json!([0, value, 1]);
+                assert!(indices(&params, key, 3, "target").is_err(), "{key}: {params}");
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_summary_targets_do_not_change_the_presentation() {
+        let mut s = crate::Session::with_new();
+        s.execute("section.add", &json!({"name": "Part one", "at": 0})).unwrap();
+        let before = s.doc().unwrap().doc.clone();
+        let history = (s.doc().unwrap().history.undo.len(), s.doc().unwrap().history.redo.len());
+        let revision = s.doc().unwrap().revision;
+        for slides in [json!(false), json!(0), json!("0"), json!({})] {
+            assert!(s.execute("insert.zoom", &json!({"kind": "summary", "slides": slides})).is_err(), "{slides}");
+            let st = s.doc().unwrap();
+            assert_eq!(st.doc, before, "{slides}");
+            assert_eq!((st.history.undo.len(), st.history.redo.len()), history, "{slides}");
+            assert_eq!(st.revision, revision, "{slides}");
+        }
+    }
 }
