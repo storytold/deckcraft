@@ -203,7 +203,25 @@ fn parse_startup(env_token: Option<String>, mut control_port: Option<u16>, args:
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
             "--control-token" => {
                 let value = args.next();
+                // A blank value is unset, as `client_token` treats a blank environment value:
+                // an empty or whitespace secret can never be reproduced by the client side
+                // and would dead-end the pairing.
+                if let Some(raw) = &value
+                    && raw.trim().is_empty()
+                {
+                    log::warn!("--control-token: a blank value is unset; the server will generate a random token");
+                }
+                let value = value.filter(|t| !t.trim().is_empty());
                 if control_token.is_none() {
+                    // A token on the command line is readable in the process list (`ps`,
+                    // /proc/<pid>/cmdline) by every local user; the environment variable is
+                    // not. The flag stays for tests and dev launches — the warning is the
+                    // reminder.
+                    if value.is_some() {
+                        log::warn!(
+                            "the control token was given on the command line, where every local user can read it; prefer DECKCRAFT_CONTROL_TOKEN"
+                        );
+                    }
                     control_token = value;
                 }
             }
@@ -335,7 +353,10 @@ fn main() -> eframe::Result {
             if let Some(port) = control_port {
                 match control_server::start(port, control_token.clone(), cc.egui_ctx.clone()) {
                     Ok(rx) => app = app.with_control(rx),
-                    Err(e) => log::error!("control server failed to start on 127.0.0.1:{port}: {e}"),
+                    // The caller explicitly asked for the control server: a failure to start
+                    // it (the port taken, the token file unwritable) must not turn into a
+                    // silent run without one, exiting 0.
+                    Err(e) => return Err(e.into()),
                 }
             }
             if sample && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
@@ -463,6 +484,14 @@ mod tests {
         assert!(matches!(launch, Startup::Run { .. }));
         if let Startup::Run { control_token, files, .. } = launch {
             assert_eq!(control_token.as_deref(), Some("cli-token-0123456789"));
+            assert_eq!(files, ["talk.pptx".to_string()]);
+        }
+        // A blank CLI value is unset too: the token is not an empty secret the client side
+        // could never reproduce, the server generates a random one instead.
+        let launch = parse_startup(None, None, ["--control-token".to_string(), "  ".to_string(), "talk.pptx".to_string()]);
+        assert!(matches!(launch, Startup::Run { .. }));
+        if let Startup::Run { control_token, files, .. } = launch {
+            assert_eq!(control_token, None);
             assert_eq!(files, ["talk.pptx".to_string()]);
         }
     }
