@@ -22,6 +22,14 @@ enum FlagMode {
     Num,
 }
 
+/// Where a part sits in a compound.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pos {
+    First,
+    Middle,
+    Last,
+}
+
 #[derive(Clone, Debug)]
 enum Cond {
     Any,
@@ -108,6 +116,8 @@ pub struct Dictionary {
     compound_begin: Option<Flag>,
     compound_middle: Option<Flag>,
     compound_end: Option<Flag>,
+    /// `COMPOUNDPERMITFLAG`: an affix carrying it may sit inside a compound, not only at its ends.
+    compound_permit: Option<Flag>,
     compound_min: usize,
     compound_max: usize,
 }
@@ -167,6 +177,7 @@ impl Dictionary {
                 ["COMPOUNDBEGIN", f, ..] => d.compound_begin = one_flag(Some(f), mode),
                 ["COMPOUNDMIDDLE", f, ..] => d.compound_middle = one_flag(Some(f), mode),
                 ["COMPOUNDEND", f, ..] | ["COMPOUNDLAST", f, ..] => d.compound_end = one_flag(Some(f), mode),
+                ["COMPOUNDPERMITFLAG", f, ..] => d.compound_permit = one_flag(Some(f), mode),
                 ["COMPOUNDMIN", n, ..] => d.compound_min = n.parse::<usize>().unwrap_or(3).max(1),
                 ["COMPOUNDWORDMAX", n, ..] => d.compound_max = n.parse().unwrap_or(0),
                 ["REP", n] => {
@@ -250,11 +261,26 @@ impl Dictionary {
         self.words.get(word).is_some_and(|hs| hs.iter().any(|f| self.has(f, self.forbidden)))
     }
 
+    /// An affix that may only be used inside a compound (`ONLYINCOMPOUND` among its continuation
+    /// flags): frami's zero suffixes that turn `Vor` into a compound's first part don't make `Vor`
+    /// a word of its own (#2145).
+    fn only_in_compound_affix(&self, a: &Affix) -> bool {
+        self.only_in_compound.is_some_and(|o| a.cont.contains(&o))
+    }
+
+    /// An affix that needs a further affix (`NEEDAFFIX` among its continuation flags): it can't be
+    /// the last affix of a word or of a compound part.
+    fn needs_another_affix(&self, a: &Affix) -> bool {
+        self.need_affix.is_some_and(|n| a.cont.contains(&n))
+    }
+
     /// Strip suffixes from `w` (one, or two through continuation flags); `extra` flags must also be
-    /// on the root, `cross` means the suffix must allow a prefix.
-    fn suffixed(&self, w: &[char], extra: &[Flag], cross: bool) -> bool {
+    /// on the root, `cross` means the suffix must allow a prefix. `completed`: a prefix that needs
+    /// nothing more is already on the word, so a suffix that needs another affix has it
+    /// (`work/US` with `SFX S 0 s/N` makes `unworks`, not `works`).
+    fn suffixed(&self, w: &[char], extra: &[Flag], cross: bool, completed: bool) -> bool {
         for s in &self.sfx {
-            if cross && !s.cross {
+            if (cross && !s.cross) || self.only_in_compound_affix(s) || (self.needs_another_affix(s) && !completed) {
                 continue;
             }
             let Some(stem) = strip_end(w, &s.add, &s.strip) else { continue };
@@ -269,7 +295,7 @@ impl Dictionary {
             }
             // A second suffix whose continuation allows this one (`walk/A` + `ing/B`…).
             for s2 in &self.sfx {
-                if !s.cont.is_empty() || !s2.cont.contains(&s.flag) {
+                if !s.cont.is_empty() || !s2.cont.contains(&s.flag) || self.only_in_compound_affix(s2) {
                     continue;
                 }
                 let Some(stem2) = strip_end(&stem, &s2.add, &s2.strip) else { continue };
@@ -285,24 +311,47 @@ impl Dictionary {
         false
     }
 
-    /// A root (or, for the last part, a suffixed root) carrying `flag`, as a compound part.
-    fn compound_part(&self, part: &[char], flag: Flag, last: bool) -> bool {
+    /// A root carrying `flag`, or a root with one affix, as a compound part at `pos`.
+    fn compound_part(&self, part: &[char], flag: Flag, pos: Pos) -> bool {
         let word: String = part.iter().collect();
         let ok = self.words.get(&word).is_some_and(|hs| hs.iter().any(|f| !self.has(f, self.forbidden) && f.contains(&flag)));
-        ok || (last && self.suffixed_compound_end(part, flag))
+        ok || self.affixed_compound_part(part, flag, pos)
     }
 
-    /// The last part of a compound with a suffix: the root must carry the compound `flag`.
-    fn suffixed_compound_end(&self, w: &[char], flag: Flag) -> bool {
-        self.sfx.iter().any(|s| {
-            strip_end(w, &s.add, &s.strip).is_some_and(|stem| {
-                s.cond_ok(&stem, false)
-                    && self
-                        .words
-                        .get(&stem.iter().collect::<String>())
-                        .is_some_and(|hs| hs.iter().any(|f| !self.has(f, self.forbidden) && f.contains(&flag) && f.contains(&s.flag)))
-            })
-        })
+    /// A compound part made of a root and one affix, as Hunspell reads them: a suffix ends the last
+    /// part and a prefix starts the first; anywhere else the affix needs `COMPOUNDPERMITFLAG`.
+    /// An affix that carries `NEEDAFFIX` needs a second one and doesn't count. A suffix found
+    /// through the plain compound flag whose continuation flags carry `COMPOUNDEND` may only be on
+    /// the last part. The compound `flag`
+    /// may be on the root or among the affix's continuation flags. German frami gives many first
+    /// parts their flag that way: `Vor/hij` with `SFX j 0 0/xoc` begins `Vorschlag` (#2145).
+    fn affixed_compound_part(&self, w: &[char], flag: Flag, pos: Pos) -> bool {
+        let permit = |a: &Affix| self.compound_permit.is_some_and(|p| a.cont.contains(&p));
+        // An affix that itself needs another (`NEEDAFFIX` among its continuation flags) doesn't
+        // finish a part on its own.
+        let fits = |a: &Affix, stem: &[char], suffix: bool| {
+            !self.needs_another_affix(a)
+                // Only the last part may take a suffix found through the plain compound flag whose
+                // continuation flags carry the compound end flag; the begin, middle and prefix
+                // lookups don't check it, as in Hunspell.
+                && (pos == Pos::Last || !suffix || Some(flag) != self.compound || !self.compound_end.is_some_and(|e| a.cont.contains(&e)))
+                && self.words.get(&stem.iter().collect::<String>()).is_some_and(|hs| {
+                    hs.iter().any(|f| !self.has(f, self.forbidden) && f.contains(&a.flag) && (f.contains(&flag) || a.cont.contains(&flag)))
+                })
+        };
+        let suffixed = self
+            .sfx
+            .iter()
+            // At the end of a compound, Hunspell refuses a suffix that adds letters and may only be
+            // used inside compounds; a zero-length one is accepted.
+            .filter(|s| if pos == Pos::Last { s.add.is_empty() || !self.only_in_compound_affix(s) } else { permit(s) })
+            .any(|s| strip_end(w, &s.add, &s.strip).is_some_and(|stem| s.cond_ok(&stem, false) && fits(s, &stem, true)));
+        suffixed
+            || self
+                .pfx
+                .iter()
+                .filter(|p| pos == Pos::First || permit(p))
+                .any(|p| strip_start(w, &p.add, &p.strip).is_some_and(|stem| p.cond_ok(&stem, true) && fits(p, &stem, false)))
     }
 
     /// `w` made of dictionary parts allowed in compounds (`COMPOUNDFLAG`, or the begin, middle and
@@ -323,11 +372,12 @@ impl Dictionary {
         let role = if index == 0 { self.compound_begin } else { self.compound_middle };
         for i in min..=w.len() - min {
             let (head, rest) = w.split_at(i);
-            let head_ok = [self.compound, role].into_iter().flatten().any(|f| self.compound_part(head, f, false));
+            let pos = if index == 0 { Pos::First } else { Pos::Middle };
+            let head_ok = [self.compound, role].into_iter().flatten().any(|f| self.compound_part(head, f, pos));
             if !head_ok {
                 continue;
             }
-            if [self.compound, self.compound_end].into_iter().flatten().any(|f| self.compound_part(rest, f, true)) {
+            if [self.compound, self.compound_end].into_iter().flatten().any(|f| self.compound_part(rest, f, Pos::Last)) {
                 return true;
             }
             if self.compounded(rest, index + 1, failed) {
@@ -346,18 +396,21 @@ impl Dictionary {
             return true;
         }
         let w: Vec<char> = word.chars().collect();
-        if self.suffixed(&w, &[], false) {
+        if self.suffixed(&w, &[], false, false) {
             return true;
         }
         for p in &self.pfx {
+            if self.only_in_compound_affix(p) {
+                continue;
+            }
             let Some(stem) = strip_start(&w, &p.add, &p.strip) else { continue };
             if !p.cond_ok(&stem, true) {
                 continue;
             }
-            if self.root(&stem.iter().collect::<String>(), &[p.flag], true) {
+            if !self.needs_another_affix(p) && self.root(&stem.iter().collect::<String>(), &[p.flag], true) {
                 return true;
             }
-            if p.cross && self.suffixed(&stem, &[p.flag], true) {
+            if p.cross && self.suffixed(&stem, &[p.flag], true, !self.needs_another_affix(p)) {
                 return true;
             }
         }
@@ -1028,6 +1081,106 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
             assert!(d.check(w), "{w}");
         }
         for w in ["hausx", "fugs", "tuerhausz"] {
+            assert!(!d.check(w), "{w}");
+        }
+    }
+
+    #[test]
+    fn affixes_give_compound_parts_their_flags() {
+        // #2145, the way German frami builds compounds: the first and middle parts get their flags
+        // from zero affixes' continuation classes, not from the root, and those roots need an affix.
+        let aff = "COMPOUNDBEGIN B\nCOMPOUNDMIDDLE M\nCOMPOUNDEND E\nCOMPOUNDPERMITFLAG P\nONLYINCOMPOUND O\nNEEDAFFIX N\n\
+            COMPOUNDMIN 2\nSFX j Y 1\nSFX j 0 0/BOP .\nSFX m Y 1\nSFX m 0 0/MOP .\nPFX q Y 1\nPFX q 0 0/BO .\n\
+            SFX s Y 1\nSFX s 0 e .\nSFX u Y 1\nSFX u 0 s .\nPFX v Y 1\nPFX v 0 un .\nSFX t Y 1\nSFX t 0 0/BNP .\n";
+        let dic = "8\nvor/Nj\nschlag/OEs\nwerk/Njm\nzeug/OEs\nding/Nq\nhaus/Ev\ntag/Bs\ntor/t\n";
+        let d = Dictionary::parse(aff.as_bytes(), dic.as_bytes());
+        // First part through SFX j, middle part through SFX m (it carries the permit flag), last
+        // part from its root, with or without a suffix there.
+        for w in ["vorschlag", "vorschlage", "werkzeug", "werkzeuge", "vorwerkzeug", "werkhaus", "dinghaus"] {
+            assert!(d.check(w), "{w}");
+        }
+        for w in [
+            // A NEEDAFFIX or ONLYINCOMPOUND root alone, or a part with no compound flag at all.
+            "vor",
+            "werk",
+            "schlag",
+            "hausvor",
+            "schlagzeug",
+            // A suffix on the first part without the permit flag (s), and a prefix on a later part
+            // without it (v).
+            "vorschlageschlag",
+            "werkunhaus",
+            // tag carries B but its suffix s has no permit flag; SFX t gives B but carries NEEDAFFIX.
+            "tageschlag",
+            "torhaus",
+            // Not words.
+            "vorschlagx",
+            "xvorschlag",
+        ] {
+            assert!(!d.check(w), "{w}");
+        }
+    }
+
+    #[test]
+    fn affixes_that_need_another_or_only_live_in_compounds_follow_hunspell() {
+        // Each row as Hunspell 1.7.6 reads the same dictionary: `sun/X` and `cat/S`, `SFX S` adding
+        // the compound flag X and NEEDAFFIX (N) or ONLYINCOMPOUND (O).
+        let dict = |sfx: &str| {
+            let aff = format!("COMPOUNDFLAG X\nCOMPOUNDMIN 3\nNEEDAFFIX N\nONLYINCOMPOUND O\nSFX S Y 1\nSFX S {sfx} .\n");
+            Dictionary::parse(aff.as_bytes(), b"2\nsun/X\ncat/S\n".as_slice())
+        };
+        let rows: [(&str, &[&str], &[&str]); 4] = [
+            // An affix that needs another finishes neither a word nor a compound part.
+            ("0 s/XN", &["sun", "cat"], &["cats", "suncats", "catssun"]),
+            ("0 0/XN", &["sun", "cat"], &["suncat"]),
+            // At the end of a compound a compound-only suffix may be empty, not add letters.
+            ("0 s/XO", &["sun", "cat"], &["cats", "suncats"]),
+            ("0 0/XO", &["sun", "cat", "suncat"], &["catsun", "suncatsun"]),
+        ];
+        for (sfx, good, bad) in rows {
+            let d = dict(sfx);
+            for w in good {
+                assert!(d.check(w), "{sfx}: {w}");
+            }
+            for w in bad {
+                assert!(!d.check(w), "{sfx}: {w}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_prefix_completes_a_suffix_that_needs_another_affix() {
+        // As Hunspell 1.7.6 reads it: `work/US`, a suffix needing another affix (N). The prefix
+        // completes it (`unworks`); alone it doesn't (`works`); when both need another, neither
+        // completes the other.
+        for (pfx, good, bad) in
+            [("0 un", &["work", "unwork", "unworks"][..], &["works"][..]), ("0 un/N", &["work"][..], &["works", "unwork", "unworks"][..])]
+        {
+            let aff = format!("NEEDAFFIX N\nPFX U Y 1\nPFX U {pfx} .\nSFX S Y 1\nSFX S 0 s/N .\n");
+            let d = Dictionary::parse(aff.as_bytes(), b"1\nwork/US\n".as_slice());
+            for w in good {
+                assert!(d.check(w), "{pfx}: {w}");
+            }
+            for w in bad {
+                assert!(!d.check(w), "{pfx}: {w}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_affix_carrying_the_compound_end_flag_only_ends_a_compound() {
+        let aff = "COMPOUNDFLAG X\nCOMPOUNDEND E\nCOMPOUNDPERMITFLAG P\nCOMPOUNDMIN 3\nSFX S Y 1\nSFX S 0 s/XEP .\n";
+        let d = Dictionary::parse(aff.as_bytes(), b"2\nsun/X\ncat/S\n".as_slice());
+        assert!(d.check("suncats"));
+        assert!(d.check("cats"));
+        assert!(!d.check("catssun"));
+        // Through the begin flag, the end flag on the suffix doesn't matter: Hunspell 1.7.6
+        // accepts `catssun` here (and `cats`), and rejects `catsun`, `suncats` and `suncat`.
+        let aff = "COMPOUNDBEGIN B\nCOMPOUNDEND E\nCOMPOUNDPERMITFLAG P\nCOMPOUNDMIN 3\nSFX S Y 1\nSFX S 0 s/BEP .\n";
+        let d = Dictionary::parse(aff.as_bytes(), b"2\nsun/E\ncat/S\n".as_slice());
+        assert!(d.check("catssun"));
+        assert!(d.check("cats"));
+        for w in ["catsun", "suncats", "suncat"] {
             assert!(!d.check(w), "{w}");
         }
     }
