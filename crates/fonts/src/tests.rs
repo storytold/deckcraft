@@ -427,6 +427,61 @@ fn the_font_scan_skips_fifos_folders_and_link_loops() {
 }
 
 #[test]
+fn designs_of_a_family_are_grouped_under_it() {
+    let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let list = names(&[
+        "Arial",
+        "Black Ops One",
+        "Bricolage Grotesque",
+        "Bricolage Grotesque 24pt",
+        "Bricolage Grotesque 24pt Condensed",
+        "Bricolage Grotesque Condensed",
+        "Franklin Gothic Medium",
+        "Franklin Gothic Medium Cond",
+        "Fraunces 72pt",
+        "Fraunces 72pt Soft",
+        "Fraunces 72pt SuperSoft",
+        "Inter",
+        "Newsreader 14pt",
+        "Newsreader 9pt",
+        "Newsreader 60pt",
+        "Newsreader 24pt",
+        "Orphan 24pt",
+        "Segoe UI",
+    ]);
+    let groups = family_groups(&list);
+    let entries: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(
+        entries,
+        ["Arial", "Black Ops One", "Bricolage Grotesque", "Franklin Gothic", "Fraunces", "Inter", "Newsreader", "Orphan 24pt", "Segoe UI"]
+    );
+    let by = |n: &str| groups.iter().find(|g| g.name == n).unwrap();
+    // The family itself is installed: pickable as it is, its designs under it.
+    let bg = by("Bricolage Grotesque");
+    assert!(bg.selectable);
+    let labels: Vec<&str> = bg.designs.iter().map(|(_, l)| l.as_str()).collect();
+    assert_eq!(labels, ["Condensed", "24pt", "24pt Condensed"], "no size first, then by size");
+    assert_eq!(bg.designs[2].0, "Bricolage Grotesque 24pt Condensed", "a design keeps its real family name");
+    // Only the designs exist: the entry is a heading for them.
+    let fr = by("Fraunces");
+    assert!(!fr.selectable);
+    let labels: Vec<&str> = fr.designs.iter().map(|(_, l)| l.as_str()).collect();
+    assert_eq!(labels, ["72pt", "72pt Soft", "72pt SuperSoft"]);
+    // Sizes sort as numbers: 9pt comes before 14pt.
+    let labels: Vec<&str> = by("Newsreader").designs.iter().map(|(_, l)| l.as_str()).collect();
+    assert_eq!(labels, ["9pt", "14pt", "24pt", "60pt"]);
+    assert!(!by("Franklin Gothic").selectable);
+    assert_eq!(by("Franklin Gothic").designs.len(), 2);
+    // A lone design, or a name that starts with a design word, is a plain entry.
+    for plain in ["Orphan 24pt", "Black Ops One", "Inter", "Arial", "Segoe UI"] {
+        assert!(by(plain).designs.is_empty() && by(plain).selectable, "{plain}");
+    }
+    // Nothing is lost or repeated.
+    let total: usize = groups.iter().map(|g| if g.designs.is_empty() { 1 } else { g.designs.len() + usize::from(g.selectable) }).sum();
+    assert_eq!(total, list.len());
+}
+
+#[test]
 fn disabling_system_fallback_gates_automatic_family_loads() {
     let db = FontDb::with_font_dirs(Vec::new());
     assert!(cfg!(target_arch = "wasm32") || db.system_fallback_enabled());
