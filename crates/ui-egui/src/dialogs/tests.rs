@@ -112,7 +112,11 @@ fn export_dialog_writes_an_animated_gif() {
         harness.key_press(egui::Key::Enter);
         harness.run_steps(2);
         assert!(harness.state().dialog.is_some());
-        assert!(harness.state().status.as_ref().is_some_and(|(m, _)| m.contains("Slides: choose a range from 1 to 2")), "{:?}", harness.state().status);
+        assert!(
+            harness.state().status.as_ref().is_some_and(|(m, _)| m.contains("Slides: choose a range from 1 to 2")),
+            "{:?}",
+            harness.state().status
+        );
         assert!(suggested.borrow().is_empty());
         assert!(!path.exists());
         harness.state_mut().dialog.as_mut().unwrap().fields.insert(key.into(), valid.into());
