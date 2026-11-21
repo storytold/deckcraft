@@ -59,3 +59,20 @@ fn the_last_effect_is_reachable_by_scrolling() {
     h.run_steps(3);
     assert_eq!(added_effect(&h), Some(("neutron".into(), deckcraft_model::anim::AnimClass::Path)));
 }
+
+#[test]
+fn an_effect_with_no_options_can_still_be_set_by_paragraph() {
+    // Fade has no direction, but By Paragraph lives in Effect Options and applies to any text.
+    let mut h = harness(egui::vec2(1800.0, 900.0));
+    let session = &mut h.state_mut().session;
+    let tb = session.execute("insert.textBox", &json!({"rect": [50, 50, 400, 200], "text": "One\nTwo"})).unwrap()["id"].as_u64().unwrap();
+    session.execute("edit.select", &json!({"ids": [tb]})).unwrap();
+    session.execute("animation.set", &json!({"effect": "fade", "class": "entrance"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Effect Options").click();
+    h.run_steps(3);
+    h.get_by_label("By Paragraph").click();
+    h.run_steps(3);
+    let build = h.state().session.active().and_then(|d| d.current_slide()).and_then(|s| s.animations.first()).map(|a| a.text_build);
+    assert_eq!(build, Some(deckcraft_model::anim::TextBuild::ByParagraph));
+}

@@ -152,6 +152,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let avail = ui.available_rect_before_wrap();
     app.canvas_rect = Some(avail);
+    // Clicking the slide goes back to acting on what is selected there, not the pane's row.
+    if ui.input(|i| i.pointer.primary_pressed() && i.pointer.hover_pos().is_some_and(|p| avail.contains(p))) {
+        app.anim_row = None;
+    }
     // The notes pane and the panes beside the canvas are editor chrome over it: nothing the
     // canvas paints or hit-tests (the media bar hangs 6 pt below its clip, handles stick out of a
     // shape, scroll bars) may reach into them. The parent's clip still covers the whole central

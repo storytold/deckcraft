@@ -5,14 +5,34 @@ use super::{
 
 // ---------- Animations ----------
 
+/// The effect the ribbon shows and changes: the Animation Pane row in `row`; else the chosen
+/// bullet's own (`DocState::animated_paragraphs`), or the whole-box effect that plays it; else the
+/// first selected shape's first effect.
+fn current_effect(d: &deckcraft_engine::DocState, row: Option<usize>) -> Option<deckcraft_model::Animation> {
+    let s = d.current_slide()?;
+    if let Some(i) = row {
+        return s.animations.get(i).cloned();
+    }
+    let id = d.selection.shapes.first()?;
+    let mut mine = s.animations.iter().filter(|a| a.shape == *id);
+    let Some((_, range)) = d.animated_paragraphs().filter(|x| x.0 == *id) else { return mine.next().cloned() };
+    let own = mine.clone().find(|a| a.paragraph.is_some_and(|i| range.contains(&(i as usize))));
+    own.or_else(|| mine.find(|a| a.paragraph.is_none())).cloned()
+}
+
+/// `p` aimed at the Animation Pane row in `row`, if there is one.
+fn at_row(mut p: serde_json::Value, row: Option<usize>) -> serde_json::Value {
+    if let (Some(i), Some(map)) = (row, p.as_object_mut()) {
+        map.insert("index".into(), i.into());
+    }
+    p
+}
+
 /// Render animation preview, gallery, add/effect options, trigger, timing, and playback controls.
 pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     let has_sel = app.session.active().is_some_and(|d| !d.selection.shapes.is_empty());
-    let cur: Option<deckcraft_model::Animation> = app.session.active().and_then(|d| {
-        let s = d.current_slide()?;
-        let id = d.selection.shapes.first()?;
-        s.animations.iter().find(|a| a.shape == *id).cloned()
-    });
+    let row = app.anim_row_index();
+    let cur = app.session.active().and_then(|d| current_effect(d, row));
     group(ui, |ui| {
         let playing = app.anim_preview_active();
         let (resp, _) = big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
@@ -56,7 +76,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             |i| quick.get(i).map(|a| a.1.to_string()).unwrap_or_default(),
         ) && let Some(a) = quick.get(i)
         {
-            run(app, "animation.set", json!({"effect": a.0, "class": a.2.xml()}));
+            run(app, "animation.set", at_row(json!({"effect": a.0, "class": a.2.xml()}), row));
         }
         let more = widgets::drop_button(ui, "", vec2(14.0, 52.0), has_sel);
         egui::Popup::menu(&more).width(420.0).show(|ui| {
@@ -72,7 +92,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                         }
                         paint_anim_tile(ui.painter(), r.shrink(2.0), a.1, a.2, true);
                         if resp.clicked() {
-                            run(app, "animation.set", json!({"effect": a.0, "class": a.2.xml()}));
+                            run(app, "animation.set", at_row(json!({"effect": a.0, "class": a.2.xml()}), row));
                             ui.close();
                         }
                     }
@@ -82,16 +102,22 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let effect_rows = cur.as_ref().map(|c| animation_effect_rows(&c.effect, c.class, Some(c.option.as_str()))).unwrap_or_default();
         let effect = cur.as_ref().map(|c| c.effect.as_str()).unwrap_or_default();
         let build = cur.as_ref().map(|c| text_build_id(c.text_build));
-        let build_rows = marked_options(&["asOne", "byParagraph"], build);
-        let r = big_button(ui, Icon::EffectOptions, "Effect\nOptions", !effect_rows.is_empty());
+        // How a whole box plays: a single bullet's effect has no such choice.
+        let whole = cur.as_ref().is_some_and(|c| c.paragraph.is_none());
+        let build_rows = if whole { marked_options(&["asOne", "byParagraph"], build) } else { vec![] };
+        // By Paragraph applies to any text, even an effect with no options of its own.
+        let has_text = app.session.active().zip(cur.as_ref()).and_then(|(d, c)| d.shape(c.shape)).is_some_and(|sh| whole && sh.text.is_some());
+        let r = big_button(ui, Icon::EffectOptions, "Effect\nOptions", !effect_rows.is_empty() || has_text);
         egui::Popup::menu(&r).show(|ui| {
             for &(o, on) in &effect_rows {
                 if ui.selectable_label(on, animation_option_label(effect, o)).clicked() {
-                    run(app, "animation.options", json!({"option": o}));
+                    run(app, "animation.options", at_row(json!({"option": o}), row));
                     ui.close();
                 }
             }
-            ui.separator();
+            if !effect_rows.is_empty() && !build_rows.is_empty() {
+                ui.separator();
+            }
             for &(id, on) in &build_rows {
                 let label = if id == "byParagraph" { "By Paragraph" } else { "As One Object" };
                 if ui.selectable_label(on, label).clicked() {
@@ -122,7 +148,13 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                         ))
                         .clicked()
                     {
-                        run(app, "animation.add", json!({"effect": a.0, "class": a.2.xml()}));
+                        let mut p = json!({"effect": a.0, "class": a.2.xml()});
+                        // A second effect on the row's bullet; on a whole-box row, on the box.
+                        if let Some(c) = cur.as_ref().filter(|c| row.is_some() && c.paragraph.is_some()) {
+                            p["ids"] = json!([c.shape.0]);
+                            p["paragraphs"] = json!([c.paragraph]);
+                        }
+                        run(app, "animation.add", p);
                     }
                 }
             });
@@ -131,13 +163,13 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
         egui::Popup::menu(&r).show(|ui| {
             if ui.button("On Click of… (none)").clicked() {
-                run(app, "animation.timing", json!({"trigger": null}));
+                run(app, "animation.timing", at_row(json!({"trigger": null}), row));
             }
             let shapes: Vec<(u32, String)> =
                 app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
             for (id, name) in shapes {
                 if ui.button(format!("On Click of {name}")).clicked() {
-                    run(app, "animation.timing", json!({"trigger": id}));
+                    run(app, "animation.timing", at_row(json!({"trigger": id}), row));
                 }
             }
         });
@@ -167,7 +199,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 dropdown(ui, "Start", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
                     for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
                         if ui.button(l).clicked() {
-                            run(app, "animation.timing", json!({"start": v}));
+                            run(app, "animation.timing", at_row(json!({"start": v}), row));
                             ui.close();
                         }
                     }
@@ -178,7 +210,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 if let Some(v) =
                     widgets::spinner(ui, "adur", "Duration", cur.as_ref().map(|c| c.duration_ms as f64 / 1000.0).unwrap_or(0.5), 0.25, "", 46.0)
                 {
-                    run(app, "animation.timing", json!({"duration": (v.max(0.0) * 1000.0).round() as u64}));
+                    run(app, "animation.timing", at_row(json!({"duration": (v.max(0.0) * 1000.0).round() as u64}), row));
                 }
             });
             ui.horizontal(|ui| {
@@ -186,7 +218,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 if let Some(v) =
                     widgets::spinner(ui, "adelay", "Delay", cur.as_ref().map(|c| c.delay_ms as f64 / 1000.0).unwrap_or(0.0), 0.25, "", 46.0)
                 {
-                    run(app, "animation.timing", json!({"delay": (v.max(0.0) * 1000.0).round() as u64}));
+                    run(app, "animation.timing", at_row(json!({"delay": (v.max(0.0) * 1000.0).round() as u64}), row));
                 }
             });
         });
@@ -291,7 +323,7 @@ pub(super) fn text_build_id(build: deckcraft_model::anim::TextBuild) -> &'static
 
 #[cfg(test)]
 mod animation_option_label_tests {
-    use super::animation_option_label;
+    use super::{animation_option_label, current_effect};
     use deckcraft_model::anim::ANIMATIONS;
 
     #[test]
@@ -328,5 +360,25 @@ mod animation_option_label_tests {
         assert_eq!(animation_option_label("plus", "out"), "Out");
         assert_eq!(animation_option_label("changeFontSize", "increase"), "Increase");
         assert_eq!(animation_option_label("changeFontSize", "decrease"), "Decrease");
+    }
+
+    /// The ribbon's Duration and Delay send absolute values, so they must show the effect they
+    /// will change: the highlighted bullet's, not the box's first.
+    #[test]
+    fn the_ribbon_shows_the_highlighted_bullets_effect() {
+        let mut s = deckcraft_engine::Session::with_new();
+        let tb =
+            s.execute("insert.textBox", &serde_json::json!({"rect": [50, 50, 400, 200], "text": "One\nTwo\nThree"})).unwrap()["id"].as_u64().unwrap();
+        s.execute("text.edit", &serde_json::json!({"id": tb})).unwrap();
+        s.execute("animation.add", &serde_json::json!({"effect": "fade", "class": "entrance", "ids": [tb], "paragraphs": [0, 1], "duration": 500}))
+            .unwrap();
+        s.execute("animation.timing", &serde_json::json!({"index": 1, "duration": 2000})).unwrap();
+        let shown = |s: &deckcraft_engine::Session| current_effect(s.active().unwrap(), None).map(|a| (a.paragraph, a.duration_ms));
+        s.execute("text.select", &serde_json::json!({"anchor": [0, 1], "caret": [0, 1]})).unwrap();
+        assert_eq!(shown(&s), Some((Some(0), 500)), "a caret shows its own bullet's effect");
+        s.execute("text.select", &serde_json::json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
+        assert_eq!(shown(&s), Some((Some(1), 2000)));
+        s.execute("text.select", &serde_json::json!({"anchor": [2, 0], "caret": [2, 5]})).unwrap();
+        assert_eq!(shown(&s), None, "this bullet has no effect to show");
     }
 }
