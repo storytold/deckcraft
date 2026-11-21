@@ -27,6 +27,11 @@ impl SlideApp {
         if let Some(st) = self.session.active() {
             self.ui_fonts.note_doc(ctx, st);
         }
+        // The interface's own text in a CJK language needs a face for the characters the embedded
+        // faces lack (a build without craft-fonts); borrow one from the installed fonts.
+        if crate::i18n::current().uses_cjk() {
+            self.ui_fonts.note(ctx, crate::i18n::current().catalog_text());
+        }
         self.ui_fonts.apply(ctx);
     }
 
