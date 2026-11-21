@@ -17,14 +17,30 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, undo),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{}", can_redo, redo),
-        cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?}", has_doc, cut),
-        cmd!(noundo "edit.copy", "Copy", ["Home", "Clipboard"], Some("Cmd+C"), "{scope?: slides} → {text, html?}", has_doc, copy),
+        cmd!(
+            "edit.cut",
+            "Cut",
+            ["Home", "Clipboard"],
+            Some("Cmd+X"),
+            "{scope?: slides, payload?: true also answers with the copy as a payload edit.paste takes in another window or deck} → {text, html?, payload?, copied}",
+            has_doc,
+            cut
+        ),
+        cmd!(
+            noundo "edit.copy",
+            "Copy",
+            ["Home", "Clipboard"],
+            Some("Cmd+C"),
+            "{scope?: slides, payload?: true also answers with the copy as a payload edit.paste takes in another window or deck} → {text, html?, payload?, copied}",
+            has_doc,
+            copy
+        ),
         cmd!(
             "edit.paste",
             "Paste",
             ["Home", "Clipboard"],
             Some("Cmd+V"),
-            "{text?: plain text to paste, html?: rich text from another app, scope?: slides}",
+            "{text?: plain text to paste, html?: rich text from another app, payload?: a copy from edit.copy {payload: true} (another window or deck), scope?: slides}",
             has_doc,
             paste
         ),
@@ -33,11 +49,11 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paste Special",
             ["Home", "Clipboard"],
             None,
-            "{as: destinationTheme|keepSource|picture|text} — Use Destination Theme, Keep Source Formatting, Picture (PNG), Keep Text Only",
+            "{as: destinationTheme|keepSource|picture|text, payload?} — Use Destination Theme, Keep Source Formatting, Picture (PNG), Keep Text Only",
             has_doc,
             paste_special
         ),
-        cmd!("edit.pasteText", "Paste and Match Formatting", ["Edit"], Some("Cmd+Shift+V"), "{text?}", has_doc, paste_text),
+        cmd!("edit.pasteText", "Paste and Match Formatting", ["Edit"], Some("Cmd+Shift+V"), "{text?, payload?}", has_doc, paste_text),
         cmd!("edit.duplicate", "Duplicate", ["Edit"], Some("Cmd+D"), "{ids?}", has_selection, duplicate),
         cmd!("edit.delete", "Delete", ["Edit"], Some("Delete"), "{ids?, scope?: slides}", has_doc, delete),
         cmd!(noundo "edit.selectAll", "Select All", ["Edit"], Some("Cmd+A"), "{scope?: slides}", has_slide, select_all),
@@ -84,7 +100,7 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             let (a, b) = t.ordered();
             let plain = deckcraft_model::edit::text_range(&body, a, b);
             let sliced = deckcraft_model::edit::slice(&body, a, b);
-            s.clipboard = crate::Clipboard { text: Some(sliced), plain: plain.clone(), ..Default::default() };
+            s.clipboard = crate::Clipboard { text: Some(sliced), plain: plain.clone(), ..crate::Clipboard::fresh() };
             return Ok(plain);
         }
         return Ok(String::new());
@@ -99,12 +115,12 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         }
         let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
         let plain = slides.iter().map(|x| x.title()).collect::<Vec<_>>().join("\n");
-        s.clipboard = crate::Clipboard { slides, media, plain: plain.clone(), ..Default::default() };
+        s.clipboard = crate::Clipboard { slides, media, plain: plain.clone(), ..crate::Clipboard::fresh() };
         return Ok(plain);
     }
     // Selected table cells copy as their text: a tab between cells and a paragraph per row.
     if let Some(plain) = super::table::selected_cells_text(st).filter(|_| p.get("id").is_none() && p.get("ids").is_none()) {
-        s.clipboard = crate::Clipboard { text: Some(TextBody::from_text(&plain)), plain: plain.clone(), ..Default::default() };
+        s.clipboard = crate::Clipboard { text: Some(TextBody::from_text(&plain)), plain: plain.clone(), ..crate::Clipboard::fresh() };
         return Ok(plain);
     }
     let mut shapes: Vec<Shape> = st
@@ -139,7 +155,7 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         color_map: ctx.color_map.clone(),
         fonts: ctx.master.theme.fonts.clone(),
     });
-    s.clipboard = crate::Clipboard { shapes, placeholders, media, plain: plain.clone(), source_theme, ..Default::default() };
+    s.clipboard = crate::Clipboard { shapes, placeholders, media, plain: plain.clone(), source_theme, ..crate::Clipboard::fresh() };
     Ok(plain)
 }
 
@@ -195,7 +211,22 @@ fn copy(s: &mut Session, p: &Value) -> Result<Value> {
     let caret = copying_caret(s);
     let t = copy_inner(s, p)?;
     let html = if caret { String::new() } else { copied_html(s) };
-    Ok(json!({"text": t, "html": html}))
+    Ok(copied(s, p, t, html, !caret))
+}
+
+/// The answer to Copy and Cut: the words, their HTML, whether the clipboard was replaced
+/// (`copied`: false for a caret with nothing selected, which leaves the clipboard as it was),
+/// and on request (`payload: true`) the clipboard as a payload `edit.paste` in another window or
+/// deck takes (not by default: a copied picture would swell every CLI answer).
+fn copied(s: &Session, p: &Value, text: String, html: String, replaced: bool) -> Value {
+    let mut v = json!({"text": text, "html": html, "copied": replaced});
+    if replaced
+        && bool_or(p, "payload", false)
+        && let Some(payload) = crate::clipboard::encode(&s.clipboard)
+    {
+        v["payload"] = Value::String(payload);
+    }
+    v
 }
 
 /// HTML for what was just copied, when it is text (a selection, or the text on the copied shapes).
@@ -220,11 +251,11 @@ fn cut(s: &mut Session, p: &Value) -> Result<Value> {
     let t = copy_inner(s, p)?;
     if caret {
         // Nothing is selected, so there is nothing to cut; `delete` would remove the next character.
-        return Ok(json!({"text": t, "html": ""}));
+        return Ok(json!({"text": t, "html": "", "copied": false}));
     }
     let html = copied_html(s);
     delete(s, p)?;
-    Ok(json!({"text": t, "html": html}))
+    Ok(copied(s, p, t, html, true))
 }
 
 /// Give pasted shapes fresh ids (groups included) and return the old-to-new map. Connector ends
@@ -300,16 +331,27 @@ fn remap_media(map: &HashMap<MediaId, MediaId>) -> impl FnMut(&mut MediaId) + '_
     }
 }
 
-/// Add the clipboard's media to `doc` and return the ids that changed: an id already used in
-/// `doc` by other bytes (another deck) gets a fresh id, and the pasted shapes must use it.
+/// Add the clipboard's media to `doc` and return the ids that changed: media `doc` doesn't have,
+/// or has under the same id with other bytes (another deck), get a fresh id, and the pasted
+/// shapes must use it.
 fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deckcraft_model::MediaItem]) -> Result<HashMap<MediaId, MediaId>> {
     let mut map = HashMap::new();
     for m in media {
         match doc.media(m.id) {
             None => {
-                // Keeps the foreign id, so later ids must start past it.
-                doc.media.push(m.clone());
-                doc.next_id = doc.next_id.max(m.id.0);
+                // The same bytes already here (an earlier paste of this copy) are reused. Otherwise
+                // a fresh id: the foreign one may name a slide or shape here, or sit at the top of
+                // the id space (a payload from another window is untrusted), and keeping it would
+                // leave no ids for the paste.
+                let id = match doc.media.iter().find(|x| x.data == m.data) {
+                    Some(x) => x.id,
+                    None => {
+                        let id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+                        doc.media.push(deckcraft_model::MediaItem { id, ..m.clone() });
+                        id
+                    }
+                };
+                map.insert(m.id, id);
             }
             Some(x) if x.data == m.data => {}
             Some(_) => {
@@ -321,10 +363,32 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
     Ok(map)
 }
 
+/// Take over the clipboard another window (or another deck, through `edit.copy {payload: true}`)
+/// put in `payload`, or embedded in the system clipboard's `html`, unless it is this session's own
+/// copy. An explicit `payload` must parse; a broken one inside HTML is ignored, so the HTML still
+/// pastes as rich text. `Ok(true)` when the clipboard changed.
+fn adopt_payload(s: &mut Session, p: &Value) -> Result<bool> {
+    if let Some(payload) = str_param(p, "payload") {
+        return crate::clipboard::adopt(s, payload).map_err(|e| bad("edit.paste", e));
+    }
+    let Some(embedded) = str_param(p, "html").and_then(crate::clipboard::extract) else { return Ok(false) };
+    match crate::clipboard::adopt(s, embedded) {
+        Ok(adopted) => Ok(adopted),
+        Err(e) => {
+            log::warn!("ignoring the DeckCraft clipboard in the pasted HTML: {e}");
+            Ok(false)
+        }
+    }
+}
+
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
+    // A copy from another DeckCraft window becomes our clipboard first: its words are the system
+    // clipboard's words, so the paste below is an internal one.
+    let adopted = adopt_payload(s, p)?;
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
-    if let Some(t) = str_param(p, "text")
+    if !adopted
+        && let Some(t) = str_param(p, "text")
         && t != s.clipboard.plain
     {
         if let Some(html) = str_param(p, "html")
@@ -465,6 +529,7 @@ fn paste_plain(s: &mut Session, text: &str) -> Result<Value> {
 }
 
 fn paste_special(s: &mut Session, p: &Value) -> Result<Value> {
+    adopt_payload(s, p)?;
     match str_param(p, "as").unwrap_or("destinationTheme") {
         "destinationTheme" | "useDestinationTheme" => paste(s, &json!({})),
         "text" | "keepTextOnly" => paste_text(s, &json!({})),
@@ -574,6 +639,7 @@ fn paste_picture(s: &mut Session) -> Result<Value> {
 }
 
 fn paste_text(s: &mut Session, p: &Value) -> Result<Value> {
+    adopt_payload(s, p)?;
     let t = str_param(p, "text").map(String::from).unwrap_or_else(|| s.clipboard.plain.clone());
     paste_plain(s, &t)
 }

@@ -57,7 +57,7 @@ mod state;
 
 pub use app::key_name;
 #[cfg(test)]
-use app::{OBJECTS_MARKER, system_clipboard_text, web_image_files};
+use app::{OBJECTS_MARKER, pastes_system_clipboard, system_clipboard_text, web_image_files};
 use canvas::preview;
 pub use canvas::squiggles;
 pub use clock::{monotonic_secs, now_ms};
