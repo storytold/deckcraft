@@ -185,6 +185,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 current: show.remote_preview.clone().filter(|_| !show.presenter_grid),
                 next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next && !show.presenter_grid).map(|(_, image)| image.clone()),
                 slides: show.presenter_grid.then(|| show.remote_grid.clone()),
+                language: crate::i18n::current().code().to_string(),
             });
             show.remote_sent = now;
         }
@@ -689,7 +690,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         painter.rect_filled(full, CornerRadius::ZERO, c);
     }
     if !show.goto.is_empty() {
-        let label = format!("Go to slide {}", show.goto);
+        let label = crate::i18n::fmt(tl!("Go to slide {n}"), &[("n", &show.goto.to_string())]);
         let w = (28.0 + label.len() as f32 * 10.0).clamp(160.0, full.width() - 32.0);
         let r = Rect::from_min_size(pos2(full.min.x + 16.0, full.max.y - 96.0), vec2(w, 36.0));
         painter.rect_filled(r, CornerRadius::same(6), Color32::from_black_alpha(190));
@@ -769,16 +770,16 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        if child.button("Close").clicked() {
+        if child.button(tl!("Close")).clicked() {
             out.keep = false;
         }
-        if child.button("▶").clicked() {
+        if child.button(tl!("▶")).clicked() {
             let a = show.state.next(doc);
             if !show.apply(a, doc, now) {
                 out.keep = false;
             }
         }
-        if child.button("◀").clicked() {
+        if child.button(tl!("◀")).clicked() {
             let a = show.state.prev(doc);
             show.apply(a, doc, now);
         }
