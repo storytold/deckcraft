@@ -12,15 +12,15 @@ repository = "https://github.com/storytold/deckcraft"
 
 [workspace.dependencies]
 # OPC part-name primitives and package reader/writer.
-craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "3bd3dc76d4f29af084462be8fad2fb3d735dc191", version = "0.1.0" }
+craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "69bfe6ab37ec84f255a05605b2a162393888a793", version = "0.1.0" }
 # Compound File Binary directory reads (password-protected deck detection).
-craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "3bd3dc76d4f29af084462be8fad2fb3d735dc191", version = "0.1.0" }
+craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "69bfe6ab37ec84f255a05605b2a162393888a793", version = "0.1.0" }
 # Bounded XML reader and writer primitives.
-craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "3bd3dc76d4f29af084462be8fad2fb3d735dc191", version = "0.1.0" }
+craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "69bfe6ab37ec84f255a05605b2a162393888a793", version = "0.1.0" }
 # DrawingML colours, themes, charts, tables and text (craft-libs#778, #792).
-craft-drawingml = { git = "https://github.com/storytold/craft-libs", rev = "3bd3dc76d4f29af084462be8fad2fb3d735dc191", version = "0.1.0" }
+craft-drawingml = { git = "https://github.com/storytold/craft-libs", rev = "69bfe6ab37ec84f255a05605b2a162393888a793", version = "0.1.0" }
 # PresentationML PPTX/POTX/PPSX reader and writer (craft-libs#778).
-craft-pptx = { git = "https://github.com/storytold/craft-libs", rev = "3bd3dc76d4f29af084462be8fad2fb3d735dc191", version = "0.1.0" }
+craft-pptx = { git = "https://github.com/storytold/craft-libs", rev = "69bfe6ab37ec84f255a05605b2a162393888a793", version = "0.1.0" }
 # Shared MCP stdio framing and protocol constants (craft-libs#778).
 craft-mcp-server = { git = "https://github.com/storytold/craft-libs", rev = "bc186ca719958fcce3b6ee24794277eabed14609", version = "0.1.0" }
 # internal
