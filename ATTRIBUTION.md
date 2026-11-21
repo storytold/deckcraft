@@ -12,6 +12,12 @@ artwork. The ribbon and menu icons stay original drawings.
 
 ## In this repository
 
+Provider transport/application fixtures in `crates/ui-egui/src/file_providers/tests.rs`,
+`crates/ui-egui/src/app/provider_files.rs` and
+`apps/deckcraft-web/src/file_provider_browser_tests.rs` generate their own synthetic presentation
+and byte payloads at runtime. They are original DeckCraft contributor code/data, licensed
+`MIT OR Apache-2.0`; no external document, vendor asset, media or font is added by those fixtures.
+
 | Asset | Author | Source | Licence | Used for |
 |---|---|---|---|---|
 | `docs/brand/artcraft-logo.svg`, `docs/brand/artcraft-logo.png` | ArtCraft Team | ArtCraft brand kit (project owner) | ArtCraft trademark, `docs/brand/LICENSE-brand.txt` (not open source) | README header |

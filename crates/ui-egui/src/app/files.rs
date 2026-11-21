@@ -455,6 +455,9 @@ impl SlideApp {
     }
 
     pub fn save_as_dialog(&mut self, format: &str) {
+        if self.choose_provider_save(true, format) {
+            return;
+        }
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
         let suggested = format!("{name}.{ext}");
@@ -496,6 +499,9 @@ impl SlideApp {
     }
 
     pub fn save(&mut self) {
+        if self.choose_provider_save(false, "deckcraft") {
+            return;
+        }
         if self.services.host_save.is_some() {
             let _ = self.save_to_host(None);
             return;
