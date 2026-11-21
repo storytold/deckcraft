@@ -18,7 +18,7 @@ use deckcraft_model::text::{Paragraph, TextBody};
 use deckcraft_model::{LayoutType, Presentation, ShapeKind, defaults};
 
 // The package itself (identity, manifest, member names, bounded reads) is shared.
-pub use craft_deckcraft_format::{Budget, EXTENSION, FormatError, LEGACY_MIMETYPE, MIMETYPE, Result, VERSION, sniff};
+pub use craft_deckcraft_format::{Budget, EXTENSION, FormatError, LEGACY_MIMETYPE, MIMETYPE, Result, VERSION, is_compressed, sniff};
 use craft_deckcraft_format::{Member, Package, media_entry};
 
 /// Serialize a presentation.
@@ -75,7 +75,18 @@ pub fn load_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
     load_within(bytes, Budget::default())
 }
 
+/// Read untrusted clipboard slides with an 8 MiB manifest, 32 MiB of media and chart
+/// payloads together, and at most 4,096 payload items. Native file limits are unchanged.
+/// Stop at the first damaged media entry so failed inflation cannot reuse the byte budget.
+pub fn load_clipboard_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
+    load_with_limits(bytes, Budget { total: 32 << 20, items: 4096, manifest: 8 << 20 }, true)
+}
+
 fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String>)> {
+    load_with_limits(bytes, budget, false)
+}
+
+fn load_with_limits(bytes: &[u8], budget: Budget, stop_on_damage: bool) -> Result<(Presentation, Vec<String>)> {
     let (m, mut z) = Package::open_manifest::<Presentation>(bytes, budget.manifest)?;
     let mut p = m.presentation;
     let mut damaged = vec![];
@@ -98,6 +109,7 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
         match z.read_charged(&name, &mut left) {
             Ok(data) => item.data = Arc::new(data),
             Err(_) if linked_only => {}
+            Err(e) if stop_on_damage => return Err(e),
             Err(e) => damaged.push(e.to_string()),
         }
     }
