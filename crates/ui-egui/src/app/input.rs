@@ -1,6 +1,15 @@
 use super::{InputTarget, SlideApp, show};
 
 impl SlideApp {
+    fn ribbon_blocks_pointer(&self, ctx: &egui::Context, now: f64) -> bool {
+        crate::ribbon::transition::moving(ctx, now)
+            && self
+                .synthetic
+                .iter()
+                .chain(&self.synthetic_injected)
+                .any(|event| matches!(event, egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. }))
+    }
+
     /// What a queued synthetic event is meant for. The control protocol hands out window
     /// coordinates, so a document, slide, view, zoom or canvas-layout change between queueing and
     /// the next UI pass makes the event stale.
@@ -141,7 +150,7 @@ impl SlideApp {
         }
         let current = self.input_target();
         let focus = ctx.memory(|m| m.focused());
-        if self.synthetic_target == Some(current) && focus == self.synthetic_focus {
+        if self.synthetic_target == Some(current) && focus == self.synthetic_focus && !self.ribbon_blocks_pointer(ctx, ctx.input(|i| i.time)) {
             return;
         }
         let injected_time = self.synthetic_injected_time;
@@ -213,7 +222,10 @@ impl SlideApp {
         let focus = ctx.memory(|m| m.focused());
         if self.synthetic_pending {
             let current = self.input_target();
-            if self.synthetic_target != Some(current) || focus != self.synthetic_focus {
+            if self.synthetic_target != Some(current)
+                || focus != self.synthetic_focus
+                || self.ribbon_blocks_pointer(ctx, raw.time.unwrap_or_else(|| ctx.input(|i| i.time)))
+            {
                 // eframe keeps the whole RawInput from a logic-only pass in `pending_raw_input`
                 // and appends the next host input to it. The events are already in `raw.events`;
                 // clearing only the unsent queue would still deliver the stale click or key into
@@ -231,6 +243,12 @@ impl SlideApp {
             }
         }
         if self.synthetic_pending || self.synthetic.is_empty() {
+            return;
+        }
+        // Do not deliver coordinates sampled from a moving ribbon. Settled input follows the
+        // existing target checks, so a layout change while waiting still invalidates the batch.
+        if self.ribbon_blocks_pointer(ctx, raw.time.unwrap_or_else(|| ctx.input(|i| i.time))) {
+            ctx.request_repaint();
             return;
         }
         let current = self.input_target();
