@@ -382,13 +382,14 @@ fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64) -> (Vec<f6
     let n = rl.end.saturating_sub(rl.start);
     let mut adv = Vec::with_capacity(n);
     let mut x = 0.0;
+    let max_x = (env.g.col_w - env.mr).max(0.0);
     // A line that breaks at a soft hyphen ends with a visible hyphen.
     let shy_end = !is_last && line_cells.last().is_some_and(|c| c.ch == '\u{AD}');
     for (k, c) in line_cells.iter().enumerate() {
         let a = if shy_end && k + 1 == n {
             p.faces.get(c.face).zip(p.styles.get(c.style)).map(|(f, st)| measure_str(f, st.size, "-").0).unwrap_or(0.0)
         } else if c.ch == '\t' {
-            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k))
+            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k), max_x)
         } else {
             c.adv
         };
