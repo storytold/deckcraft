@@ -337,11 +337,19 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
                 }
             }
             "delRow" => {
+                if r >= t.n_rows() {
+                    let suffix = if t.n_rows() == 1 { "" } else { "s" };
+                    return Err(bad(name, format!("no row {r}: the table has {} row{suffix}", t.n_rows())));
+                }
                 if !t.delete_row(r) {
                     return Err(bad(name, "can't delete the last row"));
                 }
             }
             _ => {
+                if c >= t.n_cols() {
+                    let suffix = if t.n_cols() == 1 { "" } else { "s" };
+                    return Err(bad(name, format!("no column {c}: the table has {} column{suffix}", t.n_cols())));
+                }
                 if !t.delete_col(c) {
                     return Err(bad(name, "can't delete the last column"));
                 }
@@ -822,4 +830,44 @@ fn erase_line(s: &mut Session, p: &Value) -> Result<Value> {
     with_table(s, &json!({"id": id.0}), "table.eraseLine", move |t| {
         if crate::drawtable::erase_at(t, q, tol) { Ok(()) } else { Err(bad("table.eraseLine", "no border to erase there")) }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use deckcraft_model::ShapeId;
+    use serde_json::json;
+
+    use crate::Session;
+
+    #[test]
+    fn deleting_an_out_of_range_row_or_column_reports_the_table_bounds() {
+        for (rows, cols) in [(3, 2), (1, 1)] {
+            let mut s = Session::with_new();
+            let inserted = s.execute("insert.table", &json!({"rows": rows, "cols": cols, "data": [["keep"]]})).unwrap();
+            let id = ShapeId(inserted["id"].as_u64().unwrap() as u32);
+            let before = s.doc().unwrap().shape(id).unwrap().clone();
+            for (cmd, key, count, dimension) in [("table.deleteRow", "row", rows, "row"), ("table.deleteColumn", "col", cols, "column")] {
+                for index in [count, usize::MAX] {
+                    let error = s.execute(cmd, &json!({"id": id.0, key: index})).unwrap_err().to_string();
+                    assert!(error.contains(cmd), "{error}");
+                    let suffix = if count == 1 { "" } else { "s" };
+                    assert!(error.contains(&format!("no {dimension} {index}: the table has {count} {dimension}{suffix}")), "{error}");
+                    assert_eq!(s.doc().unwrap().shape(id).unwrap(), &before, "{cmd} {key}={index} must leave the table unchanged");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_the_final_row_or_column_keeps_the_existing_error() {
+        let mut s = Session::with_new();
+        let inserted = s.execute("insert.table", &json!({"rows": 1, "cols": 1, "data": [["keep"]]})).unwrap();
+        let id = ShapeId(inserted["id"].as_u64().unwrap() as u32);
+        let before = s.doc().unwrap().shape(id).unwrap().clone();
+        for (cmd, key, dimension) in [("table.deleteRow", "row", "row"), ("table.deleteColumn", "col", "column")] {
+            let error = s.execute(cmd, &json!({"id": id.0, key: 0})).unwrap_err().to_string();
+            assert!(error.contains(&format!("can't delete the last {dimension}")), "{error}");
+            assert_eq!(s.doc().unwrap().shape(id).unwrap(), &before);
+        }
+    }
 }
