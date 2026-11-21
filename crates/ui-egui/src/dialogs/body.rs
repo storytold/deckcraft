@@ -32,6 +32,7 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "setupShow" => dlg_setup_show(app, ui, d),
         "quit" => dlg_quit(app, ui, d),
         "close" => dlg_close(app, ui, d),
+        "saveError" => dlg_save_error(app, ui, d),
         "zoom" => zoom_dialog(app, ui, d),
         "comment" => dlg_comment(app, ui, d),
         "bullets" => dlg_bullets(app, ui, d),
@@ -351,6 +352,27 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 done = true;
             }
         });
+    });
+    done
+}
+
+fn dlg_save_error(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    ui.set_max_width(460.0);
+    let title = d.params.get("title").and_then(Value::as_str).unwrap_or("Presentation");
+    ui.label(egui::RichText::new(format!("“{title}” was not saved.")).strong());
+    egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
+        ui.add(egui::Label::new(d.params.get("error").and_then(Value::as_str).unwrap_or("The save failed.")).wrap());
+    });
+    ui.label("Your presentation is still open. Use Save As to choose another location.");
+    ui.add_space(8.0);
+    let mut done = false;
+    ui.horizontal(|ui| {
+        if ui.button("Save As…").clicked() {
+            done = app.save_as_after_error(&d.params);
+        }
+        if ui.button("Close").clicked() {
+            done = true;
+        }
     });
     done
 }
