@@ -20,7 +20,7 @@ fn oversized_stdio_frame_is_drained_before_the_next_request() {
     let replies: Vec<Value> = std::str::from_utf8(&output).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     assert_eq!(replies.len(), 2);
     assert_eq!(replies[0]["error"]["code"], -32600);
-    assert!(replies[0]["error"]["message"].as_str().unwrap().contains("16 MiB"));
+    assert!(replies[0]["error"]["message"].as_str().unwrap().contains("too large"));
     assert_eq!(replies[1]["id"], 1);
     assert_eq!(replies[1]["result"]["serverInfo"]["name"], "deckcraft");
 }
@@ -393,4 +393,74 @@ fn a_token_file_behind_a_link_is_refused() {
     assert!(error.contains("is a link"), "{error}");
     std::fs::remove_file(&path).unwrap();
     std::fs::remove_file(&target).unwrap();
+}
+
+#[test]
+fn stdio_initialize_negotiation_transcript() {
+    let mut lines: Vec<Value> = craft_mcp_server::SUPPORTED_VERSIONS
+        .iter()
+        .enumerate()
+        .map(|(i, version)| {
+            json!({
+                "jsonrpc": "2.0",
+                "id": i + 1,
+                "method": "initialize",
+                "params": {"protocolVersion": version, "capabilities": {}, "clientInfo": {"name": "parity-client", "version": "1.0"}},
+            })
+        })
+        .collect();
+    lines.push(json!({
+        "jsonrpc": "2.0",
+        "id": 99,
+        "method": "initialize",
+        "params": {"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "parity-client", "version": "1.0"}},
+    }));
+    lines.push(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+    lines.push(json!({"jsonrpc": "2.0", "id": 100, "method": "ping", "params": {}}));
+    let input: String = lines.iter().map(|v| v.to_string() + "\n").collect();
+
+    let mut s = Server::new(Box::new(Headless::new()));
+    let mut out = Vec::new();
+    s.serve(std::io::Cursor::new(input), &mut out).unwrap();
+    assert!(s.is_initialized());
+
+    let replies: Vec<Value> = std::str::from_utf8(&out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(replies.len(), craft_mcp_server::SUPPORTED_VERSIONS.len() + 2);
+    for (i, version) in craft_mcp_server::SUPPORTED_VERSIONS.iter().enumerate() {
+        assert_eq!(replies[i]["id"], i + 1);
+        assert_eq!(replies[i]["result"]["protocolVersion"], *version);
+        assert_eq!(replies[i]["result"]["serverInfo"]["name"], "deckcraft");
+    }
+    let fallback = &replies[craft_mcp_server::SUPPORTED_VERSIONS.len()];
+    assert_eq!(fallback["id"], 99);
+    assert_eq!(fallback["result"]["protocolVersion"], craft_mcp_server::PROTOCOL_VERSION);
+    let ping = &replies[craft_mcp_server::SUPPORTED_VERSIONS.len() + 1];
+    assert_eq!(ping["id"], 100);
+    assert_eq!(ping["result"], json!({}));
+}
+
+#[test]
+fn stdio_cancel_and_batch_transcript() {
+    let input = concat!(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}\n",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":1,\"reason\":\"client\"}}\n",
+        "[]\n",
+        "[{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":9}}]\n",
+        "[{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"},{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}]\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\",\"params\":{}}\n"
+    );
+    let mut s = Server::new(Box::new(Headless::new()));
+    let mut out = Vec::new();
+    s.serve(std::io::Cursor::new(input), &mut out).unwrap();
+    assert!(s.is_initialized());
+
+    let replies: Vec<Value> = std::str::from_utf8(&out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(replies.len(), 4, "{replies:?}");
+    assert_eq!(replies[0]["id"], 1);
+    assert_eq!(replies[0]["result"]["serverInfo"]["name"], "deckcraft");
+    assert_eq!(replies[1]["id"], Value::Null);
+    assert_eq!(replies[1]["error"]["code"], -32600);
+    assert_eq!(replies[2], json!([{"jsonrpc": "2.0", "id": 2, "result": {}}]));
+    assert_eq!(replies[3], json!({"jsonrpc": "2.0", "id": 3, "result": {}}));
 }
