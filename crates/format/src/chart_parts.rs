@@ -1,14 +1,14 @@
 //! Keep opaque chart payloads out of the JSON manifest and within the media load budget.
 use std::collections::HashSet;
-use std::io::Cursor;
 use std::sync::Arc;
+
+use craft_deckcraft_format::{MAX_ENTRY, Package, chart_part_entry, is_chart_part_entry};
 
 use deckcraft_model::chart::ChartPart;
 use deckcraft_model::{Master, Presentation, Shape, ShapeKind};
 
-use crate::{FormatError, MAX_ENTRY, Result, read_entry_max};
+use crate::{FormatError, Result};
 
-const PREFIX: &str = "chart-parts/";
 type Payload = (String, String, Vec<u8>);
 
 pub(super) fn separate(p: &mut Presentation) -> Result<Vec<Payload>> {
@@ -16,7 +16,7 @@ pub(super) fn separate(p: &mut Presentation) -> Result<Vec<Payload>> {
     visit_parts(p, |part| {
         // The native namespace is independent of the original OPC names, which may repeat
         // when charts from several decks are combined. No user-supplied path is extracted.
-        let entry = format!("{PREFIX}{}", payloads.len());
+        let entry = chart_part_entry(payloads.len());
         part.native_entry = Some(entry.clone());
         payloads.push((entry, part.content_type.clone(), std::mem::take(&mut part.bytes)));
         Ok(())
@@ -26,7 +26,7 @@ pub(super) fn separate(p: &mut Presentation) -> Result<Vec<Payload>> {
 
 pub(super) fn restore(
     p: &mut Presentation,
-    z: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    z: &mut Package<'_>,
     left: &mut u64,
     mut items: usize,
     max_items: usize,
@@ -40,21 +40,21 @@ pub(super) fn restore(
         items += 1;
         if let Some(entry) = part.native_entry.take() {
             // Accept only names produced by separate(), and inflate each member once.
-            let canonical = entry.strip_prefix(PREFIX).and_then(|s| s.parse::<usize>().ok()).is_some_and(|n| entry == format!("{PREFIX}{n}"));
+            let canonical = is_chart_part_entry(&entry);
             if !canonical || !seen.insert(entry.clone()) || !part.bytes.is_empty() {
                 return Err(FormatError::Damaged("invalid or ambiguous chart part reference".into()));
             }
-            if z.index_for_name(&entry).is_none() {
+            if !z.contains(&entry) {
                 // Missing members consume no inflation work and can be reported for recovery.
                 damaged.push(format!("{entry}: missing chart part"));
                 return Ok(());
             }
-            if z.by_name(&entry).is_ok_and(|f| f.size() > *left) {
+            if z.declared_size(&entry).is_some_and(|size| size > *left) {
                 return Err(FormatError::Damaged("embedded media and chart parts are larger than DeckCraft can open".into()));
             }
             // A CRC/decode error may already have inflated bytes. Stop on that first error
             // rather than letting later corrupt members reuse the unchanged byte budget.
-            let bytes = read_entry_max(z, &entry, (*left).min(MAX_ENTRY))?;
+            let bytes = z.read_max(&entry, (*left).min(MAX_ENTRY))?;
             *left -= bytes.len() as u64;
             part.bytes = bytes;
         } else {

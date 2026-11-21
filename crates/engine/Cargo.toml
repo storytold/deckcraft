@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 craft-library = { workspace = true }
+craft-mime = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-model = { workspace = true }
@@ -19,6 +20,7 @@ deckcraft-render = { workspace = true }
 deckcraft-pdf = { workspace = true }
 deckcraft-format = { workspace = true }
 deckcraft-pptx = { workspace = true }
+deckcraft-ppt = { workspace = true }
 deckcraft-media = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
