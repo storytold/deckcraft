@@ -50,6 +50,7 @@ use vello_cpu::{RenderContext, Resources, peniko};
 
 pub use deckcraft_anim::{transition_frame, transition_layers, uses_slide_parts};
 pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
+pub use images::pixel_size;
 pub use images::{decode as decode_image, gif_frame};
 pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
