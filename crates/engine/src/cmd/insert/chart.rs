@@ -187,7 +187,28 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
         }
     };
+    // Gap width in percent (0 to 500, as Format Data Series takes it) for bar and column charts.
+    let gap_width = match p.get("gapWidth") {
+        None => None,
+        Some(v) => Some(
+            v.as_f64()
+                .filter(|g| g.is_finite() && (0.0..=500.0).contains(g))
+                .ok_or_else(|| bad("chart.options", format!("`gapWidth` is a percentage from 0 to 500; not {v}")))?
+                // Whole percentages, as PowerPoint's Gap Width box takes them and the file stores them.
+                .round()
+                / 100.0,
+        ),
+    };
     with_chart(s, p, "chart.options", |c| {
+        if let Some(g) = gap_width {
+            use deckcraft_model::chart::ChartType as T;
+            let bars = |k: T| matches!(k, T::Column | T::StackedColumn | T::PercentColumn | T::Bar | T::StackedBar | T::PercentBar);
+            // A combo chart's gap applies to its bar and column series.
+            if !(bars(c.kind) || c.kind == T::Combo && c.series.iter().any(|s| bars(c.series_kind(s)))) {
+                return Err(bad("chart.options", "`gapWidth` is for bar and column charts"));
+            }
+            c.gap_width = g;
+        }
         if let Some(t) = &text_color {
             c.text_color = t.clone();
             c.legend_entries.iter_mut().for_each(|e| e.color = None);
