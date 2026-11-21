@@ -3,7 +3,7 @@
 use deckcraft_color::Rgba;
 use deckcraft_geom::preset::FillMode;
 use deckcraft_model::resolve::Ctx;
-use deckcraft_model::style::{ColorRef, Fill, GradientShape, PictureFill, PictureMode};
+use deckcraft_model::style::{ColorRef, Fill, GradientFlip, GradientShape, PictureFill, PictureMode};
 use deckcraft_model::{PhType, Presentation};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
 use vello_cpu::{RenderContext, peniko};
@@ -51,16 +51,18 @@ pub fn fill_path(
             // its edges); a radial one ends on the circle around it, from a focus placed in the
             // shape's own box (PowerPoint's "from corner" presets centre the tile on the corner).
             let tile = tile_box(bounds, g.tile);
-            let stops: Vec<(f64, Rgba)> = g.stops.iter().map(|s| (s.pos, shade(rctx.color(&s.color, ph), mode))).collect();
-            ctx.set_paint(gradient(&g.shape, stops, bounds, alpha));
-
             let mut stops: Vec<(f64, Rgba)> = g.stops.iter().map(|s| (s.pos.clamp(0.0, 1.0), shade(rctx.color(&s.color, ph), mode))).collect();
             stops.sort_by(|a, b| a.0.total_cmp(&b.0));
             // Rectangle and outline paths: rasterised (see `pathgrad`).
             if let GradientShape::Path { path: kind, focus } = &g.shape
                 && matches!(kind.as_str(), "rect" | "shape")
             {
-                crate::pathgrad::fill(ctx, kind, *focus, &crate::ramp::expand(&stops), bounds, path, m, alpha);
+                let ramp = crate::ramp::expand(&stops);
+                if g.tile.iter().all(|v| *v == 0.0) {
+                    crate::pathgrad::fill(ctx, kind, *focus, &ramp, bounds, path, m, alpha);
+                } else {
+                    crate::pathgrad::fill_tiled_flipped(ctx, kind, *focus, &ramp, bounds, tile, g.flip.unwrap_or(GradientFlip::None), path, m, alpha);
+                }
                 return;
             }
             // PowerPoint's ramp between stops (linear light, S-shaped), see `ramp`.
