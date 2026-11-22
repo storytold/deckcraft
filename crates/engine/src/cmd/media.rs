@@ -29,7 +29,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Poster Frame",
             ["Video Format", "Adjust"],
             None,
-            "{id?, ms?: frame time (default: current position)}",
+            "{id?, ms?: frame time (default: current position), reset?: true (remove the poster picture)}; Image From File is picture.change",
             has_doc,
             poster_frame
         ),
@@ -134,6 +134,15 @@ fn poster_frame(s: &mut Session, p: &Value) -> Result<Value> {
     let (id, m) = target(s, p, "media.posterFrame")?;
     if !m.video {
         return Err(bad("media.posterFrame", "only videos have poster frames"));
+    }
+    if bool_param(p, "reset") == Some(true) {
+        edit_shapes(s, &json!({"id": id}), "media.posterFrame", |sh| {
+            if let ShapeKind::Media(m) = &mut sh.kind {
+                m.poster = None;
+            }
+            Ok(())
+        })?;
+        return Ok(json!({"id": id, "reset": true}));
     }
     let ms = ms_param(p, "ms").or_else(|| s.media_status.get(&id).map(|st: &MediaStatus| st.position_ms)).unwrap_or(0);
     let data = s.doc()?.doc.media(m.media).map(|i| i.data.clone()).ok_or_else(|| EngineError::Other("the media data is missing".into()))?;
@@ -301,5 +310,61 @@ mod tests {
         let w = r["warning"].as_str().expect("the VP8 track can't be shown");
         assert!(w.contains("VP8") && w.contains("only the audio plays"), "{w}");
         assert!(matches!(s.ui_requests.last(), Some(UiRequest::Message { .. })), "the warning reaches the status bar");
+    }
+
+    fn png() -> Vec<u8> {
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(8, 8, image::Rgb([0, 160, 0])))
+            .write_to(&mut out, image::ImageFormat::Png)
+            .expect("png");
+        out.into_inner()
+    }
+
+    fn clip_of(s: &Session, id: u64) -> deckcraft_model::MediaClip {
+        match s.doc().expect("doc").shape(ShapeId(id as u32)).map(|sh| &sh.kind) {
+            Some(deckcraft_model::ShapeKind::Media(m)) => m.clone(),
+            _ => panic!("not a media shape"),
+        }
+    }
+
+    /// Audio Format: Change Picture gives an audio clip its own icon, refusing a file that is no
+    /// picture (the clip would show nothing); Reset Picture brings back the built-in speaker.
+    #[test]
+    fn an_audio_clips_picture_is_changed_and_reset() {
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &json!({"layout": "blank"}));
+        let id = s.execute("insert.audio", &json!({"name": "tone.wav", "data": base64_encode(&wav())})).expect("insert")["id"].as_u64().expect("id");
+        assert!(clip_of(&s, id).poster.is_none());
+        s.execute("picture.change", &json!({"ids": [id], "name": "icon.png", "data": base64_encode(&png())})).expect("change");
+        let icon = clip_of(&s, id).poster.expect("the clip has its own picture");
+        assert!(s.execute("picture.change", &json!({"ids": [id], "name": "tone.wav", "data": base64_encode(&wav())})).is_err(), "not a picture");
+        assert_eq!(clip_of(&s, id).poster, Some(icon), "a refused file leaves the icon as it was");
+        s.execute("picture.reset", &json!({"ids": [id]})).expect("reset");
+        assert!(clip_of(&s, id).poster.is_none(), "reset brings back the built-in speaker");
+    }
+
+    /// Video Format: Poster Frame › Image From File sets the poster and keeps the video's crop;
+    /// Reset Design keeps the poster; Poster Frame › Reset removes it.
+    #[test]
+    fn a_videos_poster_frame_comes_from_a_file_and_is_reset() {
+        let mut s = Session::with_new();
+        let clip = include_bytes!("../../../media/tests/fixtures/clip-h264.mp4");
+        let id = s.execute("insert.video", &json!({"name": "clip.mp4", "data": base64_encode(clip)})).expect("insert")["id"].as_u64().expect("id");
+        let crop = [0.1, 0.0, 0.0, 0.0];
+        s.edit(|doc, sel| {
+            let sh = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, sel).expect("shapes"), ShapeId(id as u32)).expect("shape");
+            if let deckcraft_model::ShapeKind::Media(m) = &mut sh.kind {
+                m.crop = crop;
+            }
+            Ok(())
+        })
+        .expect("crop");
+        s.execute("picture.change", &json!({"ids": [id], "name": "poster.png", "data": base64_encode(&png())})).expect("change");
+        let from_file = clip_of(&s, id).poster.expect("poster from the file");
+        assert_eq!(clip_of(&s, id).crop, crop, "the video's crop also crops the playing video, so it stays");
+        s.execute("picture.reset", &json!({"ids": [id]})).expect("reset design");
+        assert_eq!(clip_of(&s, id).poster, Some(from_file), "Reset Design keeps the poster");
+        s.execute("media.posterFrame", &json!({"id": id, "reset": true})).expect("poster reset");
+        assert!(clip_of(&s, id).poster.is_none(), "Poster Frame › Reset removes it");
     }
 }

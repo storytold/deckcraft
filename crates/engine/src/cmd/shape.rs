@@ -170,7 +170,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Reset Picture",
             ["Picture Format", "Adjust"],
             None,
-            "{ids?} (discards the picture's formatting: adjustments, artistic effect, crop, transparency, picture-style effects and outline; the frame shape from Change Shape or Crop to Shape, the size and the position stay)",
+            "{ids?} (discards the picture's formatting: adjustments, artistic effect, crop, transparency, picture-style effects and outline; the frame shape from Change Shape or Crop to Shape, the size and the position stay). On an audio clip it removes the clip's own picture, so the built-in speaker shows",
             has_selection,
             picture_reset
         ),
@@ -179,7 +179,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Change Picture",
             ["Picture Format", "Adjust"],
             None,
-            "{path? | data: base64, name?, ids?}",
+            "{path? | data: base64, name?, ids?} (replaces a picture; on an audio clip it sets the clip's icon, on a video the picture shown before it plays; a clip refuses a file that is not a picture)",
             has_selection,
             picture_change
         ),
