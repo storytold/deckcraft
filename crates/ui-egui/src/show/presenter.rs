@@ -312,7 +312,8 @@ fn slide_column(ui: &mut Ui, show: &mut Show, doc: &Presentation, avail: Rect, c
             ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
         }
     }
-    let x = (avail.min.x + avail.width() * show.current_split.clamp(0.04, 0.85)).clamp(avail.min.x + 36.0, avail.max.x - 48.0);
+    // `clamp` panics when the window is narrower than the two margins. `max` then `min` does not.
+    let x = (avail.min.x + avail.width() * show.current_split.clamp(0.04, 0.85)).max(avail.min.x + 36.0).min(avail.max.x - 48.0);
     let handle = Rect::from_min_max(pos2(x - 4.0, avail.min.y), pos2(x + 4.0, avail.max.y));
     ui.painter().vline(x, handle.y_range(), Stroke::new(2.0, Color32::from_gray(70)));
     let hit = ui.interact(handle, ui.scope_id().with("presenter_current_split"), Sense::click_and_drag());
@@ -397,7 +398,7 @@ fn next_column(ui: &mut Ui, show: &mut Show, doc: &Presentation, right: Rect, ne
             }
         }
     }
-    let y = (right.min.y + right.height() * split).clamp(right.min.y + 36.0, right.max.y - 48.0);
+    let y = (right.min.y + right.height() * split).max(right.min.y + 36.0).min(right.max.y - 48.0);
     let handle = Rect::from_min_max(pos2(right.min.x, y - 4.0), pos2(right.max.x, y + 4.0));
     ui.painter().hline(handle.x_range(), y, Stroke::new(2.0, Color32::from_gray(70)));
     let hit = ui.interact(handle, ui.scope_id().with("presenter_next_split"), Sense::click_and_drag());
