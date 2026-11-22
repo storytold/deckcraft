@@ -1101,6 +1101,89 @@ fn a_browsed_show_window_takes_the_slide_shape() {
     assert!(!fits(full, wide));
 }
 
+/// A settled window moved onto a smaller monitor, without a resize, is brought back onto it; on
+/// its own monitor it is left alone.
+#[test]
+fn a_browsed_show_window_moved_to_a_smaller_monitor_fits_it() {
+    use super::window_fit::{SETTLE_SECS, Step, WindowFit};
+    let wide = 16.0 / 9.0;
+    let slide = vec2(1440.0, 810.0);
+    let mut moved = WindowFit::new(None, false);
+    let big = Some(vec2(1440.0, 900.0));
+    assert_eq!(moved.frame(slide, slide, wide, big, None, 0.0), Step::Idle);
+    assert_eq!(moved.frame(slide, slide, wide, big, None, 1.0), Step::Idle);
+    let small = Some(vec2(1280.0, 1024.0));
+    assert!(matches!(moved.frame(slide, slide, wide, small, None, 2.0), Step::Wait(_)));
+    assert_eq!(moved.frame(slide, slide, wide, small, None, 2.0 + SETTLE_SECS), Step::Resize(vec2(1280.0, 720.0)));
+}
+
+/// The window's minimum gives way with the slide: a 1:4 slide on a small monitor asks for a
+/// window narrower than 320 pt, and the minimum must not hold it at 320 with bars beside it.
+#[test]
+fn a_browsed_show_window_minimum_follows_a_narrow_fit() {
+    use super::window_fit::{SHOW_MIN_INNER_SIZE, min_inner_size_for};
+    assert_eq!(min_inner_size_for(vec2(201.0, 804.0)), vec2(201.0, 180.0));
+    assert_eq!(min_inner_size_for(vec2(1376.0, 138.0)), vec2(320.0, 138.0));
+    assert_eq!(min_inner_size_for(vec2(1440.0, 810.0)), SHOW_MIN_INNER_SIZE);
+    assert_eq!(min_inner_size_for(vec2(0.0, f32::NAN)).x, 1.0);
+}
+
+/// A browsed show replaced by Reading View gives the editor its window back at once; one
+/// replaced by another browsed show keeps the editor's size from before the first, which comes
+/// back when the show ends. The harness window, like one on Wayland, has no position.
+#[test]
+fn a_replaced_browsed_show_gives_the_editor_its_window_back() {
+    use super::window_fit::SHOW_MIN_INNER_SIZE;
+    use egui::ViewportCommand::{InnerSize, MinInnerSize};
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("show.setup", &json!({"type": "browsed"})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = false;
+    let editor = vec2(1440.0, 900.0);
+    let mut h = egui_kittest::Harness::builder().with_size(editor).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    let commands = |h: &egui_kittest::Harness<'_, SlideApp>| {
+        h.output().viewport_output.get(&egui::ViewportId::ROOT).map(|v| v.commands.clone()).unwrap_or_default()
+    };
+    for reading in [true, false] {
+        h.set_size(editor);
+        h.step();
+        h.state_mut().start_show(0, false);
+        h.step();
+        let c = commands(&h);
+        assert!(c.contains(&MinInnerSize(SHOW_MIN_INNER_SIZE)), "{c:?}");
+        // The window takes the slide's shape: it keeps its width and loses height.
+        let fitted = c.iter().find_map(|c| if let InnerSize(s) = c { Some(*s) } else { None }).unwrap();
+        assert!(fitted.x == editor.x && fitted.y < editor.y - 50.0, "{c:?}");
+        h.set_size(fitted);
+        h.step();
+        h.state_mut().start_show(1, reading);
+        h.step();
+        let c = commands(&h);
+        if reading {
+            assert!(h.state().show_window.is_none(), "reading view doesn't fit the window");
+            assert!(c.contains(&MinInnerSize(crate::EDITOR_MIN_INNER_SIZE)), "{c:?}");
+            assert!(c.contains(&InnerSize(editor)), "the editor's size, at once: {c:?}");
+        } else {
+            assert!(h.state().show_window.is_some());
+            assert!(!c.contains(&InnerSize(editor)), "still a browsed show: {c:?}");
+            h.state_mut().show = None;
+            h.step();
+            let c = commands(&h);
+            assert!(c.contains(&InnerSize(editor)), "the size from before the first show, not {fitted:?}: {c:?}");
+        }
+        h.state_mut().show = None;
+        h.step();
+        assert!(h.state().show_window.is_none());
+    }
+}
+
 /// The window is sized when a browsed show starts, then a resize is snapped only after it has
 /// settled, keeping the side the user changed more.
 #[test]

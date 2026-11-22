@@ -4,7 +4,7 @@ use super::media::{
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
-use super::window_fit::{SHOW_MIN_INNER_SIZE, Step, WindowFit};
+use super::window_fit::{SHOW_MIN_INNER_SIZE, Step, WindowFit, min_inner_size_for};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
     wheel_zoom_lines,
@@ -243,13 +243,19 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
 fn start_window_fit(app: &mut SlideApp, ctx: &egui::Context) {
     // A restore still pending from a show that ended this frame keeps the editor's own size.
     if app.show_window.is_none() {
-        let (inner, maximized) = ctx.input(|i| (i.viewport().inner_rect.map(|r| r.size()), i.viewport().maximized == Some(true)));
-        app.show_window = Some(WindowFit::new(inner, maximized));
+        let maximized = ctx.input(|i| i.viewport().maximized == Some(true));
+        app.show_window = Some(WindowFit::new(Some(window_size(ctx)), maximized));
     }
     if ctx.input(|i| i.viewport().maximized == Some(true)) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
     }
     ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(SHOW_MIN_INNER_SIZE));
+}
+
+/// The window's inner size in points. On Wayland a window has no position, so egui leaves
+/// `inner_rect` empty; the viewport's own rectangle has the same size and is always there.
+fn window_size(ctx: &egui::Context) -> egui::Vec2 {
+    ctx.input(|i| i.viewport().inner_rect.map(|r| r.size())).unwrap_or_else(|| ctx.viewport_rect().size())
 }
 
 /// Keep a browsed show's window in the slide's shape: size it once, then snap it after a resize.
@@ -258,18 +264,21 @@ fn fit_window(app: &mut SlideApp, ctx: &egui::Context, doc: &Presentation, full:
     if app.show_window.is_none() {
         return;
     }
-    let (inner, whole, monitor) = ctx.input(|i| {
+    let (whole, monitor) = ctx.input(|i| {
         let v = i.viewport();
-        (v.inner_rect.map(|r| r.size()), v.fullscreen == Some(true) || v.maximized == Some(true), v.monitor_size)
+        (v.fullscreen == Some(true) || v.maximized == Some(true), v.monitor_size)
     });
-    let Some(inner) = inner else { return };
+    let inner = window_size(ctx);
     if whole {
         return;
     }
     let held = app.services.mouse_held.as_mut().map(|held| held());
     let Some(fit) = app.show_window.as_mut() else { return };
     match fit.frame(inner, full.size(), slide_aspect(doc), monitor, held, now) {
-        Step::Resize(size) => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size)),
+        Step::Resize(size) => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min_inner_size_for(size)));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        }
         Step::Wait(secs) => {
             ctx.request_repaint_after(std::time::Duration::try_from_secs_f64(secs).unwrap_or(std::time::Duration::from_millis(300)));
         }

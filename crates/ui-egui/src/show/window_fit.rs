@@ -74,6 +74,14 @@ pub(super) fn fitted_inner_size(inner: Vec2, slide_area: Vec2, aspect: f32, keep
     (chrome + slide).round()
 }
 
+/// The window minimum a resize to `size` needs: the show's minimum, lowered to `size` where a
+/// very tall or very wide slide on a small monitor asks for less (see [`fitted_inner_size`]).
+/// Without it the window manager would hold the window at the minimum, bars and all, and every
+/// snap would ask again.
+pub(super) fn min_inner_size_for(size: Vec2) -> Vec2 {
+    SHOW_MIN_INNER_SIZE.min(size.max(Vec2::splat(1.0)))
+}
+
 /// Whether the slide area already has the slide's shape.
 pub(super) fn fits(slide_area: Vec2, aspect: f32) -> bool {
     !aspect.is_finite() || aspect <= 0.0 || (slide_area.y - slide_area.x / aspect).abs() <= TOLERANCE
@@ -139,6 +147,11 @@ impl WindowFit {
             self.seen = inner;
             self.changed_at = now;
             self.pending = true;
+        }
+        // A window moved onto a smaller monitor, without a resize, is brought back onto it.
+        if !on_monitor && !self.pending {
+            self.pending = true;
+            self.changed_at = now;
         }
         if !self.pending {
             return Step::Idle;
