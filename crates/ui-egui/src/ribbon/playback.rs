@@ -29,7 +29,9 @@ pub(super) fn playback(app: &mut SlideApp, ui: &mut Ui) {
         });
         rows(ui, |ui| {
             let mut hide = m.as_ref().is_some_and(|x| x.hide_while_not_playing);
-            if ui.checkbox(&mut hide, "Hide During Show").changed() {
+            // A video is hidden only until it plays; a sound's icon stays hidden all show.
+            let label = if m.as_ref().is_some_and(|x| x.video) { "Hide While Not Playing" } else { "Hide During Show" };
+            if ui.checkbox(&mut hide, label).changed() {
                 run(app, "media.options", json!({"hide": hide}));
             }
             let mut rw = m.as_ref().is_some_and(|x| x.rewind);

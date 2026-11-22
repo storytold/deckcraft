@@ -165,8 +165,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     let (w, h) = (doc.slide_size.width.max(1.0), doc.slide_size.height.max(1.0));
                     let scale = REMOTE_THUMB / w.max(h);
                     let size = (((w * scale).round() as u32).max(1), ((h * scale).round() as u32).max(1));
-                    let image = deckcraft_render::render_slide(&doc, i, &RenderOpts { scale, size: Some(size), ..Default::default() });
-                    let preview = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false));
+                    let preview = crate::presenter::Preview::from_image(&super::render::thumb_image(&doc, i, scale, size));
                     show.remote_grid.push(preview.unwrap_or(crate::presenter::Preview { width: 1, height: 1, rgba: vec![0; 4] }));
                 }
             }
@@ -498,7 +497,7 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
                     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
                 let timeline = ShowState::timeline(doc, prev);
                 let step = timeline.steps();
-                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], None);
+                let ci = render_frame(doc, prev, timeline, step, 0.0, size, super::render::hidden_on_entry(doc, prev), &[], threads, &[], &[], None);
                 tr.old = Some(crate::textures::upload(ctx, "trans-old", ci));
             }
             let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);

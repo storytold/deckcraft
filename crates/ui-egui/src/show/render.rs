@@ -121,7 +121,7 @@ pub(super) fn below_playing_video(doc: &Presentation, idx: usize, videos: &[Shap
 }
 
 /// Media on slide `idx` hidden until it plays, as it is when the slide is entered.
-fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
+pub(super) fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
     crate::media::slide_media(doc, idx).into_iter().filter(|(_, _, clip)| clip.hide_while_not_playing).map(|m| m.0).collect()
 }
 
@@ -208,14 +208,21 @@ fn thumb_size(width: f64, height: f64) -> (f64, f64, f64) {
     (scale, (sw * scale).round().max(1.0), (sh * scale).round().max(1.0))
 }
 
+/// Slide `i` as a grid thumbnail: as it looks when entered, so media hidden during the show
+/// stays out.
+pub(super) fn thumb_image(doc: &Presentation, i: usize, scale: f64, size: (u32, u32)) -> egui::ColorImage {
+    let skip = hidden_on_entry(doc, i);
+    let img = deckcraft_render::render_slide(doc, i, &RenderOpts { scale, size: Some(size), skip: &skip, ..Default::default() });
+    crate::textures::to_color_image(&img, false)
+}
+
 pub(super) fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usize) -> Option<TextureHandle> {
     if show.thumbs.len() >= GRID_CAP {
         return None;
     }
     // 320 wide, unless the slide is so tall that this would pass the height limit: fit that box.
     let (scale, w, h) = thumb_size(doc.slide_size.width, doc.slide_size.height);
-    let img = deckcraft_render::render_slide(doc, i, &RenderOpts { scale, size: Some((w as u32, h as u32)), ..Default::default() });
-    let tex = crate::textures::upload(ctx, format!("show-grid-{i}"), crate::textures::to_color_image(&img, false));
+    let tex = crate::textures::upload(ctx, format!("show-grid-{i}"), thumb_image(doc, i, scale, (w as u32, h as u32)));
     show.thumbs.push((i, tex.clone()));
     Some(tex)
 }
