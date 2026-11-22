@@ -349,6 +349,64 @@ fn change_file_type_png_can_leave_the_background_transparent() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Export › Change File Type exports every slide as its own picture, PNG or JPEG (#2019).
+#[test]
+fn change_file_type_exports_all_slides_as_pictures() {
+    let dir = temp_dir("all-slides");
+    let (services, asked) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    let title = h.state().session.active().unwrap().title();
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Change File Type");
+    h.run_steps(3);
+    click_on_page(&h, "JPEG Pictures, all slides (*.jpg)");
+    h.run_steps(2);
+    assert!(h.query_by_label("Transparent background").is_none(), "JPEG has no transparency");
+    click_on_page(&h, "Save As");
+    h.run_steps(3);
+    for k in 1..=3 {
+        let jpg = std::fs::read(dir.join(format!("{title}{k}.jpg"))).unwrap();
+        assert!(jpg.starts_with(&[0xFF, 0xD8]), "slide {k} is a JPEG");
+    }
+    assert!(!dir.join(format!("{title}4.jpg")).exists(), "one picture per slide");
+
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Change File Type");
+    h.run_steps(3);
+    click_on_page(&h, "PNG Pictures, all slides (*.png)");
+    h.run_steps(2);
+    h.get_by_label("Transparent background").click();
+    h.run_steps(2);
+    click_on_page(&h, "Save As");
+    h.run_steps(3);
+    for k in 1..=3 {
+        let png = std::fs::read(dir.join(format!("{title}{k}.png"))).unwrap();
+        let img = deckcraft_render::decode_image(&png).unwrap();
+        assert_eq!(img.get_pixel(2, 2).0[3], 0, "slide {k} leaves the background out");
+    }
+    assert_eq!(*asked.borrow(), vec![format!("{title}.jpg"), format!("{title}.png")]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Save As shows every type in its open list: the last one is picked by a click, not hidden
+/// below the list's default height (#2019).
+#[test]
+fn save_as_type_list_shows_every_type() {
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Save as type").click();
+    h.run_steps(3);
+    let (last, label, _) = crate::backstage::SAVE_TYPES[crate::backstage::SAVE_TYPES.len() - 1];
+    h.get_by_label(label).click();
+    h.run_steps(3);
+    assert_eq!(h.state().backstage.as_ref().map(|b| b.file_type), Some(last));
+}
+
 /// Close closes a saved presentation at once and asks about unsaved changes first.
 #[test]
 fn close_closes_and_asks_about_unsaved_changes() {
@@ -391,6 +449,64 @@ fn ctrl_w_asks_before_closing_unsaved_changes() {
     h.run_steps(3);
     assert_eq!(h.state().session.documents().len(), 1);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
+}
+
+/// Framed by a page that keeps the files (`?host=parent`), the Close prompt's Save is a real save:
+/// when the page doesn't get the file the presentation stays open with its changes, and when it
+/// does the presentation closes. (A plain browser download closes either way.)
+#[test]
+fn host_close_prompt_keeps_the_presentation_when_the_save_fails() {
+    for fail in [true, false] {
+        let services = Services {
+            host_save: Some(Box::new(move |_: &str, _: &[u8], _: bool| if fail { Err("the page is gone".into()) } else { Ok(()) })),
+            download: Some(Box::new(|_: &str, _: &[u8]| {})),
+            ..Default::default()
+        };
+        let mut h = harness(SlideApp::new(Session::with_new(), services));
+        h.state_mut().run("slide.new", json!({})).unwrap();
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::W);
+        h.run_steps(3);
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
+        // Enter is the prompt's Save.
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        assert!(h.state().dialog.is_none(), "fail={fail}");
+        let open = h.state().session.documents().len();
+        assert_eq!(open, usize::from(fail), "fail={fail}: open presentations");
+        if fail {
+            assert!(h.state().session.active().unwrap().is_dirty());
+        }
+    }
+}
+
+/// Framed by a page that keeps the files, Save As › Save under the presentation's own name goes
+/// back to the slide once the page has the file. The bug this prevents: that save leaves the
+/// file and the dirty flag as they were, so the Save As page stayed open and a second click sent
+/// the file again.
+#[test]
+fn host_save_as_under_the_same_name_returns_to_the_slide() {
+    let got: Rc<RefCell<Vec<(String, bool)>>> = Default::default();
+    let saves = got.clone();
+    let services = Services {
+        host_save: Some(Box::new(move |name: &str, _: &[u8], save_as: bool| {
+            saves.borrow_mut().push((name.to_string(), save_as));
+            Ok(())
+        })),
+        download: Some(Box::new(|_: &str, _: &[u8]| {})),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::new(), services);
+    app.start_for_host().unwrap();
+    let deck = deckcraft_engine::cmd::file::save_bytes(&Session::with_new().doc().unwrap().doc, "pptx").unwrap();
+    app.open_from_host(Some("deck.pptx"), &deck);
+    let mut h = harness(app);
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(*got.borrow(), [("deck.pptx".to_string(), true)]);
+    assert!(h.state().backstage.is_none(), "the save returns to the slide");
 }
 
 /// Info shows the presentation's counts and properties, and edits them through file.properties.

@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-03 · **Change:** trivial (run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-09 · **Change:** minor (legacy `.ppt` import landed; its entry lists what it leaves out; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -117,12 +117,18 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** macro decks can't be opened even to view.
 - **Estimate:** 2–4 h (content types; keep `vbaProject.bin` untouched without running it).
 
-### No legacy `.ppt`/`.pot`/`.pps` import
-- **Evidence:** PowerPoint for Mac still opens and saves the 97–2003 binary formats
-  (`CFBundleDocumentTypes`); DeckCraft doesn't read them.
-- **Impact:** archives of older decks don't open.
-- **Estimate:** 20–35 h (import only, from the public [MS-PPT] spec). Owner decision whether it's
-  worth it.
+### Legacy `.ppt` import is partial
+- **Evidence:** `crates/ppt` opens PowerPoint 97–2003 files (slides, masters, text and styles, shapes,
+  pictures, notes) but leaves out transitions, animations, hyperlinks and actions, sounds and
+  video; tables arrive as grouped shapes, OLE objects and charts as their preview pictures, WordArt
+  as plain text; PICT pictures don't show, and embossed text is plain. Only checked against decks
+  built in tests and one outside lecture deck: committed tests use files built from records (no
+  PowerPoint-made files, AGENTS.md §1.1), so real decks need a corpus of files we own, kept in a
+  separate repository.
+- **Impact:** old decks open with their text, layout and pictures, but lose their motion, links,
+  sounds and video. Tables, OLE objects, charts and WordArt come in degraded and can't be edited as
+  such. PICT pictures are missing, and embossed text comes in plain.
+- **Estimate:** 10–18 h (transitions and build effects, interactive info, tables, a corpus).
 
 ### No OpenDocument `.odp`
 - **Evidence:** PowerPoint opens and saves `.odp`.
@@ -161,7 +167,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Estimate:** 3–5 h. **Beta blocker.**
 
 ### Image paste fails on Windows (#1414)
-- **Evidence:** #53 is closed (PR #88 pastes an image-only clipboard as a picture); #1414 (Ctrl+V fails to paste external images on Windows) is open. Linux was not re-checked after #53 closed.
+- **Evidence:** #53 is closed (PR #88 pastes an image-only clipboard as a picture); #1414 (Ctrl+V fails to paste external images on Windows) is open. From the egui 0.37 migration (#1350, v0.11.1) to 0.15.0 the desktop build left out eframe's `clipboard` feature, so egui simulated a clipboard inside the app and Ctrl+V never read the system clipboard on any platform. Fixed 2026-11-01, as is a browser's Copy Image on Linux, which pasted its link because Ctrl+V preferred any text over the picture. #1414 may have either cause: re-test on Windows.
 - **Impact:** copy-paste of screenshots is a core workflow.
 - **Estimate:** 2–4 h. **Beta blocker.**
 
@@ -371,6 +377,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |
+| 2026-11-01 | trivial | Workflow-breaking regression: image paste entry: the OS clipboard was off from #1350 to 0.15.0; Linux re-checked, Windows #1414 to re-test |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
