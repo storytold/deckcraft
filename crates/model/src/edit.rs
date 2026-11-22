@@ -3,6 +3,7 @@
 
 use crate::text::{Paragraph, Run, RunKind, RunProps, TextBody};
 use crate::words;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// (paragraph, char offset in the paragraph).
 pub type Pos = (usize, usize);
@@ -419,6 +420,21 @@ fn smart_space(body: &mut TextBody, at: Pos) -> Pos {
     at
 }
 
+/// The position after the grapheme cluster at `pos`, or the next paragraph's start at a paragraph end.
+pub fn cluster_end(body: &TextBody, pos: Pos) -> Pos {
+    let (pi, ch) = clamp(body, pos);
+    let text = body.paragraphs.get(pi).map(Paragraph::text).unwrap_or_default();
+    // Boundaries come from the whole paragraph, so a caret inside a cluster deletes only to its end.
+    let mut end = 0;
+    for g in text.graphemes(true) {
+        end += g.chars().count();
+        if end > ch {
+            return (pi, end);
+        }
+    }
+    char_move(body, pos, true)
+}
+
 /// One character left/right across paragraph boundaries.
 pub fn char_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
     let (pi, ch) = clamp(body, pos);
@@ -512,6 +528,12 @@ pub fn change_case(s: &str, mode: &str) -> String {
 /// `title` and `sentence` carry their word/sentence state across piece boundaries. Each output
 /// piece is the changed form of the matching input piece, even where a character changes length.
 pub fn change_case_parts(parts: &[&str], mode: &str) -> Vec<String> {
+    if mode == "lower" {
+        let lower = parts.concat().to_lowercase();
+        let mut chars = lower.chars();
+        // Context changes sigma's form, while each character's expansion length stays the same.
+        return parts.iter().map(|s| chars.by_ref().take(s.chars().map(|c| c.to_lowercase().count()).sum()).collect()).collect();
+    }
     let mut start = true;
     // All characters of all pieces, so word-final sigma sees neighbours across piece boundaries.
     let all: Vec<char> = parts.iter().flat_map(|s| s.chars()).collect();
@@ -520,7 +542,6 @@ pub fn change_case_parts(parts: &[&str], mode: &str) -> Vec<String> {
         .iter()
         .map(|s| match mode {
             "upper" => s.to_uppercase(),
-            "lower" => s.to_lowercase(),
             "toggle" => s.chars().map(|c| if c.is_uppercase() { c.to_lowercase().collect::<String>() } else { c.to_uppercase().collect() }).collect(),
             _ => {
                 // `title` restarts after whitespace, sentence case after sentence punctuation.
@@ -575,6 +596,18 @@ mod tests {
         assert_eq!(change_case_parts(&["ΟΔΟΣ", "ΑΣ"], "title"), ["Οδοσ", "ας"]);
         assert_eq!(change_case_parts(&["ΟΔΟ", "ΣΑ"], "title"), ["Οδο", "σα"]);
         assert_eq!(change_case_parts(&["ΟΔΟΣ", " ΜΟΥ"], "title"), ["Οδος", " Μου"]);
+    }
+
+    #[test]
+    fn lowercase_keeps_context_and_run_boundaries() {
+        assert_eq!(change_case_parts(&["ΟΔΟ", "Σ"], "lower"), ["οδο", "ς"]);
+        assert_eq!(change_case_parts(&["ΟΣ", "Α"], "lower"), ["οσ", "α"]);
+        assert_eq!(change_case_parts(&["", "ΟΔΟ", "", "Σ", ""], "lower"), ["", "οδο", "", "ς", ""]);
+        assert_eq!(change_case_parts(&["İΟΔΟ", "Σ"], "lower"), ["i\u{307}οδο", "ς"]);
+        assert_eq!(change_case_parts(&["Ο", "\u{301}", "Σ"], "lower"), ["ο", "\u{301}", "ς"]);
+        assert_eq!(change_case_parts(&["ΟΣ", "\u{301}", "Α"], "lower"), ["οσ", "\u{301}", "α"]);
+        assert_eq!(change_case_parts(&["", "", ""], "lower"), ["", "", ""]);
+        assert!(change_case_parts(&[], "lower").is_empty());
     }
 
     #[test]

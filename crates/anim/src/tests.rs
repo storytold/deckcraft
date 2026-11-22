@@ -584,6 +584,34 @@ fn morph_does_not_draw_a_placeholder_that_has_no_frame_and_no_partner() {
 }
 
 #[test]
+fn morph_fades_the_end_that_has_a_frame_when_its_partner_has_none() {
+    // Same name and idx, so they pair; only one end is drawn at all, and it keeps its own frame
+    // and fades, whichever way the transition goes and whether or not the text matches.
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let ph = |id, text, frame: Option<Xfrm>| Shape {
+        ph: Some(deckcraft_model::Placeholder { kind: deckcraft_model::PhType::Obj, idx: 99, ..Default::default() }),
+        text: Some(TextBody::from_text(text)),
+        xfrm: frame,
+        ..shape(id, "Content Placeholder 1")
+    };
+    let framed = Some(Xfrm::new(50.0, 60.0, 300.0, 100.0));
+    for (same_text, framed_first) in [(false, true), (false, false), (true, true), (true, false)] {
+        let (ta, tb) = if same_text { ("Same", "Same") } else { ("Gone", "New") };
+        let (mut a, mut b) = (Slide::default(), Slide::default());
+        a.shapes = vec![ph(1, ta, if framed_first { framed } else { None })];
+        b.shapes = vec![ph(2, tb, if framed_first { None } else { framed })];
+        let f = morph_frame(&p, &a, &b, 0.25, &|_| false);
+        let drawn: Vec<_> = f.shapes.iter().filter(|(s, _)| s.xfrm.is_some()).collect();
+        assert_eq!(drawn.len(), 1, "{same_text} {framed_first}: only the end with a frame is drawn: {:?}", f.shapes.iter().map(|(s, _)| (s.xfrm, s.text.is_some())).collect::<Vec<_>>());
+        assert_eq!(drawn[0].0.xfrm, framed, "{same_text} {framed_first}: it keeps its own frame");
+        // The progress 0.25 is eased to 0.15625.
+        let opacity = if framed_first { 0.84375 } else { 0.15625 };
+        let got = f.opacity_of(drawn[0].0.id);
+        assert!((got - opacity).abs() < 1e-9, "{same_text} {framed_first}: it fades, {got}");
+    }
+}
+
+#[test]
 fn morph_pairs_leaves_unrelated_text_boxes_alone() {
     // A text box that leaves and an unrelated one that arrives fade in place (#119).
     let p = deckcraft_model::defaults::new_presentation(None);
@@ -897,6 +925,8 @@ fn show_back_leaves_a_slide_whose_first_step_is_automatic() {
         // While the automatic step plays.
         assert_eq!(s.prev(&p), ShowAction::Slide(0), "{start:?}");
         assert_eq!(s.next(&p), ShowAction::Slide(1));
+        // Going forward again plays the automatic step again (#2090).
+        assert_eq!(s.step_done(&p), ShowAction::FinishStep(0), "{start:?}");
         // Once it has played, the click step is undone first, then Back leaves the slide.
         assert_eq!(s.next(&p), ShowAction::PlayStep(1));
         assert_eq!(s.step_done(&p), ShowAction::FinishStep(1));
@@ -904,6 +934,56 @@ fn show_back_leaves_a_slide_whose_first_step_is_automatic() {
         assert_eq!(s.prev(&p), ShowAction::Slide(0), "{start:?}");
         assert_eq!((s.step, s.playing), (0, false));
     }
+}
+
+#[test]
+fn a_slide_entered_going_forward_again_plays_its_animations_again() {
+    // #2090: the show remembered slide 2 as fully built, so its entrance effects did not play the
+    // second time the show advanced to it.
+    for start in [AnimStart::WithPrevious, AnimStart::AfterPrevious] {
+        let mut p = pres(3);
+        Arc::make_mut(&mut p.slides[1]).shapes = vec![shape(1, "A")];
+        Arc::make_mut(&mut p.slides[1]).animations = vec![anim(1, AnimClass::Entrance, "fade", start)];
+        let mut s = ShowState::new(&p);
+        assert_eq!(s.next(&p), ShowAction::Slide(1));
+        assert_eq!(s.step_done(&p), ShowAction::FinishStep(0));
+        assert_eq!(s.prev(&p), ShowAction::Slide(0), "{start:?}");
+        assert_eq!(s.next(&p), ShowAction::Slide(1));
+        assert_eq!((s.step, s.playing), (0, true), "{start:?}: the slide starts again");
+        let a = ShowState::timeline(&p, 1).state(ShapeId(1), None, s.step, 0.0);
+        assert!(!a.visible || a.opacity < 0.01, "{start:?}: the shape has not come in yet");
+        // Back from the next slide still shows it as it was left.
+        assert_eq!(s.step_done(&p), ShowAction::FinishStep(0));
+        assert_eq!(s.next(&p), ShowAction::Slide(2));
+        assert_eq!(s.prev(&p), ShowAction::Slide(1));
+        assert_eq!((s.step, s.playing), (1, false), "{start:?}");
+    }
+    // An On Click build left by a jump starts again when the show advances to the slide.
+    let mut p = pres(2);
+    Arc::make_mut(&mut p.slides[1]).shapes = vec![shape(1, "A")];
+    Arc::make_mut(&mut p.slides[1]).animations = vec![anim(1, AnimClass::Entrance, "fade", AnimStart::OnClick)];
+    let mut s = ShowState::new(&p);
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert_eq!(s.next(&p), ShowAction::PlayStep(0));
+    assert_eq!(s.step_done(&p), ShowAction::FinishStep(0));
+    assert_eq!(s.goto(&p, 0), ShowAction::Slide(0));
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert_eq!((s.step, s.playing), (0, false));
+}
+
+#[test]
+fn a_looping_show_plays_the_first_slide_again() {
+    // #2090: a kiosk or loop-until-Esc show comes round to the first slide going forward.
+    let mut p = pres(2);
+    p.show.loop_until_esc = true;
+    Arc::make_mut(&mut p.slides[0]).shapes = vec![shape(1, "A")];
+    Arc::make_mut(&mut p.slides[0]).animations = vec![anim(1, AnimClass::Entrance, "fade", AnimStart::WithPrevious)];
+    let mut s = ShowState::new(&p);
+    assert!(s.playing);
+    assert_eq!(s.step_done(&p), ShowAction::FinishStep(0));
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert_eq!(s.next(&p), ShowAction::Slide(0));
+    assert_eq!((s.step, s.playing), (0, true));
 }
 
 #[test]
