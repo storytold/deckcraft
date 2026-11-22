@@ -28,6 +28,12 @@ fn wav() -> Vec<u8> {
     b
 }
 
+/// The clip's Format tab comes before Playback in the tab row, as in the layout these tabs follow.
+fn format_tab_before_playback(h: &Harness<'_, SlideApp>, format: &str) {
+    let (f, p) = (h.get_by_label(format).rect(), h.get_by_label("Playback").rect());
+    assert!(f.max.x <= p.min.x, "{format} at {f:?} is not before Playback at {p:?}");
+}
+
 /// A blank slide with one selected clip inserted by `cmd` from `name`/`bytes`, showing `tab`.
 fn with_clip(cmd: &str, name: &str, bytes: &[u8], tab: &str) -> Harness<'static, SlideApp> {
     let mut s = Session::with_new();
@@ -51,7 +57,7 @@ fn with_clip(cmd: &str, name: &str, bytes: &[u8], tab: &str) -> Harness<'static,
 fn an_audio_clip_has_an_audio_format_tab_with_its_picture() {
     let h = with_clip("insert.audio", "tone.wav", &wav(), "Audio Format");
     assert!(h.query_by_label("Video Format").is_none(), "no Video Format tab for audio");
-    assert!(h.query_by_label("Playback").is_some(), "Playback stays");
+    format_tab_before_playback(&h, "Audio Format");
     for label in ["Change Picture", "Reset Picture"] {
         assert!(h.query_by_label(label).is_some(), "{label} on Audio Format");
     }
@@ -62,6 +68,7 @@ fn a_video_has_a_video_format_tab_with_its_poster_frame() {
     let clip = include_bytes!("../../../media/tests/fixtures/clip-h264.mp4");
     let h = with_clip("insert.video", "clip.mp4", clip, "Video Format");
     assert!(h.query_by_label("Audio Format").is_none(), "no Audio Format tab for video");
+    format_tab_before_playback(&h, "Video Format");
     for label in ["Play", "Poster Frame", "Reset Design"] {
         assert!(h.query_by_label(label).is_some(), "{label} on Video Format");
     }
