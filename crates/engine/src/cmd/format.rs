@@ -62,7 +62,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!(
+            "format.font",
+            "Font",
+            ["Home", "Font"],
+            None,
+            "{family, eastAsia?: family, complexScript?: family} — `family` is the Latin typeface (`a:latin`); the other two set the East Asian (`a:ea`) and complex-script (`a:cs`) typefaces, which are left alone when not given",
+            has_text_or_shapes,
+            font
+        ),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -70,7 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textTransparency",
             "Text Transparency",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{value: 0..1} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
             has_text_or_shapes,
@@ -128,7 +136,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textOutline",
             "Text Outline",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{color?, width?: pt} (no color = none)",
             has_text_or_shapes,
@@ -137,7 +145,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textWarp",
             "Text Transform",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{preset: a prstTxWarp name or none, adj?: [finite raw guide values, at most 8]} — none clears the transform; omitted adj uses the preset's defaults",
             has_text_or_shapes,
@@ -423,20 +431,28 @@ mod tests {
     }
 
     #[test]
-    fn font_dialog_ok_accepts_preset_and_system_names_it_does_not_know() {
+    fn font_dialog_ok_without_color_keeps_colors_a_command_cannot_give() {
         use deckcraft_color::Rgba;
         let last = Rgba::rgb(0x12, 0x34, 0x56);
         let preset = ColorRef { base: ColorBase::Preset { name: "notAColor".into() }, mods: vec![] }.with(ColorTransform::LumMod(50_000));
         let system = ColorRef { base: ColorBase::System { name: "notAColor".into(), last }, mods: vec![] };
-        for (color, drawn) in [(preset, ColorRef::rgb(Rgba::BLACK).with(ColorTransform::LumMod(50_000))), (system, ColorRef::rgb(last))] {
+        // More transforms than a command's `mods` list may carry, as an opened file can hold.
+        let many = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![ColorTransform::Inv; crate::cmd::MAX_COLOR_MODS + 1] };
+        for color in [preset, system, many] {
             let mut s = shape();
-            let fill = Fill::Solid { color };
+            let fill = Fill::Solid { color: color.clone() };
             format_run(&mut s, &|r| r.fill = Some(fill.clone())).unwrap();
             s.ui_requests.clear();
             s.execute("format.fontDialog", &json!({})).unwrap();
-            let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last().cloned() else { panic!("dialog request") };
-            s.execute("format.fontDialog", &json!({"color": params["color"], "size": 20.0})).unwrap();
-            assert_eq!(props(&s).fill, Some(Fill::Solid { color: drawn }), "{}", params["color"]);
+            let Some(UiRequest::Dialog { mut params, .. }) = s.ui_requests.last().cloned() else { panic!("dialog request") };
+            // OK with the Color field untouched and another field edited, as the dialog sends it.
+            params.as_object_mut().unwrap().remove("color");
+            params["size"] = json!(20.0);
+            params["bold"] = json!(true);
+            s.execute("format.fontDialog", &params).unwrap();
+            let r = props(&s);
+            assert_eq!((r.size, r.bold), (Some(20.0), Some(true)));
+            assert_eq!(r.fill, Some(Fill::Solid { color }));
         }
     }
 
