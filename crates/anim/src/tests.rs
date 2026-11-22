@@ -602,7 +602,12 @@ fn morph_fades_the_end_that_has_a_frame_when_its_partner_has_none() {
         b.shapes = vec![ph(2, tb, if framed_first { None } else { framed })];
         let f = morph_frame(&p, &a, &b, 0.25, &|_| false);
         let drawn: Vec<_> = f.shapes.iter().filter(|(s, _)| s.xfrm.is_some()).collect();
-        assert_eq!(drawn.len(), 1, "{same_text} {framed_first}: only the end with a frame is drawn: {:?}", f.shapes.iter().map(|(s, _)| (s.xfrm, s.text.is_some())).collect::<Vec<_>>());
+        assert_eq!(
+            drawn.len(),
+            1,
+            "{same_text} {framed_first}: only the end with a frame is drawn: {:?}",
+            f.shapes.iter().map(|(s, _)| (s.xfrm, s.text.is_some())).collect::<Vec<_>>()
+        );
         assert_eq!(drawn[0].0.xfrm, framed, "{same_text} {framed_first}: it keeps its own frame");
         // The progress 0.25 is eased to 0.15625.
         let opacity = if framed_first { 0.84375 } else { 0.15625 };
