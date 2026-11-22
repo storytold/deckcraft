@@ -512,6 +512,31 @@ pub fn apply_layout_in_place(doc: &mut Presentation, index: usize, layout: Layou
     apply_layout_with(doc, index, layout, false)
 }
 
+/// Gives every placeholder of slide `index` that takes its frame from its layout that frame as its
+/// own, where it is drawn now. A change of master calls it before the old master goes: the slide's
+/// layout is not in the document any more by the time the slide moves to the new one.
+pub fn pin_inherited_frames(doc: &mut Presentation, index: usize) {
+    let Some(slide) = doc.slides.get(index) else { return };
+    let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(doc, slide) else { return };
+    let frames: Vec<Option<deckcraft_model::Xfrm>> = slide
+        .shapes
+        .iter()
+        .map(|s| {
+            (s.ph.is_some() && s.xfrm.is_none() && !deckcraft_model::resolve::lacks_frame(&ctx, s)).then(|| deckcraft_model::resolve::xfrm(&ctx, s))
+        })
+        .collect();
+    if frames.iter().all(Option::is_none) {
+        return;
+    }
+    if let Some(slide) = doc.slides.get_mut(index) {
+        for (s, f) in Arc::make_mut(slide).shapes.iter_mut().zip(frames) {
+            if f.is_some() {
+                s.xfrm = f;
+            }
+        }
+    }
+}
+
 fn apply_layout_with(doc: &mut Presentation, index: usize, layout: LayoutId, leftovers_to_the_edges: bool) -> Result<()> {
     let lay_shapes: Vec<deckcraft_model::Shape> =
         doc.layout(layout).map(|(_, l)| l.shapes.clone()).ok_or_else(|| bad("slide.layout", "no such layout"))?;

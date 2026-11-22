@@ -289,3 +289,54 @@ fn missing_title_placeholder_is_recreated(s: &mut Session) {
     assert!((box_.x - 60.0).abs() < 0.01 && (box_.y - 29.0).abs() < 0.01);
     assert!((box_.w - 840.0).abs() < 0.01 && (box_.h - 104.0).abs() < 0.01);
 }
+
+#[test]
+fn a_slide_keeps_a_placeholder_the_new_masters_layout_lacks_where_it_was_drawn() {
+    // The slide is on a custom layout of two contents; the template has no layout of that name or
+    // kind, so the slide goes to its Title and Content, which has one content placeholder. The
+    // second content is left over and keeps the frame the old layout gave it, though the old
+    // master (and with it that layout) is gone once the slide moves.
+    let (data, _, _) = brand_template();
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "Agenda", "body": "One"})).unwrap();
+    s.edit(|doc, _| {
+        // A custom layout of the Title and Content one plus a second content placeholder.
+        let lid = deckcraft_model::LayoutId(doc.alloc_id().unwrap());
+        let second = deckcraft_model::ShapeId(doc.alloc_id().unwrap());
+        let m = Arc::make_mut(&mut doc.masters[0]);
+        let mut l = m.layouts.iter().find(|l| l.kind == deckcraft_model::LayoutType::TitleAndContent).cloned().unwrap();
+        (l.id, l.name, l.kind) = (lid, "Mine".into(), deckcraft_model::LayoutType::Custom);
+        l.shapes.push(deckcraft_model::Shape {
+            id: second,
+            name: "Content Placeholder 3".into(),
+            ph: Some(deckcraft_model::Placeholder { kind: PhType::Obj, idx: 2, ..Default::default() }),
+            xfrm: Some(deckcraft_model::Xfrm::new(480.0, 150.0, 400.0, 300.0)),
+            ..Default::default()
+        });
+        m.layouts.push(l);
+        let id = deckcraft_model::ShapeId(doc.alloc_id().unwrap());
+        let sl = Arc::make_mut(&mut doc.slides[0]);
+        sl.layout = lid;
+        sl.shapes.push(deckcraft_model::Shape {
+            id,
+            name: "Content 2".into(),
+            ph: Some(deckcraft_model::Placeholder { kind: PhType::Obj, idx: 2, ..Default::default() }),
+            text: Some(deckcraft_model::TextBody::from_text("Two")),
+            ..Default::default()
+        });
+        Ok(())
+    })
+    .unwrap();
+    let drawn = |s: &Session| {
+        let doc = &s.doc().unwrap().doc;
+        let sl = &doc.slides[0];
+        let ctx = deckcraft_model::resolve::Ctx::for_slide(doc, sl).unwrap();
+        sl.shapes.iter().filter(|sh| sh.name == "Content 2").map(|sh| deckcraft_model::resolve::xfrm(&ctx, sh)).collect::<Vec<_>>()
+    };
+    let before = drawn(&s);
+    assert_eq!(before.len(), 1, "the second content placeholder is on the slide");
+    s.execute("design.browseTheme", &json!({"name": "Brand.pptx", "data": data})).unwrap();
+    let doc = &s.doc().unwrap().doc;
+    assert!(doc.slides.iter().all(|sl| doc.masters[0].layout(sl.layout).is_some()));
+    assert_eq!(drawn(&s), before, "it is drawn where it was");
+}
