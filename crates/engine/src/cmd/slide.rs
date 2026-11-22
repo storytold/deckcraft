@@ -497,9 +497,32 @@ pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> R
         let id = deckcraft_model::ShapeId(doc.alloc_id().ok_or_else(|| bad("slide.layout", NO_ID_SPACE))?);
         fresh.push((id, ls.clone()));
     }
+    // A placeholder that inherits its frame keeps it where it is drawn now: one left over below
+    // pairs with nothing in the new layout, and would lose its frame and vanish.
+    let frames: Vec<Option<deckcraft_model::Xfrm>> = {
+        let slide = doc.slides.get(index).ok_or_else(|| bad("slide.layout", "no slide"))?;
+        let ctx = deckcraft_model::resolve::Ctx::for_slide(doc, slide);
+        // A footer, date or slide number pairs with the new layout's by idx, and then takes its frame.
+        let pairs_anyway = |s: &deckcraft_model::Shape| {
+            s.ph.as_ref().is_some_and(|p| p.kind.is_footer_kind() && lay_shapes.iter().any(|l| l.ph.as_ref().is_some_and(|q| q.idx == p.idx)))
+        };
+        let inherits = |s: &deckcraft_model::Shape| s.ph.is_some() && s.xfrm.is_none() && !pairs_anyway(s);
+        slide
+            .shapes
+            .iter()
+            .map(|s| {
+                ctx.as_ref().filter(|c| inherits(s) && !deckcraft_model::resolve::lacks_frame(c, s)).map(|c| deckcraft_model::resolve::xfrm(c, s))
+            })
+            .collect()
+    };
     let slide = doc.slides.get_mut(index).ok_or_else(|| bad("slide.layout", "no slide"))?;
     let slide = Arc::make_mut(slide);
     let mut old: Vec<deckcraft_model::Shape> = std::mem::take(&mut slide.shapes);
+    for (o, f) in old.iter_mut().zip(frames) {
+        if f.is_some() {
+            o.xfrm = f;
+        }
+    }
     let mut out = vec![];
     for (id, ls) in fresh {
         let Some(lph) = ls.ph.clone() else { continue };
@@ -562,12 +585,25 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|doc, sel| {
         let layout = doc.slides.get(i).map(|x| x.layout).unwrap_or_default();
         apply_layout(doc, i, layout)?;
+        // Reset puts a placeholder back on its layout's frame. One that pairs with nothing in the
+        // layout has none to go back to and keeps its own, as in PowerPoint.
+        let keeps_frame: Vec<bool> = doc
+            .slides
+            .get(i)
+            .and_then(|sl| {
+                let ctx = deckcraft_model::resolve::Ctx::for_slide(doc, sl)?;
+                let orphan = |s: &deckcraft_model::Shape| s.ph.as_ref().is_some_and(|p| p.idx == deckcraft_model::resolve::ORPHAN_IDX);
+                Some(sl.shapes.iter().map(|s| orphan(s) || deckcraft_model::resolve::unpaired_placeholder(&ctx, s)).collect())
+            })
+            .unwrap_or_default();
         if let Some(sl) = doc.slides.get_mut(i) {
             let sl = Arc::make_mut(sl);
             sl.background = None;
-            for sh in &mut sl.shapes {
+            for (k, sh) in sl.shapes.iter_mut().enumerate() {
                 if sh.ph.is_some() {
-                    sh.xfrm = None;
+                    if !keeps_frame.get(k).copied().unwrap_or(false) {
+                        sh.xfrm = None;
+                    }
                     sh.fill = None;
                     sh.line = None;
                     sh.effects = None;

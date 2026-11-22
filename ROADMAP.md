@@ -158,6 +158,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-21 | A slide placeholder takes its fill, line, frame, geometry and text style group from the layout placeholder of the same idx, whatever either one's type, as observed in PowerPoint on three synthetic probe decks (33 cases). One whose idx no layout has (0 included, with no type pairing) draws nothing without a frame of its own, in the slide, Morph and single-shape renders, and Reset Slide leaves its frame alone; the orphan idx 4294967295 goes to the master by type. Text hidden under the layout picture placeholder's white ellipse on a slide with such a placeholder is shown again |
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | PPTX: a slide whose notes slide has empty text retains its notesSlide part and relationship on save and reopen (#2025); empty notes slides survive native round trips |
@@ -351,6 +352,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-21 | trivial | Progress log: slide placeholders pair with layout placeholders by idx alone, unpaired ones with no frame are not drawn; parity scores unchanged |
 | 2026-11-16 | trivial | Progress log: export all slides as PNG or JPEG from the File tab (#2019); scores unchanged |
 | 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
 | 2026-11-11 | minor | Progress log: empty notes slides preserved on PPTX/native save (#2025); parity scores unchanged |

@@ -66,6 +66,76 @@ fn a_quick_style_fills_an_empty_placeholder() {
     assert_eq!(img.pixel(280, 185), [255, 255, 255, 255], "an unformatted placeholder has no fill");
 }
 
+/// A placeholder whose idx no layout placeholder has takes no frame from the master, so with none
+/// of its own PowerPoint draws nothing of it; the orphan idx takes the master's body frame.
+#[test]
+fn a_placeholder_no_layout_placeholder_pairs_with_has_no_frame() {
+    let placeholder = |idx: u32, frame: bool| Shape {
+        id: ShapeId(911),
+        xfrm: frame.then(|| Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        ph: Some(Placeholder { kind: PhType::Obj, idx, ..Default::default() }),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    let draw = |s: Shape| render_slide(&deck_with(vec![s]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    let drawn = |img: &Image| (0..img.height).step_by(4).any(|y| (0..img.width).step_by(4).any(|x| img.pixel(x, y) != [255, 255, 255, 255]));
+    assert!(!drawn(&draw(placeholder(7, false))), "an unpaired placeholder without a frame is not drawn");
+    assert!(drawn(&draw(placeholder(7, true))), "with a frame of its own it is");
+    assert!(drawn(&draw(placeholder(u32::MAX, false))), "the orphan idx takes the master's frame");
+}
+
+#[test]
+fn a_placeholder_no_layout_placeholder_pairs_with_has_nothing_to_render_alone() {
+    // Drag previews and Copy as Picture render shapes alone: one that is not drawn has no picture.
+    let placeholder = |frame: bool| Shape {
+        id: ShapeId(913),
+        xfrm: frame.then(|| Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        ph: Some(Placeholder { kind: PhType::Obj, idx: 7, ..Default::default() }),
+        text: Some(TextBody::from_text("Unseen")),
+        ..Default::default()
+    };
+    for (frame, some) in [(false, false), (true, true)] {
+        let p = deck_with(vec![placeholder(frame)]);
+        assert_eq!(crate::render_shape(&p, &p.slides[0], ShapeId(913), 1.0).is_some(), some);
+        assert_eq!(render_shapes(&p, &p.slides[0], &[ShapeId(913)], 1.0).is_some(), some);
+    }
+}
+
+#[test]
+fn a_placeholder_no_layout_placeholder_pairs_with_is_not_placed_without_a_frame() {
+    use deckcraft_model::text::{Action, Hyperlink};
+    let link =
+        Hyperlink { action: Action::NextSlide, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None };
+    let placeholder = |idx: u32, frame: bool| Shape {
+        id: ShapeId(912),
+        xfrm: frame.then(|| Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        ph: Some(Placeholder { kind: PhType::Obj, idx, ..Default::default() }),
+        click: Some(link.clone()),
+        text: Some(TextBody::from_text("Unseen")),
+        ..Default::default()
+    };
+    let placed = |s: Shape| place_slide(&deck_with(vec![s]), 0);
+    let none = placed(placeholder(7, false));
+    assert!(none.texts.is_empty() && none.links.is_empty() && none.shapes.is_empty(), "nothing drawn, nothing to click or export");
+    let with = placed(placeholder(7, true));
+    assert!(!with.texts.is_empty() && !with.links.is_empty() && !with.shapes.is_empty(), "with a frame of its own it is placed");
+    assert!(!placed(placeholder(u32::MAX, false)).shapes.is_empty(), "the orphan idx takes the master's frame");
+}
+
+#[test]
+fn a_placeholder_with_no_frame_adds_nothing_to_the_slide_extent() {
+    let placeholder = |idx: u32, frame: bool| Shape {
+        id: ShapeId(913),
+        xfrm: frame.then(|| Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        ph: Some(Placeholder { kind: PhType::Obj, idx, ..Default::default() }),
+        line: Some(deckcraft_model::Line::solid(ColorRef::rgb(Rgba::rgb(0, 0, 0)), 1000.0)),
+        ..Default::default()
+    };
+    let page = slide_extent(&Presentation::default(), 0);
+    assert_eq!(slide_extent(&deck_with(vec![placeholder(7, false)]), 0), page, "not drawn, so it reaches nowhere");
+    assert_ne!(slide_extent(&deck_with(vec![placeholder(7, true)]), 0), page, "with a frame of its own it does");
+}
+
 #[test]
 fn render_shapes_draws_the_selection_on_a_transparent_canvas() {
     let sh = Shape {
@@ -2309,7 +2379,9 @@ fn a_picture_in_a_placeholder_shows_the_layout_placeholders_fill_behind_transpar
         out.into_inner()
     };
     let orange = Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 153, 0)));
-    let ph = || Some(Placeholder { kind: PhType::Picture, idx: 11, ..Default::default() });
+    // An idx the default layout's own placeholders (date, footer, number: 10 to 12) do not use: two
+    // placeholders of one idx in a layout pair with the first, as in PowerPoint.
+    let ph = || Some(Placeholder { kind: PhType::Picture, idx: 20, ..Default::default() });
     let style = ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1);
     // (layout fill, picture's own fill, picture's own style, the clear half shows orange)
     let cases = [

@@ -1418,6 +1418,112 @@ fn layout_change_keeps_text() {
 }
 
 #[test]
+fn a_placeholder_with_no_frame_cannot_be_hit() {
+    // Pairs with no layout placeholder and has no frame of its own: it is not drawn, so a click
+    // where its default frame would be lands on nothing.
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "B"})).unwrap();
+    let at = deckcraft_geom::Point::new(480.0, 100.0);
+    assert!(matches!(s.hit_test(at, 1.0), Some(tools::Hit::Shape { .. })), "the title is there to hit");
+    s.edit(|doc, sel| {
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[sel.slide]);
+        let title = slide.shapes.iter_mut().find(|x| x.ph.as_ref().is_some_and(|p| p.kind.is_title())).unwrap();
+        title.xfrm = None;
+        title.ph.as_mut().unwrap().idx = 7;
+        Ok(())
+    })
+    .unwrap();
+    assert!(s.hit_test(at, 1.0).is_none());
+    // Nor does Select All.
+    s.execute("edit.selectAll", &json!({})).unwrap();
+    let st = s.doc().unwrap();
+    let title = st.current_slide().unwrap().shapes.iter().find(|x| x.ph.as_ref().is_some_and(|p| p.idx == 7)).unwrap().id;
+    assert!(!st.selection.shapes.is_empty() && !st.selection.shapes.contains(&title), "{:?}", st.selection.shapes);
+    // Nor does a marquee around the whole slide take it.
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    s.pointer(ev(PointerKind::Down, 2.0, 2.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 958.0, 538.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 958.0, 538.0)).unwrap();
+    let st = s.doc().unwrap();
+    let title = st.current_slide().unwrap().shapes.iter().find(|x| x.ph.as_ref().is_some_and(|p| p.idx == 7)).unwrap().id;
+    assert!(!st.selection.shapes.is_empty() && !st.selection.shapes.contains(&title), "{:?}", st.selection.shapes);
+}
+
+#[test]
+fn layout_change_keeps_a_leftover_placeholder_where_it_was_drawn() {
+    // The body pairs with nothing in the blank layout; with its text it stays, at its old frame.
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "B"})).unwrap();
+    let frame = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.doc.slides[st.selection.slide].shapes.iter().find(|x| x.text.as_ref().is_some_and(|t| t.text() == "B")).unwrap().clone();
+        (
+            cmd::xfrm_of(&st.doc, &st.selection, &sh),
+            deckcraft_model::resolve::lacks_frame(
+                &deckcraft_model::resolve::Ctx::for_slide(&st.doc, &st.doc.slides[st.selection.slide]).unwrap(),
+                &sh,
+            ),
+        )
+    };
+    let (before, _) = frame(&s);
+    s.execute("slide.layout", &json!({"layout": "blank"})).unwrap();
+    let (after, lacks) = frame(&s);
+    assert!(!lacks, "the leftover is still drawn");
+    assert_eq!(before, after);
+}
+
+#[test]
+fn reset_keeps_the_frame_of_a_placeholder_no_layout_placeholder_pairs_with() {
+    // Seen in PowerPoint: after a layout change leaves a placeholder with nothing to pair with,
+    // Reset leaves it where it is instead of taking its frame away.
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "B"})).unwrap();
+    s.execute("slide.layout", &json!({"layout": "blank"})).unwrap();
+    let frame = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.doc.slides[st.selection.slide].shapes.iter().find(|x| x.text.as_ref().is_some_and(|t| t.text() == "B")).unwrap().clone();
+        let lacks = deckcraft_model::resolve::lacks_frame(
+            &deckcraft_model::resolve::Ctx::for_slide(&st.doc, &st.doc.slides[st.selection.slide]).unwrap(),
+            &sh,
+        );
+        (cmd::xfrm_of(&st.doc, &st.selection, &sh), lacks)
+    };
+    let (before, lacks) = frame(&s);
+    assert!(!lacks);
+    s.execute("slide.reset", &json!({})).unwrap();
+    let (after, lacks) = frame(&s);
+    assert!(!lacks, "the placeholder is still drawn after Reset");
+    assert_eq!(before, after);
+}
+
+#[test]
+fn a_footer_takes_the_frame_of_the_new_layouts_footer_after_a_layout_change() {
+    // A slide footer pairs with the footer of the layout it moves to (same idx) and follows it; it is
+    // not left where the old layout drew it.
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "B"})).unwrap();
+    s.execute("design.headerFooter", &json!({"footer": true, "footerText": "FOOT"})).unwrap();
+    let moved = deckcraft_model::Xfrm::new(10.0, 20.0, 100.0, 30.0);
+    s.edit(|doc, _| {
+        for m in &mut doc.masters {
+            for l in std::sync::Arc::make_mut(m).layouts.iter_mut().filter(|l| l.kind == deckcraft_model::LayoutType::Blank) {
+                for sh in l.shapes.iter_mut().filter(|x| x.ph.as_ref().is_some_and(|p| p.kind == deckcraft_model::PhType::Footer)) {
+                    sh.xfrm = Some(moved);
+                }
+            }
+        }
+        Ok(())
+    })
+    .unwrap();
+    s.execute("slide.layout", &json!({"layout": "blank"})).unwrap();
+    let st = s.doc().unwrap();
+    let slide = &st.doc.slides[st.selection.slide];
+    let foot = slide.shapes.iter().find(|x| x.text.as_ref().is_some_and(|t| t.text() == "FOOT")).expect("the footer is still on the slide");
+    assert_eq!(foot.xfrm, None, "it inherits the new layout's frame");
+    assert_eq!(cmd::xfrm_of(&st.doc, &st.selection, foot), moved);
+}
+
+#[test]
 fn themes_and_slide_size() {
     let mut s = session();
     s.execute("design.theme", &json!({"name": "Ember"})).unwrap();

@@ -179,7 +179,9 @@ fn solid_color(ctx: Option<&Ctx>, s: &Shape) -> Option<Rgba> {
 
 fn box_of(ctx: Option<&Ctx>, s: &Shape) -> Option<Xfrm> {
     match ctx {
-        Some(c) => Some(resolve::xfrm(c, s)),
+        // A placeholder with no frame and no partner in its layout is not drawn; giving it the
+        // frame it would otherwise fall back to would draw it for the length of the transition.
+        Some(c) => (!resolve::lacks_frame(c, s)).then(|| resolve::xfrm(c, s)),
         None => s.xfrm,
     }
 }
@@ -300,6 +302,13 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
             continue;
         };
         let (xa, xb) = (box_of(ca.as_ref(), sa), box_of(cb.as_ref(), sb));
+        if xa.is_none() != xb.is_none() {
+            // One end has no frame, so nothing of it is drawn: the other end fades with its own
+            // frame, as if unpaired, instead of lending its frame to the invisible one.
+            push(sa.clone(), true, 1.0 - s);
+            push(sb.clone(), false, s);
+            continue;
+        }
         let x = match (xa, xb) {
             (Some(xa), Some(xb)) => Some(morph_xfrm(xa, xb, s)),
             (_, xb) => xb,
