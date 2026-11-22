@@ -141,8 +141,12 @@ impl SlideApp {
         let Some(restore) = self.editor_restore.as_mut() else { return };
         let ppp = ctx.pixels_per_point();
         let points = |px: i32| px as f32 / ppp;
-        let fullscreen = ctx.input(|i| i.viewport().fullscreen == Some(true));
-        let command = match restore.next(fullscreen) {
+        let (fullscreen, at) = ctx.input(|i| {
+            let v = i.viewport();
+            let at = v.outer_rect.map(|r| [(r.min.x * ppp).round() as i32, (r.min.y * ppp).round() as i32]);
+            (v.fullscreen == Some(true), at)
+        });
+        let command = match restore.next(fullscreen, at) {
             None => {
                 self.editor_restore = None;
                 return;

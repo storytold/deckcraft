@@ -28,9 +28,9 @@ pub struct Display {
 impl Display {
     /// How much of `r` lies on this display, in square pixels.
     fn overlap(&self, r: [i32; 4]) -> i64 {
-        let w = (self.x + self.w).min(r[0] + r[2]) - self.x.max(r[0]);
-        let h = (self.y + self.h).min(r[1] + r[3]) - self.y.max(r[1]);
-        if w > 0 && h > 0 { i64::from(w) * i64::from(h) } else { 0 }
+        let w = (i64::from(self.x) + i64::from(self.w)).min(i64::from(r[0]) + i64::from(r[2])) - i64::from(self.x.max(r[0]));
+        let h = (i64::from(self.y) + i64::from(self.h)).min(i64::from(r[1]) + i64::from(r[3])) - i64::from(self.y.max(r[1]));
+        if w > 0 && h > 0 { w * h } else { 0 }
     }
 
     /// The largest window that fits on this display: a margin around it, and at most
@@ -91,7 +91,7 @@ impl Displays {
 
     /// The display under the centre of the window at `r`.
     fn under_centre(&self, r: [i32; 4]) -> Option<usize> {
-        self.under([r[0] + r[2] / 2, r[1] + r[3] / 2, 1, 1])
+        self.under([r[0].saturating_add(r[2] / 2), r[1].saturating_add(r[3] / 2), 1, 1])
     }
 
     /// A display other than `not`, the editor's first.
@@ -181,6 +181,13 @@ impl Displays {
         let Some(s) = self.list.get(d) else { return true };
         let near = |a: i32, b: i32| a.abs_diff(b) <= 4;
         near(at[0], s.x) && near(at[1], s.y) && near(size[0], s.w) && near(size[1], s.h)
+    }
+
+    /// Swap even when the backend omits Presenter View's outer rectangle: use its planned
+    /// placement, or the normal display choice and default physical size.
+    pub fn swap_or_default(&self, show: usize, presenter: Option<[i32; 4]>, size: [i32; 2]) -> Option<(usize, [i32; 4])> {
+        let at = presenter.or_else(|| self.presenter(None, Some(show), size))?;
+        self.swap(show, at)
     }
 
     /// Swap Displays: the show moves to the display Presenter View is on (the next one when they
@@ -300,7 +307,7 @@ pub enum RestoreStep {
 
 /// Puts the editor window back where it was before the show, one step per frame: leave full screen,
 /// wait for the system to say it has left (at most [`EditorRestore::WAIT`] frames), move, then size
-/// or maximize.
+/// or maximize. Moving is retried until its position is observed, also bounded by WAIT.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EditorRestore {
     pub place: EditorPlace,
@@ -309,15 +316,16 @@ pub struct EditorRestore {
 }
 
 impl EditorRestore {
-    /// Frames to wait for a window to leave full screen before moving it anyway.
+    /// Maximum frames for each fullscreen/position acknowledgement before proceeding anyway.
     pub const WAIT: u8 = 30;
 
     pub fn new(place: EditorPlace) -> Self {
         EditorRestore { place, step: 0, waited: 0 }
     }
 
-    /// The next step, given whether the window still reports full screen. `None`: done.
-    pub fn next(&mut self, fullscreen: bool) -> Option<RestoreStep> {
+    /// The next step, given fullscreen and observed outer position in physical pixels. `None`: done.
+    /// Without position observations, retry for at most WAIT frames before sizing anyway.
+    pub fn next(&mut self, fullscreen: bool, at: Option<[i32; 2]>) -> Option<RestoreStep> {
         let [x, y, w, h] = self.place.rect;
         let step = match self.step {
             0 => RestoreStep::LeaveFullScreen,
@@ -325,7 +333,14 @@ impl EditorRestore {
                 self.waited += 1;
                 return Some(RestoreStep::Wait);
             }
-            1 => RestoreStep::Move([x, y]),
+            1 => {
+                self.waited = 0;
+                RestoreStep::Move([x, y])
+            }
+            2 if !at.is_some_and(|[ax, ay]| ax.abs_diff(x) <= 4 && ay.abs_diff(y) <= 4) && self.waited < Self::WAIT => {
+                self.waited += 1;
+                return Some(RestoreStep::Move([x, y]));
+            }
             2 if self.place.maximized => RestoreStep::Maximize,
             2 => RestoreStep::Size([w, h]),
             _ => return None,
@@ -343,25 +358,65 @@ mod tests {
     fn the_editor_window_is_put_back_after_the_show() {
         let place = EditorPlace { rect: [100, 80, 1600, 900], maximized: false };
         let mut r = EditorRestore::new(place);
-        assert_eq!(r.next(true), Some(RestoreStep::LeaveFullScreen));
+        assert_eq!(r.next(true, Some([100, 80])), Some(RestoreStep::LeaveFullScreen));
         // Moved only once the system says the window has left full screen.
-        assert_eq!(r.next(true), Some(RestoreStep::Wait));
-        assert_eq!(r.next(false), Some(RestoreStep::Move([100, 80])));
-        assert_eq!(r.next(false), Some(RestoreStep::Size([1600, 900])));
-        assert_eq!(r.next(false), None);
-        assert_eq!(r.next(false), None);
+        assert_eq!(r.next(true, Some([100, 80])), Some(RestoreStep::Wait));
+        assert_eq!(r.next(false, Some([100, 80])), Some(RestoreStep::Move([100, 80])));
+        assert_eq!(r.next(false, Some([100, 80])), Some(RestoreStep::Size([1600, 900])));
+        assert_eq!(r.next(false, Some([100, 80])), None);
+        assert_eq!(r.next(false, Some([100, 80])), None);
         // Maximized: moved to its display, then maximized there.
         let mut r = EditorRestore::new(EditorPlace { maximized: true, ..place });
-        assert_eq!(r.next(false), Some(RestoreStep::LeaveFullScreen));
-        assert_eq!(r.next(false), Some(RestoreStep::Move([100, 80])));
-        assert_eq!(r.next(false), Some(RestoreStep::Maximize));
-        assert_eq!(r.next(false), None);
+        assert_eq!(r.next(false, Some([100, 80])), Some(RestoreStep::LeaveFullScreen));
+        assert_eq!(r.next(false, Some([100, 80])), Some(RestoreStep::Move([100, 80])));
+        assert_eq!(r.next(false, Some([100, 80])), Some(RestoreStep::Maximize));
+        assert_eq!(r.next(false, Some([100, 80])), None);
         // A system that never reports leaving full screen does not hold it forever.
         let mut r = EditorRestore::new(place);
-        r.next(true);
-        let waits = std::iter::from_fn(|| r.next(true)).take_while(|s| *s == RestoreStep::Wait).count();
+        r.next(true, Some([100, 80]));
+        let waits = std::iter::from_fn(|| r.next(true, Some([100, 80]))).take_while(|s| *s == RestoreStep::Wait).count();
         assert_eq!(waits, usize::from(EditorRestore::WAIT));
-        assert_eq!(r.next(true), Some(RestoreStep::Size([1600, 900])), "moved after the wait");
+        assert_eq!(r.next(true, Some([100, 80])), Some(RestoreStep::Size([1600, 900])), "moved after the wait");
+    }
+
+    #[test]
+    fn editor_restore_waits_for_position_before_size_or_maximize() {
+        for maximized in [false, true] {
+            let mut r = EditorRestore::new(EditorPlace { rect: [100, 80, 1600, 900], maximized });
+            assert_eq!(r.next(false, Some([2000, 0])), Some(RestoreStep::LeaveFullScreen));
+            assert_eq!(r.next(false, Some([2000, 0])), Some(RestoreStep::Move([100, 80])));
+            assert_eq!(r.next(false, Some([2000, 0])), Some(RestoreStep::Move([100, 80])));
+            assert_eq!(r.next(false, Some([100, 80])), Some(if maximized { RestoreStep::Maximize } else { RestoreStep::Size([1600, 900]) }));
+        }
+        let mut r = EditorRestore::new(EditorPlace { rect: [100, 80, 1600, 900], maximized: false });
+        r.next(false, None);
+        r.next(false, None);
+        for _ in 0..EditorRestore::WAIT {
+            assert_eq!(r.next(false, None), Some(RestoreStep::Move([100, 80])));
+        }
+        assert_eq!(r.next(false, None), Some(RestoreStep::Size([1600, 900])));
+        assert_eq!(r.next(false, None), None);
+    }
+
+    #[test]
+    fn extreme_saved_positions_do_not_overflow_or_select_a_display() {
+        let d = two();
+        for x in [i32::MIN, i32::MAX] {
+            let rect = [x, x, 1100, 700];
+            assert_eq!(d.under(rect), None);
+            assert_eq!(d.under_centre(rect), None);
+            assert!(d.presenter(Some(rect), Some(1), [1100, 700]).is_some());
+            let state = crate::state::UiState { presenter_window: Some(rect), ..Default::default() };
+            assert_eq!(state.sanitized().presenter_window, None);
+        }
+    }
+
+    #[test]
+    fn swap_without_a_reported_presenter_position_still_changes_display() {
+        let d = two();
+        assert_eq!(d.swap_or_default(1, None, [900, 600]), Some((0, [2110, 60, 900, 600])));
+        assert_eq!(d.swap_or_default(0, None, [900, 600]).map(|v| v.0), Some(1));
+        assert_eq!(Displays::default().swap_or_default(0, None, [900, 600]), None);
     }
 
     #[test]

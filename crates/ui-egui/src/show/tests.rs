@@ -1802,7 +1802,8 @@ fn the_editor_window_is_put_back_after_a_show_on_another_display() {
         },
         app,
     );
-    h.run_steps(8);
+    // No outer-position observation from this host: complete within the bounded retry budget.
+    h.run_steps(usize::from(EditorRestore::WAIT) + 8);
     assert!(h.state().editor_restore.is_none(), "every step sent");
     // A restore that is still pending when the next show starts keeps the place from before.
     h.state_mut().editor_restore = Some(EditorRestore::new(place));
@@ -1819,6 +1820,36 @@ fn the_editor_window_is_put_back_after_a_show_on_another_display() {
     h.run_steps(3);
     assert_eq!(h.state().editor_restore.map(|r| r.place), Some(place));
     h.state_mut().run("show.end", json!({})).unwrap();
-    h.run_steps(8);
+    // The test host omits outer positions: restoration uses the bounded fallback.
+    h.run_steps(usize::from(EditorRestore::WAIT) + 8);
     assert!(h.state().editor_restore.is_none());
+}
+
+/// A backend without outer rectangles must not make the visible swap button a no-op.
+#[test]
+fn swap_button_works_without_a_reported_presenter_position() {
+    use crate::displays::{Display, Displays};
+    use egui_kittest::kittest::Queryable;
+    let session = deckcraft_engine::Session::with_new();
+    let doc = session.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, true);
+    show.display = Some(1);
+    let displays = Displays {
+        list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
+        editor: Some(0),
+        primary: Some(0),
+    };
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+        move |ui, (show, keep): &mut (Show, bool)| {
+            presenter_window(ui.ctx(), show, &doc, &displays, ui.input(|i| i.time), keep);
+        },
+        (show, true),
+    );
+    h.run_steps(2);
+    h.state_mut().0.presenter_at = None;
+    h.state_mut().0.presenter_place = None;
+    h.get_by_label("Swap Displays").click_accesskit();
+    h.run_steps(2);
+    assert_eq!(h.state().0.display, Some(0));
+    assert!(h.state().0.show_move.is_some());
 }

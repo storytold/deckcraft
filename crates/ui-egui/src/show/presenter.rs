@@ -299,7 +299,11 @@ pub(super) fn presenter_window(
                     if show_fills_screen(show.reading, &doc.show.show_type)
                         && let Some(d) = show.display
                         && button(ui, "Swap Displays").clicked()
-                        && let Some((to, r)) = show.presenter_at.and_then(|at| displays.swap(d, at))
+                        && let Some((to, r)) = displays.swap_or_default(
+                            d,
+                            show.presenter_at.or(show.presenter_place.map(|(r, _)| r)),
+                            PRESENTER_SIZE.map(|v| (v * ui.ctx().pixels_per_point()).round() as i32),
+                        )
                     {
                         // The show window leaves full screen before it moves ([`crate::displays::ShowMove`]).
                         show.show_move = Some(crate::displays::ShowMove::new(to));

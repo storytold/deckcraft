@@ -174,7 +174,12 @@ impl UiState {
             self.format_tab = d.format_tab;
         }
         self.pane = self.pane.filter(short);
-        self.presenter_window = self.presenter_window.filter(|r| (200..=20_000).contains(&r[2]) && (150..=20_000).contains(&r[3]));
+        self.presenter_window = self.presenter_window.filter(|r| {
+            (-1_000_000..=1_000_000).contains(&r[0])
+                && (-1_000_000..=1_000_000).contains(&r[1])
+                && (200..=20_000).contains(&r[2])
+                && (150..=20_000).contains(&r[3])
+        });
         self.show_display = self.show_display.filter(|&d| d < 16);
         self.show_display_id = self.show_display_id.filter(|d| d.w > 0 && d.h > 0 && d.name.as_ref().is_none_or(|n| n.len() <= 256));
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
