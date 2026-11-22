@@ -61,32 +61,43 @@ fn follow(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"slide": slide}))
 }
 
-/// The link at slide point `p`, on the topmost of the slide's shapes there: a link on its text
-/// at `p`, else its own click link or that of a group it is in. A shape drawn over a link hides
-/// it. Where no slide shape is under `p`, a link on the layout or master can apply. Only on a
-/// slide (not while editing a master or layout).
+/// The link at slide point `p`. Link text there wins when nothing drawn later covers it: its
+/// shape is the topmost slide shape under `p` or above it (text can run out of its box). Else
+/// the topmost shape's own click link, or that of a group it is in. Where no slide shape or
+/// slide text is under `p`, a link on the layout or master can apply. Only on a slide (not
+/// while editing a master or layout).
 pub(crate) fn link_at(st: &DocState, p: Point) -> Option<Hyperlink> {
     if !matches!(st.selection.target, Target::Slides) {
         return None;
     }
     let placed = deckcraft_render::place_slide(&st.doc, st.selection.slide);
     let inside = |r: &deckcraft_geom::Rect| r.x0 <= p.x && p.x <= r.x1 && r.y0 <= p.y && p.y <= r.y1;
-    let link_of = |id, text: bool| placed.links.iter().rev().find(|l| l.shape == id && l.text == text && inside(&l.rect)).map(|l| l.link.clone());
-    let Some(top) = placed.shapes.iter().rposition(|s| inside(&s.rect)) else {
-        // Nothing of the slide's own here: the layout's or master's links (their shapes aren't
-        // in `placed.shapes`).
-        let own = |id| placed.shapes.iter().any(|s| s.id == id);
-        let on = |text: bool| placed.links.iter().rev().find(|l| l.text == text && !own(l.shape) && inside(&l.rect)).map(|l| l.link.clone());
+    // Drawing position of a slide shape; layout and master shapes aren't listed (drawn first).
+    let order = |id| placed.shapes.iter().position(|s| s.id == id);
+    let top = placed.shapes.iter().rposition(|s| inside(&s.rect));
+    // Link text under `p` on the slide shape drawn last, unless a later shape covers it.
+    let text = placed
+        .links
+        .iter()
+        .filter(|l| l.text && inside(&l.rect))
+        .filter_map(|l| order(l.shape).map(|i| (i, l)))
+        .filter(|(i, _)| top.is_none_or(|t| *i >= t))
+        .max_by_key(|(i, _)| *i);
+    if let Some((_, l)) = text {
+        return Some(l.link.clone());
+    }
+    let Some(top) = top else {
+        // Nothing of the slide's own here: the layout's or master's links.
+        let on =
+            |text: bool| placed.links.iter().rev().find(|l| l.text == text && order(l.shape).is_none() && inside(&l.rect)).map(|l| l.link.clone());
         return on(true).or_else(|| on(false));
     };
-    if let Some(l) = link_of(placed.shapes[top].id, true) {
-        return Some(l);
-    }
     // The shape's own click link, else the nearest group around it that has one.
+    let link_of = |id| placed.links.iter().rev().find(|l| l.shape == id && !l.text && inside(&l.rect)).map(|l| l.link.clone());
     let mut at = Some(top);
     for _ in 0..=placed.shapes.len() {
         let s = &placed.shapes[at?];
-        if let Some(l) = link_of(s.id, false) {
+        if let Some(l) = link_of(s.id) {
             return Some(l);
         }
         at = s.parent;
@@ -351,5 +362,27 @@ mod tests {
         s.pointer(crate::PointerEvent { kind: crate::PointerKind::Down, x: 100.0, y: 100.0, mods, ..Default::default() }).unwrap();
         s.pointer(crate::PointerEvent { kind: crate::PointerKind::Up, x: 100.0, y: 100.0, mods, ..Default::default() }).unwrap();
         assert!(s.ui_requests.iter().all(|u| !matches!(u, UiRequest::OpenUrl { .. })), "the link is not followed in Edit Points");
+    }
+
+    #[test]
+    fn linked_text_overflowing_its_shape_is_followed() {
+        let (mut s, id) = deck(|_| Action::Url { url: "https://example.com/".into() });
+        // A box far shorter than its text, anchored at the top: the text runs out below it.
+        s.edit(|doc, sel| {
+            let sh = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), id).unwrap();
+            sh.xfrm = Some(deckcraft_geom::Xfrm::new(100.0, 100.0, 400.0, 2.0));
+            let body = sh.text.as_mut().unwrap();
+            body.body.anchor = Some(deckcraft_model::text::Anchor::Top);
+            body.body.autofit = Some(deckcraft_model::text::AutoFit::None);
+            Ok(())
+        })
+        .unwrap();
+        let st = s.doc().unwrap();
+        let placed = deckcraft_render::place_slide(&st.doc, 0);
+        let word = placed.links.iter().find(|l| l.text).unwrap().rect;
+        let shape = placed.shapes.iter().find(|p| p.id == id).unwrap().rect;
+        assert!(word.y1 > shape.y1 + 1.0, "the linked word runs out of its box: {word:?} vs {shape:?}");
+        let below = Point::new((word.x0 + word.x1) / 2.0, (shape.y1 + word.y1) / 2.0);
+        assert!(link_at(st, below).is_some(), "the overflowing link text is followed outside its box");
     }
 }
