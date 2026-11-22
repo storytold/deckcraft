@@ -264,6 +264,11 @@ impl Session {
             }
             ToolKind::Select => {}
         }
+        // Ctrl+Click (Cmd+Click on the Mac) follows the link under the pointer, as in PowerPoint:
+        // on text, also while editing it, or a shape's own link. Elsewhere it toggles selection.
+        if mods.cmd && !mods.shift && !mods.alt && self.doc().is_ok_and(|st| cmd::link::link_at(st, p).is_some()) {
+            return self.execute("link.follow", &json!({"at": [p.x, p.y]}));
+        }
         // Clicking inside the text being edited moves the caret / starts a text selection.
         let before = self.text_selection();
         if let Some((shape, pos)) = self.place_caret(p, tol, mods.shift)? {

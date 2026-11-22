@@ -171,6 +171,15 @@ fn spelling_menu(app: &mut SlideApp, ui: &mut egui::Ui, w: &crate::squiggles::Me
     ui.separator();
 }
 
+/// Open Link, when the text caret or the selected shape has a link (Ctrl+Click does the same).
+fn open_link_item(app: &mut SlideApp, ui: &mut egui::Ui) {
+    if app.session.active().and_then(deckcraft_engine::cmd::link::selected_link).is_some() && ui.button("Open Link").clicked() {
+        // A refused link (not a web or mail address) is reported in the status bar by `run`.
+        let _ = app.run("link.follow", json!({}));
+        ui.close();
+    }
+}
+
 fn text_items(app: &mut SlideApp, ui: &mut egui::Ui) {
     if ui.button("Paragraph…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("paragraph"));
@@ -186,6 +195,7 @@ fn text_items(app: &mut SlideApp, ui: &mut egui::Ui) {
         app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
         ui.close();
     }
+    open_link_item(app, ui);
     ui.separator();
     if ui.button("Format Shape…").clicked() {
         let _ = app.run("view.pane", json!({"pane": "format"}));
@@ -240,6 +250,7 @@ fn shape_items(app: &mut SlideApp, ui: &mut egui::Ui) {
         app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
         ui.close();
     }
+    open_link_item(app, ui);
     if ui.button("Edit Alt Text…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("altText"));
         ui.close();
