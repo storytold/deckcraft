@@ -15,11 +15,33 @@ pub struct Dialog {
     /// Field values while the dialog is open.
     #[serde(skip)]
     pub fields: std::collections::HashMap<String, String>,
+    /// The Spelling dialog's findings and what they were computed from; checking a whole deck is
+    /// too slow to repeat every frame.
+    #[serde(skip)]
+    spelling: Option<SpellingFindings>,
+}
+
+/// The Spelling dialog's findings, with what they were found in. It holds the document itself, so
+/// an edit (which always makes a new one) is told from a change of selection, and a freed
+/// document's address can never be mistaken for a new one.
+#[derive(Clone)]
+struct SpellingFindings {
+    uid: u64,
+    doc: std::sync::Arc<deckcraft_model::Presentation>,
+    ignored: String,
+    user: u64,
+    list: std::sync::Arc<Vec<Value>>,
+}
+
+impl std::fmt::Debug for SpellingFindings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpellingFindings").field("uid", &self.uid).field("findings", &self.list.len()).finish_non_exhaustive()
+    }
 }
 
 impl Dialog {
     pub fn new(id: &str) -> Self {
-        Dialog { id: id.into(), params: Value::Null, fields: Default::default() }
+        Dialog { id: id.into(), params: Value::Null, fields: Default::default(), spelling: None }
     }
     pub fn modal(&self) -> bool {
         true

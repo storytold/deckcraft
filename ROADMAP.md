@@ -158,6 +158,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-22 | Review › Spelling no longer freezes on a deck in a language whose dictionary has tens of thousands of affix rules (pt-BR): affixes are looked up by the text they add, suggestions stop at five, a word is judged once per check, and the dialog keeps its findings until the deck changes; parity scores unchanged |
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | PPTX: a slide whose notes slide has empty text retains its notesSlide part and relationship on save and reopen (#2025); empty notes slides survive native round trips |
@@ -166,6 +167,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
 | 2026-11-07 | Text inside a group whose child coordinates scale its shapes is laid out for export as the slide draws it, at the shape's size in points, so the PDF text layer and the boxes of its text hyperlinks lie on the drawn text. SmartArt groups, whose child space equals their frame, are unchanged |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
+| 2026-11-03 | Review › Spelling no longer freezes on a deck in a language whose dictionary has tens of thousands of affix rules (pt-BR): affixes are looked up by the text they add, suggestions stop at five, a word is judged once per check, and the dialog keeps its findings until the deck, the ignored words or a dictionary changes; parity scores unchanged |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
