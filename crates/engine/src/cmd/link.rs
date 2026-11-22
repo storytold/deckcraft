@@ -61,25 +61,49 @@ fn follow(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"slide": slide}))
 }
 
-/// The link at slide point `p`: a link on text there, else the click link of the topmost shape
-/// with one. Only on a slide (not while editing a master or layout).
+/// The link at slide point `p`, on the topmost of the slide's shapes there: a link on its text
+/// at `p`, else its own click link or that of a group it is in. A shape drawn over a link hides
+/// it. Where no slide shape is under `p`, a link on the layout or master can apply. Only on a
+/// slide (not while editing a master or layout).
 pub(crate) fn link_at(st: &DocState, p: Point) -> Option<Hyperlink> {
     if !matches!(st.selection.target, Target::Slides) {
         return None;
     }
     let placed = deckcraft_render::place_slide(&st.doc, st.selection.slide);
     let inside = |r: &deckcraft_geom::Rect| r.x0 <= p.x && p.x <= r.x1 && r.y0 <= p.y && p.y <= r.y1;
-    let on = |text: bool| placed.links.iter().rev().find(|l| l.text == text && inside(&l.rect)).map(|l| l.link.clone());
-    on(true).or_else(|| on(false))
+    let link_of = |id, text: bool| placed.links.iter().rev().find(|l| l.shape == id && l.text == text && inside(&l.rect)).map(|l| l.link.clone());
+    let Some(top) = placed.shapes.iter().rposition(|s| inside(&s.rect)) else {
+        // Nothing of the slide's own here: the layout's or master's links (their shapes aren't
+        // in `placed.shapes`).
+        let own = |id| placed.shapes.iter().any(|s| s.id == id);
+        let on = |text: bool| placed.links.iter().rev().find(|l| l.text == text && !own(l.shape) && inside(&l.rect)).map(|l| l.link.clone());
+        return on(true).or_else(|| on(false));
+    };
+    if let Some(l) = link_of(placed.shapes[top].id, true) {
+        return Some(l);
+    }
+    // The shape's own click link, else the nearest group around it that has one.
+    let mut at = Some(top);
+    for _ in 0..=placed.shapes.len() {
+        let s = &placed.shapes[at?];
+        if let Some(l) = link_of(s.id, false) {
+            return Some(l);
+        }
+        at = s.parent;
+    }
+    None
 }
 
 /// The link at the text caret (or covering the selected text), else the click link of the one
 /// selected shape: what Open Link on the context menu follows.
 pub fn selected_link(st: &DocState) -> Option<Hyperlink> {
     if let Some(t) = &st.selection.text {
-        let body = super::text::body_of(st, t)?;
+        // A link on the text wins; unlinked text falls back to its shape's own link.
         let (a, b) = if t.anchor <= t.caret { (t.anchor, t.caret) } else { (t.caret, t.anchor) };
-        return link_in(body, a, b);
+        if let Some(l) = super::text::body_of(st, t).and_then(|body| link_in(body, a, b)) {
+            return Some(l);
+        }
+        return if t.notes { None } else { st.shape(t.shape).and_then(|sh| sh.click.clone()) };
     }
     match st.selected_shapes().as_slice() {
         [one] => one.click.clone(),
@@ -90,13 +114,16 @@ pub fn selected_link(st: &DocState) -> Option<Hyperlink> {
 /// The link on the text from `a` to `b` (paragraph, char): the first linked run the span
 /// touches. A caret (`a == b`) takes the character after it, or the one before at the end of a run.
 fn link_in(body: &TextBody, a: (usize, usize), b: (usize, usize)) -> Option<Hyperlink> {
+    let caret = a == b;
     for (pi, para) in body.paragraphs.iter().enumerate().skip(a.0).take(b.0.saturating_sub(a.0) + 1) {
         let from = if pi == a.0 { a.1 } else { 0 };
         let to = if pi == b.0 { b.1 } else { usize::MAX };
         let mut acc = 0usize;
         for run in &para.runs {
             let end = acc + run.char_len();
-            let touches = if from == to { acc <= from && from <= end && end > acc } else { end > from && acc < to };
+            // A selection takes only runs it covers part of: one ending at the start of a
+            // paragraph takes nothing from that paragraph.
+            let touches = if caret { acc <= from && from <= end && end > acc } else { end > from && acc < to };
             if touches && let Some(l) = &run.props.link {
                 return Some(l.clone());
             }
@@ -241,5 +268,83 @@ mod tests {
         let box_ = placed.shapes.iter().find(|p| p.id == id).unwrap().rect;
         right_click(&mut s, [(box_.x0 + word.x0) / 2.0, (word.y0 + word.y1) / 2.0]);
         assert!(s.tool.context_link.is_none(), "no link off the linked word");
+    }
+
+    fn url_link(url: &str) -> Hyperlink {
+        Hyperlink {
+            action: Action::Url { url: url.into() },
+            tooltip: String::new(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        }
+    }
+
+    #[test]
+    fn a_shape_drawn_over_link_text_hides_it() {
+        let (mut s, _) = deck(|_| Action::Url { url: "https://example.com/".into() });
+        let at = link_point(&s);
+        // An unlinked shape over the whole text box: nothing to follow there.
+        let cover = s.execute("shape.insert", &json!({"preset": "rect", "rect": [90.0, 90.0, 420.0, 120.0]})).unwrap();
+        let cover = deckcraft_model::ShapeId(cover["id"].as_u64().unwrap() as u32);
+        assert!(link_at(s.doc().unwrap(), Point::new(at[0], at[1])).is_none(), "the covered link is not followed");
+        // With its own link, the covering shape's link is the one there.
+        s.edit(|doc, sel| {
+            deckcraft_model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), cover).unwrap().click = Some(url_link("https://cover.example/"));
+            Ok(())
+        })
+        .unwrap();
+        let found = link_at(s.doc().unwrap(), Point::new(at[0], at[1])).map(|l| l.action);
+        assert_eq!(found, Some(Action::Url { url: "https://cover.example/".into() }));
+    }
+
+    #[test]
+    fn unlinked_text_being_edited_falls_back_to_its_shapes_link() {
+        let (mut s, id) = deck(|_| Action::Url { url: "https://text.example/".into() });
+        s.edit(|doc, sel| {
+            deckcraft_model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), id).unwrap().click = Some(url_link("https://shape.example/"));
+            Ok(())
+        })
+        .unwrap();
+        // Caret inside "go " (unlinked), then inside "there" (linked).
+        s.execute("text.edit", &json!({"id": id.0, "at": [0, 1]})).unwrap();
+        assert_eq!(selected_link(s.doc().unwrap()).map(|l| l.action), Some(Action::Url { url: "https://shape.example/".into() }));
+        s.execute("text.edit", &json!({"id": id.0, "at": [0, 5]})).unwrap();
+        assert_eq!(selected_link(s.doc().unwrap()).map(|l| l.action), Some(Action::Url { url: "https://text.example/".into() }));
+    }
+
+    #[test]
+    fn a_selection_ending_at_a_paragraph_start_takes_no_link_from_it() {
+        let (s, id) = deck(|_| Action::Url { url: "https://example.com/".into() });
+        let st = s.doc().unwrap();
+        let mut body = st.shape(id).unwrap().text.clone().unwrap();
+        // Paragraph 0 plain, paragraph 1 starting with the linked word.
+        let mut second = body.paragraphs[0].clone();
+        second.runs.remove(0);
+        body.paragraphs[0].runs.truncate(1);
+        body.paragraphs.push(second);
+        assert!(link_in(&body, (0, 1), (1, 0)).is_none(), "the selection covers none of paragraph 1");
+        assert!(link_in(&body, (0, 1), (1, 1)).is_some(), "one character of the link is covered");
+        assert!(link_in(&body, (1, 0), (1, 0)).is_some(), "a caret at the link's start takes it");
+    }
+
+    #[test]
+    fn ctrl_click_in_edit_points_edits_points_rather_than_following_the_link() {
+        let (mut s, id) = deck(|_| Action::Url { url: "https://example.com/".into() });
+        s.edit(|doc, sel| {
+            let sh = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), id).unwrap();
+            sh.text = None;
+            sh.click = Some(url_link("https://example.com/"));
+            Ok(())
+        })
+        .unwrap();
+        s.select(|_, sel| sel.shapes = vec![id]).unwrap();
+        s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+        let mods = crate::Mods { cmd: true, ..Default::default() };
+        // The rectangle's top-left corner is one of its points.
+        s.pointer(crate::PointerEvent { kind: crate::PointerKind::Down, x: 100.0, y: 100.0, mods, ..Default::default() }).unwrap();
+        s.pointer(crate::PointerEvent { kind: crate::PointerKind::Up, x: 100.0, y: 100.0, mods, ..Default::default() }).unwrap();
+        assert!(s.ui_requests.iter().all(|u| !matches!(u, UiRequest::OpenUrl { .. })), "the link is not followed in Edit Points");
     }
 }
