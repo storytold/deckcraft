@@ -450,7 +450,8 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
     // `#RRGGBB`, or `#RRGGBBAA` for a color that is not opaque.
     let hex = |c: &deckcraft_color::Rgba| if c.a == 255 { format!("#{}", c.hex()) } else { format!("#{}{:02X}", c.hex(), c.a) };
     // A preset or system name that `color_value` does not know (kept from an opened file) is given as
-    // the color it is drawn with, so OK does not reject it.
+    // the color it is drawn with, so a caller that sends this `color` back gets a valid color. The
+    // Font dialog sends no `color` when its Color field is untouched, so the run keeps the stored name.
     let base = match &c.base {
         ColorBase::Preset { name } if !deckcraft_color::is_preset_name(name) => ColorBase::Rgb { rgb: deckcraft_color::Rgba::BLACK },
         ColorBase::System { name, last } if !deckcraft_color::is_system_name(name) => ColorBase::Rgb { rgb: *last },
