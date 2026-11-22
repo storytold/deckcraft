@@ -281,7 +281,14 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
                 doc.media.push(m.clone());
                 doc.next_id = doc.next_id.max(m.id.0);
             }
-            Some(x) if x.data == m.data => {}
+            Some(x) if x.data == m.data && x.link == m.link => {}
+            Some(_) if m.link.is_some() => {
+                // A link has no bytes, so `add_media` would take any other empty item for it: it
+                // gets an item of its own that keeps the link it points to.
+                let id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+                doc.media.push(deckcraft_model::MediaItem { id, ..m.clone() });
+                map.insert(m.id, id);
+            }
             Some(_) => {
                 let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
                 map.insert(m.id, id);
@@ -795,4 +802,31 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
         }
     })?;
     Ok(json!({"selected": s.doc()?.selection.shapes}))
+}
+
+#[cfg(test)]
+mod bring_media_tests {
+    use super::*;
+    use deckcraft_model::{MediaItem, Presentation};
+
+    fn linked(id: u32, link: &str) -> MediaItem {
+        MediaItem { id: MediaId(id), name: "linked.png".into(), content_type: "image/png".into(), data: Default::default(), link: Some(link.into()) }
+    }
+
+    #[test]
+    fn a_linked_item_keeps_its_own_link_when_the_id_is_taken_by_another_link() {
+        let mut doc = Presentation::default();
+        let mine = linked(7, "file:///mine.png");
+        doc.media.push(mine.clone());
+        doc.next_id = doc.next_id.max(7);
+        // The same link under the same id is the same item; another link under it is not.
+        let map = bring_media("edit.paste", &mut doc, &[mine.clone()]).expect("bring");
+        assert!(map.is_empty() && doc.media.len() == 1, "{map:?}");
+        let theirs = linked(7, "file:///theirs.png");
+        let map = bring_media("edit.paste", &mut doc, &[theirs.clone()]).expect("bring");
+        let new = *map.get(&MediaId(7)).expect("the colliding item has a new id");
+        assert_ne!(new, MediaId(7));
+        assert_eq!(doc.media(new).and_then(|m| m.link.as_deref()), Some("file:///theirs.png"));
+        assert_eq!(doc.media(MediaId(7)).and_then(|m| m.link.as_deref()), Some("file:///mine.png"), "the destination's own item is untouched");
+    }
 }
