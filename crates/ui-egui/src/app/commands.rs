@@ -2,6 +2,11 @@
 use super::updates_ui;
 use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, theme};
 
+/// Font and paragraph commands read the notes that are on the slide. Other commands do not.
+fn commits_notes_draft(id: &str) -> bool {
+    id.starts_with("format.")
+}
+
 fn grid_options_touched(p: &Value) -> bool {
     ["spacing", "snap", "smartGuides", "gridlines", "guides"].iter().any(|k| p.get(*k).is_some())
 }
@@ -18,10 +23,10 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, mut params: Value) -> Result<Value, String> {
-        // Home ▸ Font and the other text commands format whatever the caret is in. Notes typed
-        // since the last save have to be on the slide first, or bold would change the old text
-        // and the draft would write it back.
-        if id != "slide.notes" {
+        // Home ▸ Font formats whatever the caret is in. Notes typed since the last save have to
+        // be on the slide first, or bold would change the old text and the draft would write it
+        // back. Save, undo and navigation must not write that draft as a side effect.
+        if commits_notes_draft(id) {
             crate::notes::commit_draft(self);
         }
         // Paste with no text of its own reads the system clipboard, so a copy in another program

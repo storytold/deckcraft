@@ -518,7 +518,7 @@ mod tests {
         let ctx = egui::Context::default();
         let body = notes();
         let mut laid = None;
-        let mut out = ctx.run_ui(Default::default(), |ui| laid = Some(galley(ui, &body, 12.0, Color32::BLACK, 300.0)));
+        let mut out = ctx.run_ui(Default::default(), |ui| laid = Some(galley(ui, &body, 12.0, Color32::BLACK, 300.0, &[])));
         out.textures_delta.clear();
         let g = laid.unwrap();
         let mut walk = (0usize, g.rows.first().map_or(0, |r| r.char_count_including_newline().0));

@@ -449,6 +449,35 @@ mod tests {
         assert_eq!(shown.body.paragraphs[0].runs[0].props.font.as_deref(), Some("Liberation Serif"));
     }
 
+    /// Save, view changes and other commands must not write an unsaved notes draft.
+    #[test]
+    fn an_unrelated_command_leaves_the_notes_draft_unsaved() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        app.run("slide.notes", json!({"text": "Hello notes"})).unwrap();
+        let (uid, notes, revision) = {
+            let st = app.session.active().unwrap();
+            (st.uid, st.current_slide().unwrap().notes.clone(), st.revision)
+        };
+        let mut draft = crate::notes::Draft::new(&notes);
+        draft.text.push('!');
+        deckcraft_model::edit::replace_text(&mut draft.body, &draft.text);
+        draft.edited = true;
+        app.notes_buf = (uid, 0, draft);
+        app.run("view.gridlines", json!({})).unwrap();
+        assert!(app.notes_buf.2.edited, "the draft is still pending");
+        assert!(app.notes_buf.2.text.ends_with('!'));
+        let stored = app.session.active().unwrap().current_slide().unwrap().notes.clone();
+        let text = stored.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.text.clone())).collect::<String>();
+        assert!(!text.contains('!'), "gridlines must not save the notes: {text}");
+        assert_eq!(app.session.active().unwrap().revision, revision);
+        let (body, n) = (app.notes_buf.2.body.clone(), app.notes_buf.2.text.chars().count());
+        crate::notes::publish_selection(&mut app, 0, &body, 0, n);
+        app.run("format.bold", json!({"on": true})).unwrap();
+        let stored = app.session.active().unwrap().current_slide().unwrap().notes.clone();
+        let text = stored.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.text.clone())).collect::<String>();
+        assert!(text.contains('!'), "a font command still saves the draft first: {text}");
+    }
+
     /// A saved window with no presenter split keeps the next-slide preview; an explicit 0 hides it.
     #[test]
     fn a_missing_presenter_split_keeps_the_next_slide() {

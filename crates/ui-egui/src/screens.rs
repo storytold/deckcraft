@@ -143,6 +143,12 @@ impl SlideApp {
     }
 }
 
+/// Whether `next` is the list already stored. Compared by count, order, position, size, name and
+/// which screen is primary, so an unchanged monitor list does not replace the stored one.
+pub fn same_screens(cached: &[ScreenInfo], next: &[ScreenInfo]) -> bool {
+    cached == next
+}
+
 /// The index named by a Screen Settings field, when it is one of `screens`.
 pub(crate) fn chosen(raw: &str, screens: &[ScreenInfo]) -> Option<usize> {
     let index = raw.parse::<usize>().ok()?;
@@ -215,6 +221,26 @@ mod tests {
 
     fn screen(index: usize, primary: bool) -> ScreenInfo {
         ScreenInfo { index, name: format!(r"\\.\DISPLAY{}", index + 1), x: (index as i32) * 1920, y: 0, width: 1920, height: 1080, primary }
+    }
+
+    #[test]
+    fn an_unchanged_monitor_list_is_the_same_inventory() {
+        let screens = vec![screen(0, true), screen(1, false)];
+        assert!(same_screens(&screens, &screens));
+        let mut moved = screens.clone();
+        moved[1].x += 1;
+        assert!(!same_screens(&screens, &moved));
+        let mut renamed = screens.clone();
+        renamed[0].name = "Dell".into();
+        assert!(!same_screens(&screens, &renamed));
+        let mut resized = screens.clone();
+        resized[0].width += 1;
+        assert!(!same_screens(&screens, &resized));
+        let mut primary = screens.clone();
+        primary[0].primary = false;
+        primary[1].primary = true;
+        assert!(!same_screens(&screens, &primary));
+        assert!(!same_screens(&screens, &screens[..1]));
     }
 
     #[test]

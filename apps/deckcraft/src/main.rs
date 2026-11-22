@@ -30,10 +30,13 @@ use deckcraft_engine::Session;
 use deckcraft_ui_egui::{ScreenInfo, Services, SlideApp};
 
 /// Read the monitors in winit's order and keep them on the app for Screen Settings.
+///
+/// The list is replaced only when a monitor is added, removed, moved, resized, renamed, or
+/// changes which one is primary. An unchanged frame does not rebuild the stored list.
 fn refresh_screens(frame: &eframe::Frame, app: &mut SlideApp) {
     let Some(window) = frame.winit_window() else { return };
     let primary = window.primary_monitor();
-    let screens = window
+    let screens: Vec<ScreenInfo> = window
         .available_monitors()
         .enumerate()
         .map(|(index, monitor)| {
@@ -44,6 +47,9 @@ fn refresh_screens(frame: &eframe::Frame, app: &mut SlideApp) {
             ScreenInfo { index, name, x: pos.x, y: pos.y, width: size.width, height: size.height, primary }
         })
         .collect();
+    if deckcraft_ui_egui::screens::same_screens(&app.screens, &screens) {
+        return;
+    }
     app.set_screens(screens);
 }
 

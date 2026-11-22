@@ -52,7 +52,13 @@ fn arboard_image_png() -> Option<Vec<u8>> {
     let img = cb.get_image().ok()?;
     let width = u32::try_from(img.width).ok()?;
     let height = u32::try_from(img.height).ok()?;
-    let rgba = image::RgbaImage::from_raw(width, height, img.bytes.into_owned())?;
+    // Refuse before `from_raw` allocates. A huge clipboard image must not decode on the UI thread.
+    let pixels = paste_pixels(width, height)?;
+    let bytes = img.bytes.into_owned();
+    if bytes.len() != pixels.saturating_mul(4) {
+        return None;
+    }
+    let rgba = image::RgbaImage::from_raw(width, height, bytes)?;
     encode_rgba(&rgba)
 }
 
@@ -68,14 +74,19 @@ fn platform_image_png() -> Option<Vec<u8>> {
 }
 
 fn encode_rgba(rgba: &image::RgbaImage) -> Option<Vec<u8>> {
+    paste_pixels(rgba.width(), rgba.height())?;
     let mut out = Vec::new();
     rgba.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
     Some(out)
 }
 
-/// Same bound as a paste into the document: 16 megapixels.
-#[cfg(any(windows, test))]
+/// Same bound as a paste into the document: 16 megapixels. `None` when the image must not be decoded.
 const MAX_PASTE_PIXELS: usize = 16_000_000;
+
+fn paste_pixels(width: u32, height: u32) -> Option<usize> {
+    let pixels = usize::try_from(width).ok()?.checked_mul(usize::try_from(height).ok()?)?;
+    if pixels == 0 || pixels > MAX_PASTE_PIXELS { None } else { Some(pixels) }
+}
 #[cfg(any(windows, test))]
 const MAX_DIB_BYTES: usize = 70 * 1024 * 1024;
 
@@ -243,6 +254,13 @@ mod tests {
         huge[12..14].copy_from_slice(&1u16.to_le_bytes());
         huge[14..16].copy_from_slice(&24u16.to_le_bytes());
         assert!(super::dib_to_png(&huge).is_none());
+    }
+
+    #[test]
+    fn an_oversized_clipboard_image_is_refused_before_decode() {
+        assert_eq!(super::paste_pixels(1, 1), Some(1));
+        assert!(super::paste_pixels(0, 1).is_none());
+        assert!(super::paste_pixels(20_000, 20_000).is_none());
     }
 
     #[test]
