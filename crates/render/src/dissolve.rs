@@ -91,17 +91,16 @@ fn cache() -> &'static Mutex<Vec<(NoiseKey, Arc<Noise>)>> {
     C.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn noise(key: NoiseKey, cw: usize, rect: (usize, usize, usize, usize), view: [f64; 6], seed: u64) -> Arc<Noise> {
-    if let Ok(mut c) = cache().lock() {
-        if let Some(at) = c.iter().position(|(k, _)| *k == key) {
-            let hit = c.remove(at);
-            let n = Arc::clone(&hit.1);
-            c.push(hit);
-            return n;
-        }
+fn noise(key: NoiseKey, rect: (usize, usize, usize, usize), view: [f64; 6], seed: u64) -> Arc<Noise> {
+    if let Ok(mut c) = cache().lock()
+        && let Some(at) = c.iter().position(|(k, _)| *k == key)
+    {
+        let hit = c.remove(at);
+        let n = Arc::clone(&hit.1);
+        c.push(hit);
+        return n;
     }
     let (x0, x1, y0, y1) = rect;
-    let _ = cw;
     let [sx, _, _, sy, tx, ty] = view;
     let mut values = vec![0u8; (x1 - x0) * (y1 - y0)];
     // Per column: the grid cell and the smooth position inside it; the same per row.
@@ -167,7 +166,7 @@ pub(crate) fn mask(w: u16, h: u16, area: Rect, view: Affine, seed: u64, share: f
     }
     let bits = |a: [f64; 6]| [a[0].to_bits(), a[3].to_bits(), a[4].to_bits(), a[5].to_bits()];
     let key = (w, h, seed, [x0 as u64, x1 as u64, y0 as u64, y1 as u64], bits(coeffs));
-    let field = noise(key, cw, (x0, x1, y0, y1), coeffs, seed);
+    let field = noise(key, (x0, x1, y0, y1), coeffs, seed);
     let width = field.x1 - field.x0;
     for (row, py) in (field.y0..field.y1).enumerate() {
         let (Some(src), Some(out)) = (field.values.get(row * width..(row + 1) * width), data.get_mut(py * cw + field.x0..py * cw + field.x1)) else {
