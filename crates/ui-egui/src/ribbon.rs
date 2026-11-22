@@ -21,6 +21,7 @@ mod galleries;
 mod home;
 mod insert;
 mod masters;
+mod media_format;
 mod picture_format;
 mod playback;
 mod review;
@@ -47,6 +48,7 @@ use home::home;
 use insert::insert;
 pub use insert::table_grid_picker;
 use masters::{handout_master, notes_master, slide_master};
+use media_format::{audio_format, video_format};
 use picture_format::picture_format;
 use playback::playback;
 use review::review;
@@ -110,6 +112,13 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     }
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Chart(_))) {
         v.push("Chart Design");
+    }
+    // A clip's picture (an audio icon, a video's poster frame) is on its Format tab.
+    if shapes.iter().any(|s| matches!(&s.kind, ShapeKind::Media(m) if m.video)) {
+        v.push("Video Format");
+    }
+    if shapes.iter().any(|s| matches!(&s.kind, ShapeKind::Media(m) if !m.video)) {
+        v.push("Audio Format");
     }
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Media(_))) {
         v.push("Playback");
@@ -236,6 +245,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                         "Layout" => table_layout(app, ui),
                         "Chart Design" => chart_design(app, ui),
                         DIAGRAM_TAB_ID => smartart_design(app, ui),
+                        "Video Format" => video_format(app, ui),
+                        "Audio Format" => audio_format(app, ui),
                         "Playback" => playback(app, ui),
                         "Slide Master" => slide_master(app, ui),
                         "Handout Master" => handout_master(app, ui),
@@ -470,6 +481,9 @@ mod inktoshape_tests;
 
 #[cfg(test)]
 mod picture_styles_tests;
+
+#[cfg(test)]
+mod media_format_tests;
 
 #[cfg(test)]
 mod feature_name_tests {
