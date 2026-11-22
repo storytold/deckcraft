@@ -241,3 +241,24 @@ fn save_all_keeps_the_first_failure_on_the_status_line() {
     assert!(!app.session.documents()[1].is_dirty(), "the one after the failure was saved");
     assert_ne!(app.status.as_ref().map(|s| s.0.as_str()), Some("Saved"));
 }
+
+/// Without sheets, cancelling one Save dialog of Save All stops there: no further dialog is shown.
+#[test]
+fn save_all_stops_at_a_cancelled_blocking_dialog() {
+    let asked = Rc::new(Cell::new(0));
+    let a = Rc::clone(&asked);
+    let services = Services {
+        pick_save: Some(Box::new(move |_| {
+            a.set(a.get() + 1);
+            None
+        })),
+        ..Services::default()
+    };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    app.session.execute("slide.new", &serde_json::json!({})).unwrap();
+    app.session.execute("file.new", &serde_json::json!({})).unwrap();
+    app.session.execute("slide.new", &serde_json::json!({})).unwrap();
+    assert_eq!(app.session.documents().iter().filter(|d| d.is_dirty()).count(), 2);
+    assert!(!app.save_all());
+    assert_eq!(asked.get(), 1, "the second presentation's dialog is not shown");
+}

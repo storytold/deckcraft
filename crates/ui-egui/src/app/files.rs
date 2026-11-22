@@ -668,6 +668,10 @@ impl SlideApp {
             // meanwhile, and Save All reports that one as not saved yet.
             let unsaved = self.session.documents().get(i).is_some_and(|d| d.is_dirty());
             saved &= !unsaved;
+            // A blocking Save dialog that was cancelled ends Save All, as before sheets.
+            if unsaved && self.status == before && !self.file_dialog_open() {
+                break;
+            }
             if unsaved && error.is_none() && self.status != before {
                 error = self.status.clone();
             }
