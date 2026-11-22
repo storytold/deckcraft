@@ -368,17 +368,7 @@ impl Renderer {
     /// insets and font sizes stay in points; otherwise `w`, `h` and `m` themselves.
     fn text_space(&self, m: Affine, depth: usize, w: f64, h: f64) -> (f64, f64, Affine) {
         let (_, rel) = self.line_space(m, depth);
-        let c = rel.as_coeffs();
-        let (sx, sy) = (c[0].hypot(c[1]), c[2].hypot(c[3]));
-        let ok = |k: f64| k.is_finite() && k > 1e-9;
-        if depth == 0 || !ok(sx) || !ok(sy) || ((sx - 1.0).abs() < 1e-9 && (sy - 1.0).abs() < 1e-9) {
-            return (w, h, m);
-        }
-        let (tw, th) = (w * sx, h * sy);
-        if !tw.is_finite() || !th.is_finite() {
-            return (w, h, m);
-        }
-        (tw, th, m * Affine::scale_non_uniform(1.0 / sx, 1.0 / sy))
+        crate::placed::text_space(rel, m, depth, w, h)
     }
 
     /// A shape's geometry in its own `w` × `h` space, built at its size on the slide: inside a
@@ -798,8 +788,15 @@ impl Renderer {
         match &s.kind {
             ShapeKind::Picture { fill: pf } => {
                 // The picture's own fill shows behind its transparent pixels, as in PowerPoint (an
-                // emphasis tint recolours it, as it does any shape's fill).
-                if s.fill.as_ref().is_some_and(|f| !f.is_none())
+                // emphasis tint recolours it, as it does any shape's fill). A picture that sets
+                // neither a fill nor a style shows the fill its layout or master placeholder sets
+                // (#2068). A style fill alone, its own or inherited, stays undrawn.
+                let explicit = |sh: &deckcraft_model::Shape| sh.fill.as_ref().is_some_and(|f| !f.is_none());
+                let inherited = || {
+                    let (lp, mp) = resolve::parents(rctx, s);
+                    [lp, mp].into_iter().flatten().find(|p| p.fill.is_some() || p.style.is_some()).is_some_and(explicit)
+                };
+                if (explicit(s) || (s.fill.is_none() && s.style.is_none() && inherited()))
                     && let Some(fl) = &fill
                 {
                     self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);
