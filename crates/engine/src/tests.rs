@@ -6836,6 +6836,51 @@ fn crop_image_handles_and_pan_snap_without_moving_the_frame() {
 }
 
 #[test]
+fn crop_image_corner_snapping_preserves_proportions() {
+    let mut s = session();
+    let id = cropped_picture(&mut s);
+    s.execute("picture.crop", &json!({"ids": [id], "right": 0.25, "bottom": 0.25})).unwrap();
+    s.prefs.smart_guides = true;
+    s.tool.guides_visible = true;
+    s.edit(|doc, _| {
+        doc.guides.push(deckcraft_model::DrawGuide { vertical: true, pos: 340.0 });
+        Ok(())
+    })
+    .unwrap();
+    s.execute("picture.cropMode", &json!({"id": id})).unwrap();
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    let hit = s.pointer(ev(PointerKind::Down, 300.0, 250.0)).unwrap();
+    assert_eq!(hit["hit"]["kind"], "cropImage");
+    s.pointer(ev(PointerKind::Drag, 338.0, 278.5)).unwrap();
+    let (b, c) = crop_state(&s, id);
+    let image = cmd::crop::image_rect(b[2], b[3], [0.0; 4], c).unwrap();
+    assert!((image.x1 + b[0] - 340.0).abs() < 1e-6, "snaps to guide: {image:?}");
+    assert!((image.width() / image.height() - 4.0 / 3.0).abs() < 1e-9, "keeps proportions: {image:?}");
+}
+
+#[test]
+fn crop_commands_keep_group_child_coordinates_without_entering_crop_mode() {
+    let mut s = session();
+    let id = cropped_picture(&mut s);
+    let other = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 200, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    let group = s.execute("arrange.group", &json!({"ids": [id, other]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("shape.move", &json!({"id": group, "dx": 300, "dy": 100})).unwrap();
+    s.execute("shape.resize", &json!({"id": group, "w": 700})).unwrap();
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    let before = s.doc().unwrap().shape(ShapeId(id as _)).unwrap().xfrm.unwrap();
+    s.execute("picture.crop", &json!({"ids": [id], "left": 0.25})).unwrap();
+    let cropped = s.doc().unwrap().shape(ShapeId(id as _)).unwrap().xfrm.unwrap();
+    assert!((cropped.x - before.x - before.w * 0.25).abs() < 1e-6);
+    assert!((cropped.w - before.w * 0.75).abs() < 1e-6);
+    s.execute("picture.cropFill", &json!({"ids": [id], "mode": "fit"})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(ShapeId(id as _)).unwrap().xfrm.unwrap(), cropped);
+    s.execute("picture.cropAspect", &json!({"ids": [id], "ratio": "1:1"})).unwrap();
+    let after = s.doc().unwrap().shape(ShapeId(id as _)).unwrap().xfrm.unwrap();
+    assert!((after.w - after.h).abs() < 1e-6);
+    assert!(s.tool.crop.is_none(), "group members cannot enter interactive crop mode");
+}
+
+#[test]
 fn crop_snapping_handles_flips_and_skips_rotated_pictures() {
     for rotated in [false, true] {
         let mut s = session();

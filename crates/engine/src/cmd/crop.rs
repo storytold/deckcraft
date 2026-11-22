@@ -232,6 +232,24 @@ pub fn drag_image(img: Rect, handle: u8, d: deckcraft_geom::Vec2, free: bool) ->
     n
 }
 
+/// Keep a snapped image corner on its original aspect ratio, with the opposite corner fixed.
+/// Prefer the smaller relative snap correction when both axes found guides.
+pub fn proportional_corner(image: Rect, snapped: Rect, handle: u8) -> Rect {
+    let dx = (snapped.width() - image.width()).abs();
+    let dy = (snapped.height() - image.height()).abs();
+    let scale = if dx > 1e-9 && (dy <= 1e-9 || dx / image.width() <= dy / image.height()) {
+        snapped.width() / image.width()
+    } else {
+        snapped.height() / image.height()
+    };
+    let w = image.width() * scale;
+    let h = image.height() * scale;
+    let [left, top, ..] = sides(handle);
+    let x0 = if left { image.x1 - w } else { image.x0 };
+    let y0 = if top { image.y1 - h } else { image.y0 };
+    Rect::new(x0, y0, x0 + w, y0 + h)
+}
+
 /// The one picture crop mode works on: given by `id` or the one selected, on the slide itself.
 fn crop_target(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     let st = s.doc()?;
@@ -259,7 +277,7 @@ fn crop_target(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
 }
 
 fn crop_mode(s: &mut Session, p: &Value) -> Result<Value> {
-    let on = p.get("on").and_then(Value::as_bool).unwrap_or(s.tool.crop.is_none());
+    let on = p.get("on").and_then(Value::as_bool).unwrap_or_else(|| s.active().and_then(|st| s.tool.cropping(st)).is_none());
     if !on {
         s.exit_crop();
         return Ok(json!({"cropping": Value::Null}));
@@ -386,7 +404,9 @@ fn crop_aspect(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let r = store(s, "picture.cropAspect", &out)?;
     // Then straight into crop mode to adjust it, as PowerPoint does.
-    if let [(id, ..)] = out.as_slice() {
+    if let [(id, ..)] = out.as_slice()
+        && s.doc()?.shapes().iter().any(|sh| sh.id == *id)
+    {
         s.tool.crop = Some(*id);
     }
     Ok(r)

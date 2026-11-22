@@ -243,7 +243,18 @@ impl Session {
                 }
                 CropPart::Image(h) => {
                     let image = cmd::crop::drag_image(img, h, d, free);
-                    let image = s.snap_crop_rect(image, &orig, Some(h), id, tol, snap);
+                    let snapped = s.snap_crop_rect(image, &orig, Some(h), id, tol, snap);
+                    let image = if !free && h % 2 == 0 {
+                        let image = cmd::crop::proportional_corner(image, snapped, h);
+                        let drawn = cmd::crop::frame_xfrm(&orig, image).rect();
+                        s.tool.guides.retain(|g| {
+                            let edges = if g.vertical { [drawn.x0, drawn.x1] } else { [drawn.y0, drawn.y1] };
+                            edges.iter().any(|edge| (edge - g.pos).abs() < 1e-6)
+                        });
+                        image
+                    } else {
+                        snapped
+                    };
                     Some((orig, cmd::crop::crop_of(orig.w, orig.h, inset, image)?))
                 }
                 CropPart::Pan => {
