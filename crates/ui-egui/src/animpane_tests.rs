@@ -273,3 +273,28 @@ fn clicking_the_slide_ends_the_row() {
     h.run_steps(2);
     assert_eq!(h.state().anim_row_index(), None);
 }
+
+#[test]
+fn editing_the_text_ends_the_row() {
+    // Deleting "One" renumbers the bullets' effects: the clicked row's index would then name
+    // "Three"'s effect, which looks just like "Two"'s did.
+    let mut h = bullets_harness();
+    click_row(&mut h, 2, egui::PointerButton::Primary);
+    assert_eq!(h.state().anim_row_index(), Some(1));
+    let tb = effects_shape(&h);
+    h.state_mut().session.execute("text.edit", &json!({"id": tb})).unwrap();
+    h.run_steps(1);
+    let s = &mut h.state_mut().session;
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [1, 0]})).unwrap();
+    s.execute("text.delete", &json!({})).unwrap();
+    s.execute("text.exit", &json!({})).unwrap();
+    s.execute("edit.select", &json!({"ids": [tb]})).unwrap();
+    h.run_steps(2);
+    assert_eq!(effects(&h), vec![fade(0, 500), fade(1, 500)]);
+    assert_eq!(h.state().anim_row_index(), None);
+}
+
+fn effects_shape(h: &Harness<'_, SlideApp>) -> u64 {
+    let d = h.state().session.active().unwrap();
+    u64::from(d.current_slide().unwrap().animations[0].shape.0)
+}

@@ -167,8 +167,14 @@ pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut T
     // Materialise an inherited placeholder box before editing (so autofit can change it).
     let r = s.edit(|doc, sel| {
         let mut t = t0.clone();
+        // Effects on single paragraphs of this box stay on their paragraphs through the edit.
+        let animated = match sel.target {
+            Target::Slides if !t.notes && t.cell.is_none() => doc.slides.get(sel.slide).and_then(|sl| super::animation::animated_text(sl, t.shape)),
+            _ => None,
+        };
         let body = body_mut(doc, sel, &t).ok_or_else(|| bad("text", "the text being edited is gone"))?;
         let r = f(body, &mut t);
+        let moves = animated.map(|old| super::animation::paragraph_moves(&old, &body.paragraphs, t0.ordered().0.0));
         // The saved shrink-on-overflow scale was for the old text: fit the new text afresh. A
         // body whose file carried no `fontScale` keeps none (100 %) here; `fit_shrink_scale`
         // below fills in the computed scale when the new text overflows (#724).
@@ -177,6 +183,9 @@ pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut T
                 *font_scale = Some(1.0);
             }
             *line_reduction = 0.0;
+        }
+        if let (Some(moves), Some(sl)) = (moves, doc.slides.get_mut(sel.slide)) {
+            super::animation::follow_paragraphs(Arc::make_mut(sl), t0.shape, &moves);
         }
         sel.text = Some(t);
         Ok(r)

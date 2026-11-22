@@ -247,6 +247,11 @@ impl SlideApp {
             // window that starts hidden must still apply a file picked before its first UI pass.
             self.drain_inbox();
         }
+        // Editing text ends a clicked Animation Pane row: a text edit can renumber or remove the
+        // box's paragraph effects, so the row's index may later name another bullet's effect.
+        if self.session.active().is_some_and(|d| d.selection.text.is_some()) {
+            self.anim_row = None;
+        }
         self.drain_screenshots();
         // `raw_input_hook` ran before this logic pass. This is normally a no-op now that
         // target-changing work is deferred for a live batch; it still covers a target change

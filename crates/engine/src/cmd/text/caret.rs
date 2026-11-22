@@ -6,6 +6,7 @@ use super::{
     DocState, HistoryEntry, Pos, Result, Session, ShapeId, ShapeKind, TextBody, Value, bad, body_of, bool_or, ed, edit_shapes, edit_text, id_param,
     json, ok, push_undo, str_param, xfrm_of,
 };
+use crate::cmd::animation;
 
 /// A table cell's text laid out the way it is drawn, mapped into slide coordinates.
 pub(super) fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) -> Option<CellText> {
@@ -331,6 +332,12 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let cell = p.get("cell").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)));
     let inherited = inherited_aligns(s, id);
+    // Effects on single paragraphs of this box stay on their paragraphs, in the same undo step.
+    let st = s.doc()?;
+    let animated = match st.selection.target {
+        crate::Target::Slides if cell.is_none() => st.current_slide().and_then(|sl| animation::animated_text(sl, id)),
+        _ => None,
+    };
     edit_shapes(s, &json!({"id": id}), "text.set", |sh| {
         let target = match (&mut sh.kind, cell) {
             (ShapeKind::Table(t), Some((r, c))) => t.cell_mut(r, c).map(|x| &mut x.text),
@@ -357,6 +364,17 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
         body.paragraphs = nb.paragraphs;
         Ok(())
     })?;
+    if let Some(old) = animated {
+        s.edit(|doc, sel| {
+            if let Some(sl) = doc.slides.get_mut(sel.slide) {
+                let new = deckcraft_model::find_shape(&sl.shapes, id).and_then(|sh| sh.text.as_ref());
+                // The whole text is new: no place where the edit began.
+                let moves = animation::paragraph_moves(&old, new.map(|t| t.paragraphs.as_slice()).unwrap_or_default(), usize::MAX);
+                animation::follow_paragraphs(std::sync::Arc::make_mut(sl), id, &moves);
+            }
+            Ok(())
+        })?;
+    }
     fit_text_box(s, id)?;
     ok()
 }

@@ -2,8 +2,9 @@
 
 use std::sync::Arc;
 
-use deckcraft_model::ShapeId;
 use deckcraft_model::anim::{ANIMATIONS, AnimClass, AnimStart, Animation, TextBuild, animation_info};
+use deckcraft_model::text::Paragraph;
+use deckcraft_model::{ShapeId, Slide};
 use serde_json::{Value, json};
 
 use super::{
@@ -550,6 +551,89 @@ fn split_builds(anims: &mut Vec<Animation>, id: ShapeId, paras: &[(u32, bool)]) 
         }
     }
     *anims = out;
+}
+
+/// Where each paragraph went when an edit turned the paragraphs `old` into `new`: its new index,
+/// or `None` when it is gone.
+///
+/// One edit changes one stretch of the text. The paragraphs before and after that stretch keep
+/// their text, so they keep their place (shifted by what the edit added or removed). They are
+/// matched by text alone: an edit also rewrites the formatting of the paragraphs it touches (a
+/// deletion across a paragraph mark keeps the first paragraph's level and properties, typing
+/// merges runs), and `text.set` rebuilds the formatting of all of them. The stretch starts at
+/// paragraph `from` at the latest (where the edit began), which tells apart paragraphs with the
+/// same text: deleting the first of three "X" lines leaves the last two.
+///
+/// Inside the stretch, the old paragraphs take the new ones in order. A paragraph split in
+/// pieces (Enter, or a paste of several lines) stays on the first piece, unless only the last
+/// piece still ends with its text (lines pasted or typed at its start). When the stretch lost
+/// paragraphs, blank ones go first, then the last ones: a paragraph joined onto the one before
+/// it (Backspace at its start, Delete at the end of the one before) is gone, the one it joined
+/// stays.
+pub(crate) fn paragraph_moves(old: &[Paragraph], new: &[Paragraph], from: usize) -> Vec<Option<usize>> {
+    let old_text: Vec<String> = old.iter().map(Paragraph::text).collect();
+    let new_text: Vec<String> = new.iter().map(Paragraph::text).collect();
+    let head = old_text.iter().zip(&new_text).take_while(|(a, b)| a == b).count().min(from);
+    let most = old.len().min(new.len()).saturating_sub(head);
+    let tail = old_text.iter().rev().zip(new_text.iter().rev()).take(most).take_while(|(a, b)| a == b).count();
+    // The edited stretch: `gone` old paragraphs became `came` new ones.
+    let gone = old.len().saturating_sub(head + tail);
+    let came = new.len().saturating_sub(head + tail);
+    if gone == 1 && came > 1 {
+        let (text, first, last) = (old_text.get(head), new_text.get(head), new_text.get(head + came - 1));
+        if let (Some(text), Some(first), Some(last)) = (text, first, last)
+            && !first.starts_with(text.as_str())
+            && last.ends_with(text.as_str())
+        {
+            return (0..old.len()).map(|i| Some(if i < head { i } else { i + came - 1 })).collect();
+        }
+    }
+    let mut blanks = gone.saturating_sub(came);
+    let mut next = head;
+    old.iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if i < head {
+                return Some(i);
+            }
+            if i >= head + gone {
+                return Some((i + came).saturating_sub(gone));
+            }
+            if blanks > 0 && !deckcraft_model::anim::build_filled(p) {
+                blanks -= 1;
+                return None;
+            }
+            (next < head + came).then(|| {
+                next += 1;
+                next - 1
+            })
+        })
+        .collect()
+}
+
+/// The paragraphs of `shape` on `slide` when effects of the slide animate some of them, so that
+/// [`follow_paragraphs`] can keep those effects on their paragraphs through a text edit.
+pub(crate) fn animated_text(slide: &Slide, shape: ShapeId) -> Option<Vec<Paragraph>> {
+    if !slide.animations.iter().any(|a| a.shape == shape && a.paragraph.is_some()) {
+        return None;
+    }
+    let sh = deckcraft_model::find_shape(&slide.shapes, shape)?;
+    Some(sh.text.as_ref().map(|t| t.paragraphs.clone()).unwrap_or_default())
+}
+
+/// Keeps `shape`'s paragraph effects on their paragraphs after its text changed (`moves`, from
+/// [`paragraph_moves`]), and removes those whose paragraph is gone.
+pub(crate) fn follow_paragraphs(slide: &mut Slide, shape: ShapeId, moves: &[Option<usize>]) {
+    slide.animations.retain_mut(|a| {
+        let (true, Some(p)) = (a.shape == shape, a.paragraph) else { return true };
+        match moves.get(p as usize).copied().flatten().and_then(|n| u32::try_from(n).ok()) {
+            Some(n) => {
+                a.paragraph = Some(n);
+                true
+            }
+            None => false,
+        }
+    });
 }
 
 /// `animation.add`: appends this effect to the end of the sequence for each target shape, or one
@@ -1571,5 +1655,254 @@ mod tests {
         s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
         s.execute("animation.add", &json!({"effect": "fade", "class": "entrance"})).unwrap();
         assert_eq!(effects(&mut s), vec![(tb, Some(1), "fade".into(), "onClick".into())]);
+    }
+
+    use deckcraft_model::text::Run;
+
+    /// `paragraph_moves` on paragraphs given by their text.
+    fn moves(old: &[&str], new: &[&str]) -> Vec<Option<usize>> {
+        moves_from(old, new, usize::MAX)
+    }
+
+    fn moves_from(old: &[&str], new: &[&str], from: usize) -> Vec<Option<usize>> {
+        let ps = |v: &[&str]| v.iter().map(|t| Paragraph::new(t)).collect::<Vec<_>>();
+        paragraph_moves(&ps(old), &ps(new), from)
+    }
+
+    #[test]
+    fn paragraphs_follow_an_edit_of_their_text() {
+        let abc = ["A", "B", "C"];
+        assert_eq!(moves(&abc, &["", "A", "B", "C"]), [Some(1), Some(2), Some(3)], "Enter at the start of A");
+        assert_eq!(moves(&abc, &["A", "B", "", "C"]), [Some(0), Some(1), Some(3)], "Enter at the end of B");
+        assert_eq!(moves(&abc, &["A", "B1", "B2", "C"]), [Some(0), Some(1), Some(3)], "Enter inside B: B is the first piece");
+        assert_eq!(moves(&abc, &["A", "Bx", "C"]), [Some(0), Some(1), Some(2)], "typing in B");
+        assert_eq!(moves(&abc, &["A", "C"]), [Some(0), None, Some(1)], "B deleted");
+        assert_eq!(moves(&abc, &["AB", "C"]), [Some(0), None, Some(1)], "B joined onto A");
+        assert_eq!(moves(&abc, &["AC"]), [Some(0), None, None], "B and C joined onto A");
+        assert_eq!(moves(&["", "B", "C"], &["Bx", "C"]), [None, Some(0), Some(1)], "a blank line joined goes first");
+        assert_eq!(moves(&["A", "A"], &["", "A", "A"]), [Some(1), Some(2)], "same text twice");
+        assert_eq!(moves(&abc, &[]), [None, None, None]);
+        assert!(moves(&[], &["A"]).is_empty());
+        // Lines pasted at the start of B: B's text is at the end of the last piece.
+        assert_eq!(moves(&abc, &["A", "New", "New B", "C"]), [Some(0), Some(2), Some(3)]);
+        assert_eq!(moves(&abc, &["A", "B", "New", "C"]), [Some(0), Some(1), Some(3)], "pasted at the end of B");
+        // Where the edit began tells lines with the same text apart.
+        assert_eq!(moves_from(&["X", "X", "X"], &["X", "X"], 0), [None, Some(0), Some(1)], "first line deleted");
+        assert_eq!(moves_from(&["X", "X", "X"], &["X", "X"], 1), [Some(0), None, Some(1)], "second line deleted");
+        assert_eq!(moves_from(&abc, &["A", "B", "", "C"], 1), [Some(0), Some(1), Some(3)], "Enter at the end of B");
+    }
+
+    /// Bullets "One", "Two", "Three" being edited, with `fly` on "Two" and `zoom` on "Three".
+    fn animated_bullets() -> (Session, u64) {
+        let (mut s, tb, _) = bullets();
+        s.execute("animation.add", &json!({"effect": "fly", "class": "entrance", "ids": [tb], "paragraphs": [1]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "zoom", "class": "entrance", "ids": [tb], "paragraphs": [2]})).unwrap();
+        (s, tb)
+    }
+
+    /// Each paragraph effect with the text of the paragraph it animates, and the text of the
+    /// paragraphs the show animates.
+    fn played(s: &mut Session, tb: u64) -> (Vec<(String, String)>, Vec<String>) {
+        let t = s.execute("text.get", &json!({"id": tb})).unwrap();
+        let text = |i: u64| t["paragraphs"][i as usize]["text"].as_str().unwrap_or("<none>").to_string();
+        let own = effects(s).into_iter().filter_map(|(_, p, e, _)| Some((e, text(p?)))).collect();
+        let st = s.doc().unwrap();
+        let size = st.doc.slide_size;
+        let tl = deckcraft_anim::Timeline::new(st.current_slide().unwrap(), size.width, size.height);
+        (own, tl.paragraph_targets(ShapeId(tb as u32)).into_iter().map(|i| text(i as u64)).collect())
+    }
+
+    fn both() -> (Vec<(String, String)>, Vec<String>) {
+        (vec![("fly".into(), "Two".into()), ("zoom".into(), "Three".into())], vec!["Two".into(), "Three".into()])
+    }
+
+    #[test]
+    fn a_new_paragraph_above_leaves_the_effects_on_their_bullets() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 0]})).unwrap();
+        s.execute("text.insert", &json!({"text": "\n"})).unwrap();
+        assert_eq!(played(&mut s, tb), both());
+        assert_eq!(effects(&mut s).iter().map(|e| e.1).collect::<Vec<_>>(), [Some(2), Some(3)]);
+    }
+
+    #[test]
+    fn pasting_paragraphs_above_leaves_the_effects_on_their_bullets() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.select", &json!({"anchor": [0, 3], "caret": [0, 3]})).unwrap();
+        s.execute("edit.pasteText", &json!({"text": "\nOne a\nOne b"})).unwrap();
+        assert_eq!(s.execute("text.get", &json!({"id": tb})).unwrap()["paragraphs"].as_array().unwrap().len(), 5);
+        assert_eq!(played(&mut s, tb), both());
+    }
+
+    #[test]
+    fn deleting_a_paragraph_above_leaves_the_effects_on_their_bullets() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.select", &json!({"anchor": [0, 0], "caret": [1, 0]})).unwrap();
+        s.execute("text.delete", &json!({})).unwrap();
+        assert_eq!(played(&mut s, tb), both());
+        assert_eq!(effects(&mut s).iter().map(|e| e.1).collect::<Vec<_>>(), [Some(0), Some(1)]);
+    }
+
+    #[test]
+    fn editing_inside_a_bullet_keeps_its_effect() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.select", &json!({"anchor": [1, 3], "caret": [1, 3]})).unwrap();
+        s.execute("text.insert", &json!({"text": "!"})).unwrap();
+        let (own, shown) = played(&mut s, tb);
+        assert_eq!(own, [("fly".into(), "Two!".into()), ("zoom".into(), "Three".into())]);
+        assert_eq!(shown, ["Two!", "Three"]);
+    }
+
+    #[test]
+    fn enter_inside_a_bullet_keeps_its_effect_on_the_first_piece() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.select", &json!({"anchor": [1, 1], "caret": [1, 1]})).unwrap();
+        s.execute("text.insert", &json!({"text": "\n"})).unwrap();
+        let (own, shown) = played(&mut s, tb);
+        assert_eq!(own, [("fly".into(), "T".into()), ("zoom".into(), "Three".into())]);
+        assert_eq!(shown, ["T", "Three"]);
+    }
+
+    #[test]
+    fn deleting_an_animated_bullet_removes_its_effect() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.select", &json!({"anchor": [1, 0], "caret": [2, 0]})).unwrap();
+        s.execute("text.delete", &json!({})).unwrap();
+        assert_eq!(played(&mut s, tb), (vec![("zoom".into(), "Three".into())], vec!["Three".into()]));
+    }
+
+    #[test]
+    fn a_bullet_joined_onto_the_one_above_loses_its_effect() {
+        let (mut s, tb) = animated_bullets();
+        // Backspace at the start of "Two".
+        s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 0]})).unwrap();
+        s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+        assert_eq!(played(&mut s, tb), (vec![("zoom".into(), "Three".into())], vec!["Three".into()]));
+        // Delete at the end of "OneTwo" joins "Three" onto it.
+        s.execute("text.select", &json!({"anchor": [0, 6], "caret": [0, 6]})).unwrap();
+        s.execute("text.delete", &json!({"dir": "forward"})).unwrap();
+        assert!(effects(&mut s).is_empty(), "{:?}", effects(&mut s));
+    }
+
+    #[test]
+    fn deleting_all_the_text_removes_the_paragraph_effects_only() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("animation.add", &json!({"effect": "spin", "class": "emphasis", "ids": [tb]})).unwrap();
+        s.execute("text.selectAll", &json!({})).unwrap();
+        s.execute("text.delete", &json!({})).unwrap();
+        assert_eq!(effects(&mut s), [(tb, None, "spin".into(), "onClick".into())]);
+    }
+
+    #[test]
+    fn undo_and_redo_of_a_text_edit_move_the_effects_with_it() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.select", &json!({"anchor": [0, 0], "caret": [1, 0]})).unwrap();
+        s.execute("text.delete", &json!({})).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(played(&mut s, tb), both());
+        assert_eq!(effects(&mut s).iter().map(|e| e.1).collect::<Vec<_>>(), [Some(1), Some(2)]);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(effects(&mut s).iter().map(|e| e.1).collect::<Vec<_>>(), [Some(0), Some(1)]);
+        // And editing goes on from there: a new line above again.
+        s.execute("text.edit", &json!({"id": tb, "at": [0, 0]})).unwrap();
+        s.execute("text.insert", &json!({"text": "\n"})).unwrap();
+        assert_eq!(played(&mut s, tb), both());
+    }
+
+    #[test]
+    fn set_text_keeps_the_effects_on_the_bullets_that_stay() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.exit", &json!({})).unwrap();
+        s.execute("text.set", &json!({"id": tb, "text": "One\nThree"})).unwrap();
+        assert_eq!(played(&mut s, tb), (vec![("zoom".into(), "Three".into())], vec!["Three".into()]));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(played(&mut s, tb), both(), "one undo step brings back text and effect");
+    }
+
+    /// Changes the text box `tb`'s paragraphs directly, as a file can have them.
+    fn reshape(s: &mut Session, tb: u64, f: impl FnOnce(&mut Vec<Paragraph>)) {
+        s.edit(|doc, sel| {
+            let shapes = crate::shapes_mut(doc, sel).unwrap();
+            let sh = deckcraft_model::find_shape_mut(shapes, ShapeId(tb as u32)).unwrap();
+            f(&mut sh.text.as_mut().unwrap().paragraphs);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn deleting_the_line_above_a_sub_bullet_keeps_its_effect() {
+        // Deleting across a paragraph mark keeps the first paragraph's level and properties, so
+        // the sub-bullet's text ends up in a paragraph formatted like "One".
+        let (mut s, tb) = animated_bullets();
+        reshape(&mut s, tb, |ps| ps[1].level = 1);
+        s.execute("text.select", &json!({"anchor": [0, 0], "caret": [1, 0]})).unwrap();
+        s.execute("text.delete", &json!({})).unwrap();
+        assert_eq!(played(&mut s, tb), both());
+    }
+
+    #[test]
+    fn deleting_a_line_with_its_own_end_mark_keeps_the_effects() {
+        let (mut s, tb) = animated_bullets();
+        reshape(&mut s, tb, |ps| ps[0].end_props.lang = Some("pl-PL".into()));
+        s.execute("text.select", &json!({"anchor": [0, 0], "caret": [1, 0]})).unwrap();
+        s.execute("text.delete", &json!({})).unwrap();
+        assert_eq!(played(&mut s, tb), both());
+    }
+
+    #[test]
+    fn enter_at_the_start_of_a_bullet_in_several_runs_keeps_its_effect() {
+        // A file can split a word into runs with the same formatting; an edit merges them.
+        let (mut s, tb) = animated_bullets();
+        reshape(&mut s, tb, |ps| ps[1].runs = vec![Run::new("Tw"), Run::new("o")]);
+        s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 0]})).unwrap();
+        s.execute("text.insert", &json!({"text": "\n"})).unwrap();
+        assert_eq!(played(&mut s, tb), both());
+    }
+
+    #[test]
+    fn deleting_the_first_of_lines_with_the_same_text_keeps_the_others() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.textBox", &json!({"rect": [50, 50, 400, 200], "text": "X\nX\nX"})).unwrap();
+        let tb = r.get("id").unwrap().as_u64().unwrap();
+        s.execute("animation.add", &json!({"effect": "fly", "class": "entrance", "ids": [tb], "paragraphs": [1]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "zoom", "class": "entrance", "ids": [tb], "paragraphs": [2]})).unwrap();
+        s.execute("text.edit", &json!({"id": tb})).unwrap();
+        s.execute("text.selectParagraph", &json!({"at": [0, 0]})).unwrap();
+        s.execute("text.delete", &json!({})).unwrap();
+        let e: Vec<_> = effects(&mut s).into_iter().map(|e| (e.1, e.2)).collect();
+        assert_eq!(e, [(Some(0), "fly".to_string()), (Some(1), "zoom".to_string())]);
+    }
+
+    #[test]
+    fn lines_pasted_at_the_start_of_a_bullet_leave_its_effect_on_its_text() {
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 0]})).unwrap();
+        s.execute("edit.pasteText", &json!({"text": "New a\nNew b "})).unwrap();
+        let (own, shown) = played(&mut s, tb);
+        assert_eq!(own, [("fly".into(), "New b Two".into()), ("zoom".into(), "Three".into())]);
+        assert_eq!(shown, ["New b Two", "Three"]);
+    }
+
+    #[test]
+    fn set_text_keeps_the_effects_when_the_text_is_formatted() {
+        // `text.set` gives every run the first run's formatting: here "One" is bold, so after it
+        // no paragraph is formatted as it was.
+        let (mut s, tb) = animated_bullets();
+        s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 3]})).unwrap();
+        s.execute("format.bold", &json!({})).unwrap();
+        s.execute("text.exit", &json!({})).unwrap();
+        s.execute("text.set", &json!({"id": tb, "text": "One\nThree"})).unwrap();
+        assert_eq!(played(&mut s, tb), (vec![("zoom".into(), "Three".into())], vec!["Three".into()]));
+    }
+
+    #[test]
+    fn the_outline_deleting_a_line_above_a_sub_bullet_keeps_the_effects() {
+        // The Outline pane sends a body's text with a tab per level.
+        let (mut s, tb) = animated_bullets();
+        reshape(&mut s, tb, |ps| ps[1].level = 1);
+        s.execute("text.exit", &json!({})).unwrap();
+        s.execute("text.set", &json!({"id": tb, "text": "\tTwo\nThree"})).unwrap();
+        assert_eq!(played(&mut s, tb), both());
     }
 }
