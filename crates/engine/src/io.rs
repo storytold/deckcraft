@@ -4,6 +4,22 @@
 //! roots ([`crate::file_access`]) are checked in one place. A command module that called
 //! `std::fs` itself would bypass them; a test in `file_access` keeps that from happening.
 
+/// Whether two path spellings refer to the same existing file. Save uses this to prevent an
+/// alternate spelling of an open path from bypassing its external-change check.
+pub fn same_file_path(open_path: &str, save_path: &str) -> bool {
+    if open_path == save_path {
+        return true;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::fs::canonicalize(open_path).ok().zip(std::fs::canonicalize(save_path).ok()).is_some_and(|(a, b)| a == b)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        false
+    }
+}
+
 /// The bytes of the file at `path`, inside the automation read root when there is one.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_file(path: &str) -> Result<Vec<u8>, String> {

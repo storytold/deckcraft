@@ -219,6 +219,9 @@ pub struct DocState {
     pub selection: Selection,
     pub history: History,
     pub path: Option<String>,
+    /// Fingerprint of the file at `path` when it was opened or last saved. A changed file must
+    /// not be overwritten by Save, even if the in-memory presentation is unchanged.
+    pub file_fingerprint: Option<u64>,
     pub revision: u64,
     pub saved_doc: Arc<Presentation>,
     pub interaction: Option<Interaction>,
@@ -257,6 +260,7 @@ impl DocState {
             selection: Selection::default(),
             history: History { limit: 500, ..Default::default() },
             path,
+            file_fingerprint: None,
             revision: 1,
             interaction: None,
             uid: next_uid(),

@@ -256,6 +256,7 @@ pub fn add_opened(s: &mut Session, name: &str, path: Option<String>, p: Presenta
 pub struct LoadedFile {
     pub path: String,
     pub doc: Presentation,
+    pub file_fingerprint: u64,
     /// A native or PPTX file (saving goes back to it); an outline import has no file to save to.
     pub native: bool,
     /// What the file had lost or damaged.
@@ -275,16 +276,26 @@ pub fn read_presentation_file(path: &str) -> Result<LoadedFile> {
 pub fn loaded_file(path: &str, bytes: &[u8]) -> Result<LoadedFile> {
     let (doc, damaged) = open_checked(path, bytes)?;
     let native = deckcraft_format::sniff(bytes) || deckcraft_pptx::sniff(bytes);
-    Ok(LoadedFile { path: path.to_string(), doc, native, damaged })
+    Ok(LoadedFile { path: path.to_string(), doc, file_fingerprint: fingerprint(bytes), native, damaged })
+}
+
+fn fingerprint(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Add a loaded presentation as the active document: the shared end of `file.open` and
 /// `file.adopt`. A damaged file opens as an untitled repaired copy, so Save can't overwrite the
 /// original with the empty media.
 fn adopt_loaded(s: &mut Session, f: LoadedFile) -> Result<Value> {
-    let LoadedFile { path, doc, native, damaged } = f;
+    let LoadedFile { path, doc, file_fingerprint, native, damaged } = f;
     let keep_path = native && damaged.is_empty();
     let i = add_opened(s, &path, keep_path.then(|| path.clone()), doc);
+    if keep_path {
+        s.doc_mut()?.file_fingerprint = Some(file_fingerprint);
+    }
     report_damage(s, &damaged)?;
     let st = s.doc()?;
     Ok(json!({
@@ -525,8 +536,18 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let format = str_param(p, "format").unwrap_or(format_for_path(&path));
     let bytes = save_bytes(&s.doc()?.doc, format)?;
+    if let Some(st) = s.active()
+        && st.path.as_deref().is_some_and(|open_path| crate::io::same_file_path(open_path, &path))
+        && let Some(expected) = st.file_fingerprint
+    {
+        let current = crate::io::read_file(&path).map_err(EngineError::Other)?;
+        if fingerprint(&current) != expected {
+            return Err(EngineError::Other(format!("{path}: file changed on disk since it was opened or saved; use Save As to keep both versions")));
+        }
+    }
     write_file(&path, &bytes)?;
     mark_saved(s, Some(path.clone()))?;
+    s.doc_mut()?.file_fingerprint = Some(fingerprint(&bytes));
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
 
