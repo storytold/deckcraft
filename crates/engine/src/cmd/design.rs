@@ -227,13 +227,17 @@ fn apply_master(s: &mut Session, src: &Presentation) -> Result<Value> {
         let moves: Vec<(usize, deckcraft_model::LayoutId)> =
             doc.slides.iter().enumerate().filter_map(|(i, sl)| old.layout(sl.layout).and_then(|l| matching_layout(&m, l)).map(|l| (i, l))).collect();
         let layouts = m.layouts.len();
+        // The old master's layouts go with it: the frames the slides take from them are pinned first.
+        for (i, _) in &moves {
+            super::slide::pin_inherited_frames(doc, *i);
+        }
         if old.preserve {
             doc.masters.insert(mi, Arc::new(m));
         } else if let Some(slot) = doc.masters.get_mut(mi) {
             *slot = Arc::new(m);
         }
         for (i, l) in &moves {
-            super::slide::apply_layout(doc, *i, *l)?;
+            super::slide::apply_layout_in_place(doc, *i, *l)?;
         }
         if let Target::Layout { master, .. } = sel.target {
             sel.target = Target::Master { master };

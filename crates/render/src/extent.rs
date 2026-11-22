@@ -52,7 +52,7 @@ pub(crate) fn spill(line: Option<&Line>, effects: Option<&Effects>, w: f64, h: f
 
 /// Slide-space box a top-level shape draws into, its spill included.
 fn shape_box(rctx: &Ctx, s: &Shape) -> Option<Rect> {
-    if s.hidden {
+    if s.hidden || resolve::lacks_frame(rctx, s) {
         return None;
     }
     let x: Xfrm = resolve::xfrm(rctx, s);

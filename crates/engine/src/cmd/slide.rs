@@ -488,8 +488,56 @@ fn hide(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Where PowerPoint puts a placeholder the new layout has no counterpart for: against the side edge
+/// of the slide that its centre is nearer, keeping its top, width and height (observed on slides
+/// 960 and 1100 pt wide, with content placeholders and with a footer and a slide number: every one
+/// went to `0` or to `width - w`). One whose centre is exactly the middle went to the left edge.
+fn nearest_side(x: deckcraft_model::Xfrm, width: f64) -> deckcraft_model::Xfrm {
+    if !(width.is_finite() && width > 0.0 && x.x.is_finite() && x.w.is_finite()) {
+        return x;
+    }
+    let left = x.x + x.w / 2.0 <= width / 2.0 + 0.01;
+    deckcraft_model::Xfrm { x: if left { 0.0 } else { width - x.w }, ..x }
+}
+
 /// Re-map a slide's placeholders onto a new layout (content kept, matched by type/index).
 pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> Result<()> {
+    apply_layout_with(doc, index, layout, true)
+}
+
+/// [`apply_layout`] for a change of theme: the placeholders the new layout has no counterpart for
+/// stay as they are drawn, with the idx they had. (PowerPoint copies the slide's layout into the
+/// new design instead, and nothing is left over; that is not done here.)
+pub fn apply_layout_in_place(doc: &mut Presentation, index: usize, layout: LayoutId) -> Result<()> {
+    apply_layout_with(doc, index, layout, false)
+}
+
+/// Gives every placeholder of slide `index` that takes its frame from its layout that frame as its
+/// own, where it is drawn now. A change of master calls it before the old master goes: the slide's
+/// layout is not in the document any more by the time the slide moves to the new one.
+pub fn pin_inherited_frames(doc: &mut Presentation, index: usize) {
+    let Some(slide) = doc.slides.get(index) else { return };
+    let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(doc, slide) else { return };
+    let frames: Vec<Option<deckcraft_model::Xfrm>> = slide
+        .shapes
+        .iter()
+        .map(|s| {
+            (s.ph.is_some() && s.xfrm.is_none() && !deckcraft_model::resolve::lacks_frame(&ctx, s)).then(|| deckcraft_model::resolve::xfrm(&ctx, s))
+        })
+        .collect();
+    if frames.iter().all(Option::is_none) {
+        return;
+    }
+    if let Some(slide) = doc.slides.get_mut(index) {
+        for (s, f) in Arc::make_mut(slide).shapes.iter_mut().zip(frames) {
+            if f.is_some() {
+                s.xfrm = f;
+            }
+        }
+    }
+}
+
+fn apply_layout_with(doc: &mut Presentation, index: usize, layout: LayoutId, leftovers_to_the_edges: bool) -> Result<()> {
     let lay_shapes: Vec<deckcraft_model::Shape> =
         doc.layout(layout).map(|(_, l)| l.shapes.clone()).ok_or_else(|| bad("slide.layout", "no such layout"))?;
     let mut fresh = vec![];
@@ -497,9 +545,33 @@ pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> R
         let id = deckcraft_model::ShapeId(doc.alloc_id().ok_or_else(|| bad("slide.layout", NO_ID_SPACE))?);
         fresh.push((id, ls.clone()));
     }
+    // A placeholder that inherits its frame keeps it where it is drawn now: one left over below
+    // pairs with nothing in the new layout, and would lose its frame and vanish.
+    let frames: Vec<Option<deckcraft_model::Xfrm>> = {
+        let slide = doc.slides.get(index).ok_or_else(|| bad("slide.layout", "no slide"))?;
+        let ctx = deckcraft_model::resolve::Ctx::for_slide(doc, slide);
+        // A footer, date or slide number pairs with the new layout's by idx, and then takes its frame.
+        let pairs_anyway = |s: &deckcraft_model::Shape| {
+            s.ph.as_ref().is_some_and(|p| p.kind.is_footer_kind() && lay_shapes.iter().any(|l| l.ph.as_ref().is_some_and(|q| q.idx == p.idx)))
+        };
+        let inherits = |s: &deckcraft_model::Shape| s.ph.is_some() && s.xfrm.is_none() && !pairs_anyway(s);
+        slide
+            .shapes
+            .iter()
+            .map(|s| {
+                ctx.as_ref().filter(|c| inherits(s) && !deckcraft_model::resolve::lacks_frame(c, s)).map(|c| deckcraft_model::resolve::xfrm(c, s))
+            })
+            .collect()
+    };
+    let width = doc.slide_size.width;
     let slide = doc.slides.get_mut(index).ok_or_else(|| bad("slide.layout", "no slide"))?;
     let slide = Arc::make_mut(slide);
     let mut old: Vec<deckcraft_model::Shape> = std::mem::take(&mut slide.shapes);
+    for (o, f) in old.iter_mut().zip(frames) {
+        if f.is_some() {
+            o.xfrm = f;
+        }
+    }
     let mut out = vec![];
     for (id, ls) in fresh {
         let Some(lph) = ls.ph.clone() else { continue };
@@ -523,12 +595,25 @@ pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> R
             }
         }
     }
-    // Leftover placeholders with content stay as they were (positioned); empty ones go.
-    for o in old {
+    // Leftover placeholders with content stay (empty ones go). As in PowerPoint, one with a frame of
+    // its own becomes an orphan (it pairs with nothing, on this layout or the next), a footer, date
+    // or slide number the new layout lacks included, and is moved against the side edge of the
+    // slide nearer its centre.
+    for mut o in old {
         let empty_ph = o.ph.is_some() && o.text.as_ref().is_none_or(|t| t.is_empty()) && matches!(o.kind, deckcraft_model::ShapeKind::Shape);
-        if !empty_ph {
-            out.push(o);
+        if empty_ph {
+            continue;
         }
+        let footer_pairs =
+            o.ph.as_ref().is_some_and(|p| p.kind.is_footer_kind() && lay_shapes.iter().any(|l| l.ph.as_ref().is_some_and(|q| q.idx == p.idx)));
+        if footer_pairs {
+            // A footer, date or slide number the new layout has too takes its frame.
+            o.xfrm = None;
+        } else if leftovers_to_the_edges && let (Some(p), Some(x)) = (o.ph.as_mut(), o.xfrm) {
+            p.idx = deckcraft_model::resolve::ORPHAN_IDX;
+            o.xfrm = Some(nearest_side(x, width));
+        }
+        out.push(o);
     }
     slide.shapes = out;
     slide.layout = layout;
@@ -562,12 +647,25 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|doc, sel| {
         let layout = doc.slides.get(i).map(|x| x.layout).unwrap_or_default();
         apply_layout(doc, i, layout)?;
+        // Reset puts a placeholder back on its layout's frame. One that pairs with nothing in the
+        // layout has none to go back to and keeps its own, as in PowerPoint.
+        let keeps_frame: Vec<bool> = doc
+            .slides
+            .get(i)
+            .and_then(|sl| {
+                let ctx = deckcraft_model::resolve::Ctx::for_slide(doc, sl)?;
+                let orphan = |s: &deckcraft_model::Shape| s.ph.as_ref().is_some_and(|p| p.idx == deckcraft_model::resolve::ORPHAN_IDX);
+                Some(sl.shapes.iter().map(|s| orphan(s) || deckcraft_model::resolve::unpaired_placeholder(&ctx, s)).collect())
+            })
+            .unwrap_or_default();
         if let Some(sl) = doc.slides.get_mut(i) {
             let sl = Arc::make_mut(sl);
             sl.background = None;
-            for sh in &mut sl.shapes {
+            for (k, sh) in sl.shapes.iter_mut().enumerate() {
                 if sh.ph.is_some() {
-                    sh.xfrm = None;
+                    if !keeps_frame.get(k).copied().unwrap_or(false) {
+                        sh.xfrm = None;
+                    }
                     sh.fill = None;
                     sh.line = None;
                     sh.effects = None;
@@ -1041,5 +1139,200 @@ mod tests {
         let sel = &s.doc().expect("doc").selection;
         assert!(sel.cells.is_none());
         assert_eq!(sel.target, crate::Target::Slides);
+    }
+
+    // ---- a placeholder the new layout has no counterpart for (observed in PowerPoint) ----
+
+    use std::sync::Arc;
+
+    use deckcraft_model::resolve::ORPHAN_IDX;
+    use deckcraft_model::text::TextBody;
+    use deckcraft_model::{Layout, LayoutId, PhType, Placeholder, Presentation, Shape, ShapeId, Xfrm};
+
+    fn frame(x: f64, w: f64) -> Xfrm {
+        Xfrm::new(x, 150.0, w, 320.0)
+    }
+
+    /// A layout with a title and one content placeholder per `(idx, frame)`, in the first master.
+    fn add_layout(p: &mut Presentation, name: &str, contents: &[(u32, Xfrm)]) -> LayoutId {
+        let id = LayoutId(p.alloc_id().expect("layout id"));
+        let mut shapes = vec![Shape {
+            id: ShapeId(p.alloc_id().expect("title id")),
+            ph: Some(Placeholder { kind: PhType::Title, idx: 0, ..Default::default() }),
+            ..Default::default()
+        }];
+        for (idx, xfrm) in contents {
+            let ph = Some(Placeholder { kind: PhType::Obj, idx: *idx, ..Default::default() });
+            shapes.push(Shape { id: ShapeId(p.alloc_id().expect("content id")), ph, xfrm: Some(*xfrm), ..Default::default() });
+        }
+        if let Some(m) = p.masters.first_mut() {
+            Arc::make_mut(m).layouts.push(Layout { id, name: name.into(), shapes, show_master_shapes: true, ..Default::default() });
+        }
+        id
+    }
+
+    struct Case {
+        width: f64,
+        b: Xfrm,
+        c: Xfrm,
+        target: Vec<(u32, Xfrm)>,
+        /// Frames set by hand on the slide for "B" and "C", rather than inherited.
+        explicit: Option<(Xfrm, Xfrm)>,
+    }
+
+    /// A deck with layout SRC (title, B at idx 10, C at idx 11), a slide "A", "B", "C" on it and
+    /// layout DST; the slide is then moved to DST.
+    fn move_to_dst(case: &Case) -> Session {
+        let mut s = seeded(case);
+        s.execute("slide.layout", &json!({"layout": "DST"})).expect("layout");
+        s
+    }
+
+    /// The deck of [`move_to_dst`] before the slide is moved.
+    fn seeded(case: &Case) -> Session {
+        let mut s = Session::with_new();
+        s.edit(|doc, _| {
+            doc.slide_size.width = case.width;
+            let src = add_layout(doc, "SRC", &[(10, case.b), (11, case.c)]);
+            add_layout(doc, "DST", &case.target);
+            let mut shapes = vec![];
+            for (text, idx, kind) in [("A", 0, PhType::Title), ("B", 10, PhType::Obj), ("C", 11, PhType::Obj)] {
+                let id = ShapeId(doc.alloc_id().expect("shape id"));
+                let ph = Some(Placeholder { kind, idx, ..Default::default() });
+                let xfrm = case.explicit.and_then(|(b, c)| match text {
+                    "B" => Some(b),
+                    "C" => Some(c),
+                    _ => None,
+                });
+                shapes.push(Shape { id, ph, xfrm, text: Some(TextBody::from_text(text)), ..Default::default() });
+            }
+            if let Some(slide) = doc.slides.first_mut().map(Arc::make_mut) {
+                slide.layout = src;
+                slide.shapes = shapes;
+            }
+            Ok(())
+        })
+        .expect("seed");
+        s
+    }
+
+    fn shape_with(s: &Session, text: &str) -> Shape {
+        let st = s.doc().expect("doc");
+        st.doc.slides[0].shapes.iter().find(|x| x.text.as_ref().is_some_and(|t| t.text() == text)).cloned().expect("the shape")
+    }
+
+    fn left_of(s: &Session, text: &str) -> Option<f64> {
+        shape_with(s, text).xfrm.map(|x| x.x)
+    }
+
+    #[test]
+    fn a_placeholder_without_a_counterpart_becomes_an_orphan_against_the_nearer_side_edge() {
+        let full = vec![(10, frame(60.0, 840.0))];
+        // (case, expected left edge of "C"): every one of these was observed in PowerPoint.
+        let cases = [
+            (Case { width: 960.0, b: frame(60.0, 300.0), c: frame(520.0, 200.0), target: full.clone(), explicit: None }, 760.0),
+            (Case { width: 960.0, b: frame(60.0, 300.0), c: frame(395.0, 405.0), target: full.clone(), explicit: None }, 555.0),
+            (
+                Case {
+                    width: 960.0,
+                    b: frame(60.0, 405.0),
+                    c: frame(495.0, 405.0),
+                    target: vec![(10, Xfrm::new(100.0, 100.0, 400.0, 300.0))],
+                    explicit: None,
+                },
+                555.0,
+            ),
+            (Case { width: 1100.0, b: frame(60.0, 405.0), c: frame(495.0, 405.0), target: full.clone(), explicit: None }, 695.0),
+            // Frames set by hand: "C" (centre left of the middle) goes to the left edge, and "B" takes the layout's frame.
+            (
+                Case {
+                    width: 960.0,
+                    b: frame(60.0, 405.0),
+                    c: frame(495.0, 405.0),
+                    target: full.clone(),
+                    explicit: Some((Xfrm::new(200.0, 200.0, 300.0, 150.0), Xfrm::new(100.0, 100.0, 300.0, 200.0))),
+                },
+                0.0,
+            ),
+        ];
+        for (case, left) in cases {
+            let s = move_to_dst(&case);
+            let c = shape_with(&s, "C");
+            assert_eq!(c.ph.as_ref().map(|p| p.idx), Some(ORPHAN_IDX), "C pairs with nothing now");
+            let x = c.xfrm.expect("C has a frame of its own");
+            assert_eq!(x.x, left, "C of {:?}", case.c);
+            // The top, width and height are kept.
+            let kept = case.explicit.map_or(case.c, |(_, c)| c);
+            assert_eq!((x.y, x.w, x.h), (kept.y, kept.w, kept.h));
+            // "B" pairs with the layout's idx 10 and takes whatever that gives, not its own frame.
+            let b = shape_with(&s, "B");
+            assert_eq!((b.ph.as_ref().map(|p| p.idx), b.xfrm), (Some(10), None));
+        }
+    }
+
+    #[test]
+    fn with_no_content_placeholder_in_the_new_layout_both_become_orphans_on_their_own_sides() {
+        let case = Case { width: 960.0, b: frame(60.0, 405.0), c: frame(495.0, 405.0), target: vec![], explicit: None };
+        let s = move_to_dst(&case);
+        assert_eq!((left_of(&s, "B"), left_of(&s, "C")), (Some(0.0), Some(555.0)));
+    }
+
+    #[test]
+    fn going_back_to_the_first_layout_pairs_the_orphans_again() {
+        let case = Case { width: 960.0, b: frame(60.0, 405.0), c: frame(495.0, 405.0), target: vec![(10, frame(60.0, 840.0))], explicit: None };
+        let mut s = move_to_dst(&case);
+        s.execute("slide.layout", &json!({"layout": "SRC"})).expect("back");
+        let c = shape_with(&s, "C");
+        assert_eq!((c.ph.as_ref().map(|p| p.idx), c.xfrm), (Some(11), None));
+    }
+
+    #[test]
+    fn a_change_of_theme_leaves_a_placeholder_the_new_layout_lacks_where_it_is_drawn() {
+        // PowerPoint copies the slide's layout into the new design, so nothing is left over and nothing
+        // moves; here the leftover keeps the frame it was drawn at and its idx.
+        let case = Case { width: 960.0, b: frame(60.0, 405.0), c: frame(495.0, 405.0), target: vec![(10, frame(60.0, 840.0))], explicit: None };
+        let mut s = seeded(&case);
+        s.edit(|doc, _| {
+            let dst = doc.masters.iter().flat_map(|m| m.layouts.iter()).find(|l| l.name == "DST").map(|l| l.id).expect("DST");
+            super::apply_layout_in_place(doc, 0, dst)
+        })
+        .expect("apply");
+        let c = shape_with(&s, "C");
+        assert_eq!((c.ph.as_ref().map(|p| p.idx), c.xfrm.map(|x| x.x)), (Some(11), Some(495.0)));
+    }
+
+    #[test]
+    fn a_placeholder_centred_exactly_on_the_slide_goes_to_the_left_edge() {
+        // A footer 324 pt wide at 318 on a slide 960 wide went to 0 in PowerPoint.
+        let case = Case { width: 960.0, b: frame(60.0, 840.0), c: frame(318.0, 324.0), target: vec![(10, frame(60.0, 840.0))], explicit: None };
+        let s = move_to_dst(&case);
+        assert_eq!(left_of(&s, "C"), Some(0.0));
+    }
+
+    #[test]
+    fn a_footer_and_a_slide_number_the_new_layout_lacks_become_orphans_against_the_edges() {
+        let mut s = Session::with_new();
+        s.execute("design.headerFooter", &json!({"slideNumber": true, "footer": true, "footerText": "FOOT"})).expect("footer");
+        s.edit(|doc, _| {
+            add_layout(doc, "NOFOOT", &[(10, frame(60.0, 840.0))]);
+            Ok(())
+        })
+        .expect("layout");
+        let size = |s: &Session, what: &str| {
+            let st = s.doc().expect("doc");
+            let slide = &st.doc.slides[st.selection.slide];
+            let sh = slide.shapes.iter().find(|x| x.ph.as_ref().is_some_and(|p| p.kind.xml() == what)).cloned().expect("the placeholder");
+            (sh.clone(), crate::cmd::xfrm_of(&st.doc, &st.selection, &sh))
+        };
+        let (_, foot_before) = size(&s, "ftr");
+        let (_, num_before) = size(&s, "sldNum");
+        s.execute("slide.layout", &json!({"layout": "NOFOOT"})).expect("layout");
+        for (what, before) in [("ftr", foot_before), ("sldNum", num_before)] {
+            let (sh, after) = size(&s, what);
+            assert_eq!(sh.ph.as_ref().map(|p| p.idx), Some(ORPHAN_IDX), "{what} pairs with nothing now");
+            let width = s.doc().expect("doc").doc.slide_size.width;
+            assert!(after.x == 0.0 || after.x == width - after.w, "{what} is against a side edge: {after:?}");
+            assert_eq!((after.y, after.w, after.h), (before.y, before.w, before.h));
+        }
     }
 }
