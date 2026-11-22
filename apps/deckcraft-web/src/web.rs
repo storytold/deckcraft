@@ -4,7 +4,7 @@ use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Inbox, InboxEvent, InboxFile, Services, SlideApp};
 use wasm_bindgen::JsCast as _;
 
-const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
+const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "ppt", "pot", "pps", "txt", "md"];
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff"];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
@@ -24,11 +24,13 @@ pub fn start() {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
-        // `?host=parent`: a same-origin page framing DeckCraft opens presentations in it and
-        // stores what it saves (`host`). The presenter popup is never the framed page.
-        let host = query_param("host").as_deref() == Some("parent") && crate::presenter::token().is_none();
-        let bridge = if host { crate::host::Bridge::new() } else { None };
-        if host && bridge.is_none() {
+        // Host modes (`craft-web-host`): `?host=parent`, a same-origin page framing DeckCraft,
+        // opens presentations in it and stores what it saves (`host`); `data-host="page"` on the
+        // canvas opts a page in that runs DeckCraft in its own document. The presenter popup is
+        // never the framed page.
+        let hosted = crate::presenter::token().is_none();
+        let bridge = if hosted { crate::host::Bridge::detect(&canvas) } else { None };
+        if hosted && bridge.is_none() && query_param("host").as_deref() == Some("parent") {
             log::warn!("?host=parent needs a framing page on the same origin; saves download instead");
         }
         let app_bridge = bridge.clone();
@@ -77,6 +79,7 @@ pub fn start() {
                     {
                         crate::host::Bridge::set_author(&mut app, &author);
                     }
+                    crate::api::install(&mut app, cc.egui_ctx.clone());
                     Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
                 }),
             )

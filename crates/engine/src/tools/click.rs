@@ -4,8 +4,12 @@ use super::{Drag, Hit, Point, Result, Session, ShapeId, ShapeKind, TextSel, Tool
 impl Session {
     pub(super) fn double_click(&mut self, p: Point, tol: f64) -> Result<Value> {
         if let Some(Drag::Freeform { mode, mut points, .. }) = self.tool.drag.clone() {
-            // The double-click's own click added a duplicate vertex.
-            while points.len() > 2 && points.last().zip(points.get(points.len() - 2)).is_some_and(|(a, b)| (*a - *b).hypot() <= tol) {
+            // The double-click's own click added a duplicate vertex (none at the point cap, where
+            // the existing vertices are all kept).
+            while self.tool.press_added_vertex
+                && points.len() > 2
+                && points.last().zip(points.get(points.len() - 2)).is_some_and(|(a, b)| (*a - *b).hypot() <= tol)
+            {
                 points.pop();
             }
             self.tool.drag = Some(Drag::Freeform { mode, points, pressed: false });

@@ -75,4 +75,6 @@ pub struct Services {
     pub clipboard_set_native: Option<Box<dyn FnMut(&[u8], &str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// How many displays are connected, when the host can tell: Presenter View needs a second.
+    pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
 }
