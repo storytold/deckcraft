@@ -1,7 +1,7 @@
 use super::{
     Ctx, Fields, Fill, Image, Opts, PathMorph, Point, RENDERER, Rect, Region, RenderOpts, Renderer, Rgba, ShapeState, SlideFields, TextMorph,
     crop_dest, dpi_for_scale, gif_frame, image_dpi, images, morph_path, morph_text, needs_filters, parse_path, pasteboard_region, place_slide,
-    render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
+    place_slide_with, render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
 };
 use deckcraft_model::chart::{ChartType, Trendline, TrendlineType};
 use deckcraft_model::style::ColorRef;
@@ -1239,6 +1239,39 @@ fn effect_text(set: impl Fn(&mut deckcraft_model::text::RunProps)) -> Presentati
     deck_with(vec![sh])
 }
 
+/// Text whose glow comes only from its paragraph's `defRPr` needs the filters too: drawn on the
+/// worker threads it panicked (vello_cpu has no filters there) and the slide came out blank.
+#[test]
+fn a_paragraph_default_text_glow_needs_filters() {
+    let mut sh = Shape { id: ShapeId(741), xfrm: Some(Xfrm::new(100.0, 100.0, 600.0, 300.0)), text_box: true, ..Default::default() };
+    let mut t = TextBody::from_text("IIII");
+    let p = &mut t.paragraphs[0];
+    p.runs[0].props.size = Some(100.0);
+    p.runs[0].props.fill = Some(deckcraft_model::style::Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 0))));
+    p.def_props.glow = Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 });
+    sh.text = Some(t);
+    assert_green_glow_drawn_with_threads(&deck_with(vec![sh]));
+}
+
+/// Text whose glow comes only from the presentation's default text style (`p:defaultTextStyle`)
+/// needs the filters too, or the threaded render panics and the slide comes out blank.
+#[test]
+fn a_presentation_default_text_style_glow_needs_filters() {
+    let mut deck = effect_text(|_| {});
+    let level = deck.default_text_style.levels[0].as_mut().expect("the default text style sets level 1");
+    level.run.glow = Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 });
+    assert_green_glow_drawn_with_threads(&deck);
+}
+
+/// Asserts that `deck`'s first slide needs filters and that, rendered with worker threads
+/// requested, its text shows a green glow halo rather than a blank slide.
+fn assert_green_glow_drawn_with_threads(deck: &Presentation) {
+    assert!(needs_filters(deck, &deck.slides[0]));
+    let img = render_slide(deck, 0, &RenderOpts { scale: 1.0, threads: 4, ..Default::default() });
+    let halo = img.pixels.as_chunks::<4>().0.iter().filter(|p| p[1] > 150 && p[0] < 120 && p[2] < 120).count();
+    assert!(halo > 300, "green halo pixels {halo}");
+}
+
 #[test]
 fn text_glow_and_shadow_are_drawn() {
     let count = |img: &Image, f: &dyn Fn(&[u8; 4]) -> bool| img.pixels.as_chunks::<4>().0.iter().filter(|px| f(px)).count();
@@ -1963,6 +1996,70 @@ fn mf_ink(img: &image::RgbaImage) -> Option<(u32, u32, u32, u32)> {
 }
 
 #[test]
+fn metafile_dashed_pen_leaves_gaps() {
+    // CREATEPENINDIRECT PS_DASH | PS_ENDCAP_FLAT, 40 units (4 px) wide, black, then a line across
+    // the picture at y = 72 px: 12 px dashes with 4 px gaps.
+    let mut pen = i16s(&[0x0201, 40, 0]);
+    pen.extend(0u32.to_le_bytes());
+    let recs = vec![(0x02FA, pen), (0x012D, i16s(&[0])), (0x0214, i16s(&[720, 100])), (0x0213, i16s(&[720, 2780]))];
+    let img = crate::metafile::rasterize(&wmf_with(2880, 1440, &recs), 288).expect("raster");
+    let ink: Vec<bool> = (20..260).map(|x| img.get_pixel(x, 72)[3] > 128).collect();
+    assert!(ink.iter().filter(|b| **b).count() > 120, "dashes are drawn");
+    assert!(ink.iter().filter(|b| !**b).count() > 30, "with gaps between them");
+}
+
+#[test]
+fn metafile_skewed_bitmap_is_drawn_with_its_transform() {
+    use craft_metafile::write::{Image as MetafileImage, Op, emf};
+    use kurbo::{Affine, Rect};
+
+    let image = std::sync::Arc::new(MetafileImage { width: 2, height: 2, rgba: [255, 0, 0, 255].repeat(4) });
+    let xf = Affine::translate((25.0, 25.0)) * Affine::new([1.0, 0.25, 0.2, 1.0, 0.0, 0.0]) * Affine::scale(24.0);
+    let bytes = emf(&[Op::Image { image, xf, opacity: 1.0 }], Rect::new(0.0, 0.0, 100.0, 100.0), "DeckCraft", "skewed bitmap").expect("EMF");
+    let img = crate::metafile::rasterize(&bytes, 160).expect("raster");
+    let red: Vec<_> = img.enumerate_pixels().filter(|(_, _, p)| p[0] > 180 && p[1] < 80 && p[3] > 128).collect();
+    assert!(red.len() > 100, "the transformed image is visible: {} red pixels", red.len());
+    let (min_x, max_x) = red.iter().fold((u32::MAX, 0), |(lo, hi), (x, _, _)| (lo.min(*x), hi.max(*x)));
+    let (min_y, max_y) = red.iter().fold((u32::MAX, 0), |(lo, hi), (_, y, _)| (lo.min(*y), hi.max(*y)));
+    assert!(max_x - min_x > 25 && max_y - min_y > 25, "the image keeps both transformed axes: x={min_x}..{max_x}, y={min_y}..{max_y}");
+}
+
+#[test]
+fn metafile_clip_path_and_nondefault_pen_geometry_are_applied() {
+    use craft_metafile::write::{Op, Pen, emf};
+    use craft_metafile::{Cap, Join};
+    use kurbo::{BezPath, Rect, Shape as _};
+
+    let mut triangle = BezPath::new();
+    triangle.move_to((10.0, 10.0));
+    triangle.line_to((90.0, 10.0));
+    triangle.line_to((50.0, 90.0));
+    triangle.close_path();
+
+    let mut bevel = BezPath::new();
+    bevel.move_to((15.0, 35.0));
+    bevel.line_to((50.0, 60.0));
+    bevel.line_to((85.0, 35.0));
+    let mut miter = BezPath::new();
+    miter.move_to((15.0, 45.0));
+    miter.line_to((50.0, 70.0));
+    miter.line_to((85.0, 45.0));
+    let pen = |join| Pen { rgb: [0, 0, 0], width: 5.0, cap: Cap::Square, join, miter: 4.0, dash: None };
+    let ops = [
+        Op::Clip { path: triangle, even_odd: false },
+        Op::Fill { path: Rect::new(0.0, 0.0, 100.0, 100.0).to_path(0.1), even_odd: false, rgb: [255, 0, 0] },
+        Op::Stroke { path: bevel, pen: pen(Join::Bevel) },
+        Op::Stroke { path: miter, pen: pen(Join::Miter) },
+        Op::Unclip,
+    ];
+    let bytes = emf(&ops, Rect::new(0.0, 0.0, 100.0, 100.0), "DeckCraft", "clipped strokes").expect("EMF");
+    let img = crate::metafile::rasterize(&bytes, 160).expect("raster");
+    assert!(img.get_pixel(80, 40)[0] > 180, "inside the clip path is filled");
+    assert_eq!(img.get_pixel(8, 80)[3], 0, "outside the clip path remains transparent");
+    assert!(img.pixels().any(|p| p[3] > 128 && p[0] < 80), "square capped bevel and miter strokes are rendered");
+}
+
+#[test]
 fn metafile_text_ink_lands_at_its_reference_point() {
     // 2 × 1 inch (144 × 72 pt) drawn 288 px wide: 2 px per point. A 36-point "HH", top-left
     // aligned at (72, 18) pt.
@@ -2127,6 +2224,43 @@ fn group_child_scale_does_not_scale_line_widths() {
     }
 }
 
+/// #2067: a legend entry with its own text colour, size and weight (`c:legendEntry/c:txPr`) draws
+/// its name so; the other entries keep the legend's.
+#[test]
+fn a_legend_entry_draws_its_own_text_colour_and_size() {
+    let draw = |entry: Option<deckcraft_model::chart::LegendEntry>| {
+        let mut c = Chart::sample(ChartType::Line);
+        c.title = None;
+        c.legend = Some("r".into());
+        c.text_size = Some(10.0);
+        c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(128, 128, 128)));
+        c.legend_entries = entry.into_iter().collect();
+        let sh = Shape { id: ShapeId(634), xfrm: Some(Xfrm::new(0.0, 0.0, 480.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let green = |img: &Image| {
+        (0..480u32)
+            .flat_map(|x| (0..300u32).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = img.pixel(*x, *y);
+                p[1] > 150 && p[0] < 80 && p[2] < 80
+            })
+            .count()
+    };
+    let entry = |size: Option<f64>| deckcraft_model::chart::LegendEntry {
+        idx: 0,
+        size,
+        bold: Some(true),
+        color: Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 200, 0))),
+    };
+    let none = green(&draw(None));
+    let own = green(&draw(Some(entry(None))));
+    let big = green(&draw(Some(entry(Some(20.0)))));
+    assert_eq!(none, 0, "no green in a chart without the entry");
+    assert!(own > 40, "the first entry's name is drawn in its own colour ({own})");
+    assert!(big > own * 2, "and at its own size ({own} at 10 pt, {big} at 20 pt)");
+}
+
 #[test]
 fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_pixels() {
     // PowerPoint draws a picture's own fill behind its transparent pixels (and an old equation
@@ -2159,6 +2293,60 @@ fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_
             assert_eq!(img.pixel(200, 200)[..3], [0, 160, 60], "the tinted fill behind the clear half ({object})");
         } else {
             assert!(clear[..3].iter().all(|v| *v > 240), "no fill: the slide shows through: {clear:?}");
+        }
+    }
+}
+
+#[test]
+fn a_picture_in_a_placeholder_shows_the_layout_placeholders_fill_behind_transparent_pixels() {
+    // #2068: a slide picture with an empty `p:spPr` in a layout picture placeholder that sets a
+    // fill shows that fill behind its clear pixels. Its own fill (none included) and its own
+    // style still decide when it has them. The left half of the image is clear.
+    let png = {
+        let img = image::RgbaImage::from_fn(8, 4, |x, _| if x < 4 { image::Rgba([0, 0, 0, 0]) } else { image::Rgba([20, 20, 160, 255]) });
+        let mut out = std::io::Cursor::new(vec![]);
+        image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let orange = Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 153, 0)));
+    let ph = || Some(Placeholder { kind: PhType::Picture, idx: 11, ..Default::default() });
+    let style = ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1);
+    // (layout fill, picture's own fill, picture's own style, the clear half shows orange)
+    let cases = [
+        (Some(orange.clone()), None, None, true),
+        (None, None, None, false),
+        (Some(orange.clone()), Some(Fill::None), None, false),
+        (Some(orange.clone()), None, Some(style), false),
+    ];
+    for (i, (layout_fill, own_fill, own_style, shows)) in cases.into_iter().enumerate() {
+        let mut p = Presentation::default();
+        let media = p.add_media("half.png", "image/png", png.clone()).expect("media");
+        let lid = p.slides[0].layout;
+        let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+        let layout = m.layouts.iter_mut().find(|l| l.id == lid).expect("layout");
+        layout.shapes.push(Shape {
+            id: ShapeId(2),
+            ph: ph(),
+            xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)),
+            fill: layout_fill,
+            ..Default::default()
+        });
+        let pic = Shape {
+            id: ShapeId(3),
+            ph: ph(),
+            kind: ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } },
+            fill: own_fill,
+            style: own_style,
+            ..Default::default()
+        };
+        std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![pic];
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let (clear, opaque) = (img.pixel(200, 200), img.pixel(400, 200));
+        assert!(opaque[2] > 140 && opaque[0] < 40, "case {i}: the picture's own pixels: {opaque:?}");
+        if shows {
+            assert_eq!(clear[..3], [255, 153, 0], "case {i}: the layout's fill behind the clear half");
+        } else {
+            assert!(clear[..3].iter().all(|v| *v > 240), "case {i}: the slide shows through: {clear:?}");
         }
     }
 }
@@ -2971,6 +3159,27 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
 }
 
+#[test]
+fn placed_text_holds_the_field_value_not_the_saved_placeholder() {
+    let mut p = deck_with(vec![field_shape(Some("slidenum"), "<#>")]);
+    let second = p.slides[0].clone();
+    p.slides.push(second);
+    let placed = place_slide(&p, 1);
+    assert_eq!(placed.texts.len(), 1);
+    assert_eq!(placed.texts[0].body.text(), "2");
+    // The layout was drawn from the same value, so the offsets agree with the body.
+    assert_eq!(placed.texts[0].layout.runs.iter().map(|r| r.chars.1).max(), Some(1));
+}
+
+#[test]
+fn placed_text_takes_its_date_from_the_given_render_options() {
+    use deckcraft_text::datetime::DateTime;
+    let p = deck_with(vec![field_shape(Some("datetime1"), "1/1/2000")]);
+    let at = |now: DateTime| place_slide_with(&p, 0, &RenderOpts { now: Some(now), ..Default::default() });
+    assert_eq!(at(DateTime::new(2026, 10, 9, 20, 5, 7)).texts[0].body.text(), "10/9/2026");
+    assert_eq!(at(DateTime::new(2027, 3, 4, 0, 0, 0)).texts[0].body.text(), "3/4/2027");
+}
+
 /// A chart that has no text colour of its own takes PowerPoint's default, the theme's text colour
 /// at 65 % plus 35 %: light on Nocturne's dark slides (it used to be a fixed grey, near-invisible
 /// there), 595959 grey on Harbor's light ones.
@@ -3116,6 +3325,117 @@ fn a_dissolve_covers_what_the_shape_draws_far_from_its_box() {
     }
     let share = f64::from(on) / f64::from(all);
     assert!((share - 0.9).abs() < 0.06, "the far shadow shows the dissolve's share: {share}");
+}
+
+/// #2066: a line series that asks for value labels (`c:dLbls/c:showVal`, chart-wide or its own)
+/// shows each point's value above it; with the chart's text red, the labels add red ink there.
+/// Area series still draw none (their labels belong inside the area, not on a point).
+#[test]
+fn line_chart_value_labels_are_drawn_above_their_points() {
+    let draw = |kind: ChartType, labels: bool, own: bool| {
+        let mut c = Chart::sample(kind);
+        c.title = None;
+        c.legend = None;
+        c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)));
+        if own {
+            c.series[0].data_labels = Some(labels);
+        } else {
+            c.data_labels = labels;
+        }
+        let sh = Shape { id: ShapeId(633), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let red = |img: &Image| {
+        (0..400u32)
+            .flat_map(|x| (0..300u32).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = img.pixel(*x, *y);
+                p[0] > 200 && p[1] < 60 && p[2] < 60
+            })
+            .count()
+    };
+    for kind in [ChartType::Line, ChartType::LineMarkers] {
+        let (off, on) = (red(&draw(kind, false, false)), red(&draw(kind, true, false)));
+        assert!(on > off + 100, "{kind:?}: labels add red ink ({off} → {on})");
+        let own = red(&draw(kind, true, true));
+        assert!(own > off + 30, "{kind:?}: a series' own showVal shows its labels ({off} → {own})");
+    }
+    // Area series keep none, and scatter and bubble series (drawn by the same code) are unchanged.
+    for kind in [ChartType::Area, ChartType::Scatter, ChartType::Bubble] {
+        let (off, on) = (red(&draw(kind, false, false)), red(&draw(kind, true, false)));
+        assert_eq!(on, off, "{kind:?}: no point labels");
+    }
+}
+
+/// The magenta pixels the labels add to a line chart of two series, only the second labelled,
+/// with the chart's text magenta (no series, gridline or axis line is): its axis labels are
+/// magenta too, so they are what the unlabelled chart has.
+fn line_label_ink(kind: ChartType, first: f64, second: f64) -> (Image, Vec<(u32, u32)>) {
+    let off: std::collections::HashSet<_> = magenta_pixels(&line_label_render(kind, first, second, false)).into_iter().collect();
+    let img = line_label_render(kind, first, second, true);
+    let added = magenta_pixels(&img).into_iter().filter(|p| !off.contains(p)).collect();
+    (img, added)
+}
+
+fn line_label_render(kind: ChartType, first: f64, second: f64, labels: bool) -> Image {
+    let mut c = Chart::sample(ChartType::Line);
+    c.kind = kind;
+    c.title = None;
+    c.legend = None;
+    c.series.truncate(2);
+    c.series[0].values = vec![Some(first); 4];
+    c.series[1].values = vec![Some(second); 4];
+    c.series[1].data_labels = Some(labels);
+    c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 255)));
+    let sh = Shape { id: ShapeId(634), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+    render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+}
+
+/// Magenta ink on white, its anti-aliased edges included.
+fn is_magenta(p: [u8; 4]) -> bool {
+    p[0] > 200 && p[2] > 200 && p[1] < 200
+}
+
+fn magenta_pixels(img: &Image) -> Vec<(u32, u32)> {
+    (0..img.width).flat_map(|x| (0..img.height).map(move |y| (x, y))).filter(|(x, y)| is_magenta(img.pixel(*x, *y))).collect()
+}
+
+/// #2066: in a stacked line chart a point's label is its own value, not the running total it is
+/// drawn at. The second series' 5s, stacked on 100s, are labels as wide as an unstacked series of
+/// 5s, and far narrower than one of 105s (the width: the pixel columns the label ink covers).
+#[test]
+fn a_stacked_line_labels_each_point_with_its_own_value() {
+    let width = |kind, second| line_label_ink(kind, 100.0, second).1.iter().map(|(x, _)| *x).collect::<std::collections::HashSet<_>>().len();
+    let (stacked, fives, totals) = (width(ChartType::StackedLine, 5.0), width(ChartType::Line, 5.0), width(ChartType::Line, 105.0));
+    assert!(stacked > 0 && fives > 0, "labels are drawn ({stacked}, {fives})");
+    assert!(stacked.abs_diff(fives) <= 4, "stacked 5s are labelled \"5\" ({stacked} columns vs {fives} for 5s)");
+    assert!(stacked * 2 < totals, "not with the total \"105\" ({stacked} columns vs {totals} for 105s)");
+}
+
+/// #2066: a line label sits just above its point: all its ink is above the series' line, and
+/// its lowest row is close to it.
+#[test]
+fn a_line_label_sits_just_above_its_point() {
+    let (img, ink) = line_label_ink(ChartType::Line, 20.0, 50.0);
+    assert!(!ink.is_empty(), "labels are drawn");
+    let cols: std::collections::HashSet<u32> = ink.iter().map(|(x, _)| *x).collect();
+    let (first, last) = (cols.iter().min().copied().unwrap(), cols.iter().max().copied().unwrap());
+    // The labelled series' flat line at 50: the topmost coloured pixel in the plot's columns
+    // between the labels (the other line is lower, at 20; the axis labels lie outside them).
+    let line_top = (first..last)
+        .filter(|x| !cols.iter().any(|c| c.abs_diff(*x) < 4))
+        .filter_map(|x| {
+            (0..img.height).find(|y| {
+                let p = img.pixel(x, *y);
+                let (hi, lo) = (p[0].max(p[1]).max(p[2]), p[0].min(p[1]).min(p[2]));
+                hi - lo > 80 && !is_magenta(p)
+            })
+        })
+        .min()
+        .unwrap();
+    let lowest = ink.iter().map(|(_, y)| *y).max().unwrap();
+    assert!(lowest < line_top, "the labels are above the line (lowest ink row {lowest}, line at {line_top})");
+    assert!(line_top - lowest < 20, "and just above it (lowest ink row {lowest}, line at {line_top})");
 }
 
 /// #1165: an ellipse sized at the EMU limit, crossing the slide, made vello's flattener allocate a

@@ -121,6 +121,49 @@ pub struct BodyProps {
     pub upright: Option<bool>,
     /// Space before the first paragraph and after the last count too (`spcFirstLastPara`).
     pub space_first_last: Option<bool>,
+    pub compat_ln_spc: Option<bool>,
+    pub vert_overflow: Option<TextOverflow>,
+    pub horz_overflow: Option<TextOverflow>,
+    /// Unmodelled 3-D XML on the text body (`a:scene3d`, `a:sp3d`, `a:flatTx`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw3d: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextOverflow {
+    Overflow,
+    Clip,
+    Ellipsis,
+}
+
+impl TextOverflow {
+    pub fn xml(self) -> &'static str {
+        match self {
+            Self::Overflow => "overflow",
+            Self::Clip => "clip",
+            Self::Ellipsis => "ellipsis",
+        }
+    }
+
+    pub fn from_xml(value: &str) -> Option<Self> {
+        Some(match value {
+            "overflow" => Self::Overflow,
+            "clip" => Self::Clip,
+            "ellipsis" => Self::Ellipsis,
+            _ => return None,
+        })
+    }
+
+    /// A `horzOverflow` value: `ST_TextHorzOverflowType` has only `overflow` and `clip`.
+    pub fn from_horz_xml(value: &str) -> Option<Self> {
+        Self::from_xml(value).filter(|v| *v != Self::Ellipsis)
+    }
+
+    /// The `horzOverflow` attribute to write, leaving out `ellipsis`, which is vertical only.
+    pub fn horz_xml(v: Option<Self>) -> Option<&'static str> {
+        v.filter(|v| *v != Self::Ellipsis).map(Self::xml)
+    }
 }
 
 impl BodyProps {
@@ -144,6 +187,12 @@ impl BodyProps {
         self.rtl_col = self.rtl_col.or(p.rtl_col);
         self.upright = self.upright.or(p.upright);
         self.space_first_last = self.space_first_last.or(p.space_first_last);
+        self.compat_ln_spc = self.compat_ln_spc.or(p.compat_ln_spc);
+        self.vert_overflow = self.vert_overflow.or(p.vert_overflow);
+        self.horz_overflow = self.horz_overflow.or(p.horz_overflow);
+        if self.raw3d.is_none() {
+            self.raw3d.clone_from(&p.raw3d);
+        }
     }
 }
 
@@ -157,6 +206,7 @@ pub enum Align {
     /// Justified with kashida (tatweel) elongation for Arabic (`justLow`).
     JustLow,
     Distributed,
+    ThaiDistributed,
 }
 
 impl Align {
@@ -168,6 +218,7 @@ impl Align {
             Align::Justify => "just",
             Align::JustLow => "justLow",
             Align::Distributed => "dist",
+            Align::ThaiDistributed => "thaiDist",
         }
     }
     pub fn from_xml(s: &str) -> Option<Self> {
@@ -175,7 +226,8 @@ impl Align {
             "l" => Align::Left,
             "ctr" => Align::Center,
             "r" => Align::Right,
-            "just" | "thaiDist" => Align::Justify,
+            "just" => Align::Justify,
+            "thaiDist" => Align::ThaiDistributed,
             "justLow" => Align::JustLow,
             "dist" => Align::Distributed,
             _ => return None,
@@ -456,6 +508,8 @@ pub struct RunProps {
     /// Action on mouse over (Insert ▸ Action ▸ Mouse Over on selected text, `a:hlinkMouseOver`).
     pub hover: Option<Hyperlink>,
     pub lang: Option<String>,
+    #[serde(deserialize_with = "bounded_language")]
+    pub alt_lang: Option<String>,
     pub shadow: Option<crate::style::Shadow>,
     /// `a:innerShdw` on the run. Outer shadow stays in `shadow`.
     pub inner_shadow: Option<crate::style::Shadow>,
@@ -465,6 +519,14 @@ pub struct RunProps {
     pub soft_edge: Option<f64>,
     /// Spelling/grammar errors are not flagged.
     pub no_proof: Option<bool>,
+    pub normalize_height: Option<bool>,
+}
+
+fn bounded_language<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(|lang| lang.map(|value| value.chars().take(256).collect()))
 }
 
 impl RunProps {
@@ -493,12 +555,14 @@ impl RunProps {
             link,
             hover,
             lang,
+            alt_lang,
             shadow,
             inner_shadow,
             glow,
             reflection,
             soft_edge,
-            no_proof
+            no_proof,
+            normalize_height
         );
     }
 }
@@ -694,6 +758,20 @@ impl TextBody {
 mod tests {
     use super::*;
     use deckcraft_color::Rgba;
+
+    #[test]
+    fn alternate_language_inherits_and_native_input_is_bounded() {
+        let mut child = RunProps::default();
+        child.inherit(&RunProps { lang: Some("en-US".into()), alt_lang: Some("fr-FR".into()), ..Default::default() });
+        assert_eq!(child.lang.as_deref(), Some("en-US"));
+        assert_eq!(child.alt_lang.as_deref(), Some("fr-FR"));
+
+        let oversized = "x".repeat(300);
+        let json = serde_json::json!({"altLang": oversized});
+        let props: RunProps = serde_json::from_value(json).expect("run props");
+        assert_eq!(props.alt_lang.as_deref().map(str::len), Some(256));
+        assert_eq!(serde_json::from_value::<RunProps>(serde_json::json!({})).expect("old run props"), RunProps::default());
+    }
 
     #[test]
     fn explicit_bullet_follow_text_resets_block_inheritance() {

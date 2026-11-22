@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::{
     CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, color_param, color_value, edit_geometry, edit_shapes, f64_param, has_selection,
-    has_slide, id_param, ok, str_param, targets, usize_param, with_param, xfrm_of,
+    has_slide, id_param, ok, opt_usize_param, str_param, targets, usize_param, with_param, xfrm_of,
 };
 use crate::{Result, Session};
 
@@ -103,7 +103,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Fill",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color? | none?: true | background?: true (the slide background shows through; shapes and text boxes only) | gradient?: {stops: [[pos 0..1, color]], kind?: linear|radial|rectangular|path, angle?: deg (linear), focus?: [l, t, r, b] fractions (radial, rectangular and path: where the first stop sits), rotateWithShape?: bool} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?}; pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} adjusts a picture fill; a group also formats its members",
+            "{color? | none?: true | background?: true (the slide background shows through; shapes and text boxes only) | gradient?: {stops: [[pos 0..1, color]], kind?: linear|radial|rectangular|path, angle?: deg (linear), focus?: [l, t, r, b] fractions (radial, rectangular and path: where the first stop sits), rotateWithShape?: bool (false keeps linear and radial gradients upright on the slide; rectangular and path gradients turn with the shape when drawn)} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?}; pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} adjusts a picture fill; a group also formats its members",
             has_selection,
             fill
         ),
@@ -374,6 +374,25 @@ fn visible(s: &mut Session, p: &Value) -> Result<Value> {
 /// (a child can still be unlocked on its own afterwards), as PowerPoint does.
 fn lock(s: &mut Session, p: &Value) -> Result<Value> {
     let v = bool_param(p, "locked");
+    // A targeted shape inside another targeted group is reached through the group: editing it again
+    // would toggle it back.
+    let mut ids = super::targets(s, p)?;
+    if ids.len() > 1 {
+        let doc = s.doc()?;
+        // Walk each distinct group once, however often `ids` repeats it.
+        let mut once = std::collections::HashSet::new();
+        ids.retain(|id| once.insert(*id));
+        let mut inside = std::collections::HashSet::new();
+        for id in &ids {
+            if let Some(g) = doc.shape(*id) {
+                deckcraft_model::walk(g.children(), &mut |c, _| {
+                    inside.insert(c.id);
+                });
+            }
+        }
+        ids.retain(|id| !inside.contains(id));
+    }
+    let p = &json!({"ids": ids, "locked": p.get("locked")});
     edit_shapes(s, p, "shape.lock", |sh| {
         let to = v.unwrap_or(!sh.locked);
         set_locked(sh, to, 0);

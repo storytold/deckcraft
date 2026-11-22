@@ -169,8 +169,14 @@ impl FontDb {
                 if bundled.contains(fam) {
                     continue;
                 }
-                if self.is_loaded(fam) || self.has_family(fam) {
-                    let f = self.face(fam, style);
+                if self.is_loaded(fam) || (self.system_fallback_enabled() && self.has_family(fam)) {
+                    // With system fallback off, only a face that is already loaded: `face` could load more catalog files.
+                    let f = if self.system_fallback_enabled() {
+                        self.face(fam, style)
+                    } else {
+                        let Some(f) = self.find(fam, style) else { continue };
+                        f
+                    };
                     if f.family.eq_ignore_ascii_case(fam) && covers_cluster(&f, cluster) {
                         return f;
                     }
@@ -227,6 +233,9 @@ impl FontDb {
     }
 }
 
+/// Most caret records read for one ligature glyph.
+const MAX_LIGATURE_CARETS: usize = 64;
+
 /// Caret positions inside a ligature glyph from GDEF `LigCaretList`, in font units from the
 /// glyph's origin (sorted ascending). Empty when the font has none for `gid`.
 pub fn ligature_carets(face: &FontFace, gid: u32) -> Vec<i32> {
@@ -236,9 +245,12 @@ pub fn ligature_carets(face: &FontFace, gid: u32) -> Vec<i32> {
     let Ok(cov) = list.coverage() else { return Vec::new() };
     let Some(idx) = cov.get(skrifa::GlyphId::new(gid)) else { return Vec::new() };
     let Ok(lig) = list.lig_glyphs().get(idx as usize) else { return Vec::new() };
+    // The limit applies to the records read, not to the carets kept: a font can list thousands of
+    // records it then has to be read through for every ligature laid out.
     let mut out: Vec<i32> = lig
         .caret_values()
         .iter()
+        .take(MAX_LIGATURE_CARETS)
         .filter_map(|cv| cv.ok())
         .filter_map(|cv| match cv {
             skrifa::raw::tables::gdef::CaretValue::Format1(f) => Some(f.coordinate() as i32),
@@ -246,7 +258,6 @@ pub fn ligature_carets(face: &FontFace, gid: u32) -> Vec<i32> {
             // Format 2 is a contour point index; outlines aren't consulted here.
             skrifa::raw::tables::gdef::CaretValue::Format2(_) => None,
         })
-        .take(64)
         .collect();
     out.sort_unstable();
     out
@@ -305,5 +316,22 @@ mod tests {
             let c = ligature_carets(&face, gid);
             assert!(c.windows(2).all(|w| w[0] <= w[1]));
         }
+    }
+
+    /// With system fallback off, the automatic cascades (script families and symbol faces) load no
+    /// installed family: the result comes from what is already loaded.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cascades_load_no_installed_family_when_system_fallback_is_off() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        let base = db.face(crate::DEFAULT_FAMILY, "Regular");
+        let loaded = |db: &FontDb| [b"Arab", b"Hebr", b"Thai", b"Deva"].into_iter().flat_map(|s| os_families(*s)).filter(|f| db.is_loaded(f)).count();
+        let before = loaded(&db);
+        for c in ['\u{0628}', '\u{05D0}', '\u{0E01}', '\u{0905}', '\u{2211}', '\u{2603}'] {
+            let f = db.cascade(&[c], std::slice::from_ref(&base), "Regular");
+            assert!(!f.family.is_empty());
+        }
+        assert_eq!(loaded(&db), before, "no installed family was loaded");
     }
 }
