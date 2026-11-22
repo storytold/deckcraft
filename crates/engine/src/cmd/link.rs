@@ -268,6 +268,11 @@ mod tests {
         let box_ = placed.shapes.iter().find(|p| p.id == id).unwrap().rect;
         right_click(&mut s, [(box_.x0 + word.x0) / 2.0, (word.y0 + word.y1) / 2.0]);
         assert!(s.tool.context_link.is_none(), "no link off the linked word");
+        // With another tool, a right-click doesn't keep an earlier one's link.
+        right_click(&mut s, at);
+        s.set_tool(crate::ToolKind::TextBox);
+        right_click(&mut s, [5.0, 5.0]);
+        assert!(s.tool.context_link.is_none(), "a right-click with another tool clears the link");
     }
 
     fn url_link(url: &str) -> Hyperlink {

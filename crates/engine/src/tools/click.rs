@@ -69,11 +69,13 @@ impl Session {
     /// another shape, that shape alone is selected; on empty slide, nothing is. Never edits text,
     /// starts a drag or adds an undo step.
     pub(super) fn context_click(&mut self, p: Point, tol: f64) -> Result<Value> {
+        // Open Link on the menu goes by where the right-click landed, as in PowerPoint, not by
+        // the selection. Every right-click starts afresh, so another tool or a drag in progress
+        // doesn't leave an older one's link on the menu.
+        self.tool.context_link = None;
         if !matches!(self.tool.kind, ToolKind::Select) || self.tool.drag.is_some() {
             return Ok(Value::Null);
         }
-        // Open Link on the menu goes by where the right-click landed, as in PowerPoint, not by
-        // the selection.
         self.tool.context_link = cmd::link::link_at(self.doc()?, p).map(|_| p);
         let st = self.doc()?;
         // The same zone in which a left press places the caret (`down`).
