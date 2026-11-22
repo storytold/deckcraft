@@ -449,10 +449,10 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
                 let st = state_for(&tl, id, 0, 0.0, &[], &[]);
                 !st.visible || st.opacity <= 0.0 || sl.hidden.contains(&id)
             };
-            tr.from
-                .and_then(|i| doc.slides.get(i).map(|a| (i, a)))
-                .zip(doc.slides.get(idx))
-                .map(|((i, a), b)| (i, deckcraft_anim::morph_frame(doc, a, b, p, &hidden_b)))
+            tr.from.and_then(|i| doc.slides.get(i).map(|a| (i, a))).zip(doc.slides.get(idx)).map(|((i, a), b)| {
+                let left = super::render::morph_outgoing(doc, i);
+                (i, deckcraft_anim::morph_frame(doc, left.as_ref().unwrap_or(a), b, p, &hidden_b))
+            })
         }
         _ => None,
     };

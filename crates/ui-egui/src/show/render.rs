@@ -125,6 +125,18 @@ pub(super) fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
     crate::media::slide_media(doc, idx).into_iter().filter(|(_, _, clip)| clip.hide_while_not_playing).map(|m| m.0).collect()
 }
 
+/// Slide `i` as a morph transition leaves it: without media hidden during the show, which
+/// would otherwise fade out with the slide's other unmatched shapes. `None` when nothing is hidden.
+pub(super) fn morph_outgoing(doc: &Presentation, i: usize) -> Option<deckcraft_model::Slide> {
+    let hidden = hidden_on_entry(doc, i);
+    if hidden.is_empty() {
+        return None;
+    }
+    let mut slide = (**doc.slides.get(i)?).clone();
+    slide.shapes.retain(|s| !hidden.contains(&s.id));
+    Some(slide)
+}
+
 /// Start rendering slide `next`'s first frame on another thread. `None` on the web (no threads).
 pub(super) fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, size: (u32, u32)) -> Option<Prefetch> {
     if cfg!(target_arch = "wasm32") {
@@ -183,16 +195,17 @@ pub(super) fn quad_mesh(tex: Option<egui::TextureId>, rect: Rect, l: &Layer, col
 pub(super) fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Option<usize>, to: usize, size: (u32, u32)) -> [Option<TextureHandle>; 4] {
     use deckcraft_render::SlidePart;
     let threads = if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
-    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
-    let tex = |i: usize, part: SlidePart, name: &str| {
+    let tex = |i: usize, part: SlidePart, name: &str, skip: &[ShapeId]| {
+        let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, skip, ..Default::default() };
         let img = deckcraft_render::render_slide_part(doc, i, part, &opts);
         crate::textures::upload(ctx, name, crate::textures::to_color_image(&img, false))
     };
     [
-        from.map(|i| tex(i, SlidePart::Backdrop, "trans-old-back")),
-        from.map(|i| tex(i, SlidePart::Content, "trans-old-content")),
-        Some(tex(to, SlidePart::Backdrop, "trans-new-back")),
-        Some(tex(to, SlidePart::Content, "trans-new-content")),
+        from.map(|i| tex(i, SlidePart::Backdrop, "trans-old-back", &[])),
+        // The slide being left as it was entered: media hidden during the show stays out.
+        from.map(|i| tex(i, SlidePart::Content, "trans-old-content", &hidden_on_entry(doc, i))),
+        Some(tex(to, SlidePart::Backdrop, "trans-new-back", &[])),
+        Some(tex(to, SlidePart::Content, "trans-new-content", &[])),
     ]
 }
 
