@@ -905,10 +905,10 @@ mod bring_media_tests {
         doc.media.push(mine.clone());
         doc.next_id = doc.next_id.max(7);
         // The same link under the same id is the same item; another link under it is not.
-        let map = bring_media("edit.paste", &mut doc, &[mine.clone()]).expect("bring");
+        let map = bring_media("edit.paste", &mut doc, std::slice::from_ref(&mine)).expect("bring");
         assert!(map.is_empty() && doc.media.len() == 1, "{map:?}");
         let theirs = linked(7, "file:///theirs.png");
-        let map = bring_media("edit.paste", &mut doc, &[theirs.clone()]).expect("bring");
+        let map = bring_media("edit.paste", &mut doc, std::slice::from_ref(&theirs)).expect("bring");
         let new = *map.get(&MediaId(7)).expect("the colliding item has a new id");
         assert_ne!(new, MediaId(7));
         assert_eq!(doc.media(new).and_then(|m| m.link.as_deref()), Some("file:///theirs.png"));
