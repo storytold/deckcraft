@@ -72,6 +72,9 @@ impl Session {
         if !matches!(self.tool.kind, ToolKind::Select) || self.tool.drag.is_some() {
             return Ok(Value::Null);
         }
+        // Open Link on the menu goes by where the right-click landed, as in PowerPoint, not by
+        // the selection.
+        self.tool.context_link = cmd::link::link_at(self.doc()?, p).map(|_| p);
         let st = self.doc()?;
         // The same zone in which a left press places the caret (`down`).
         if let Some(t) = &st.selection.text

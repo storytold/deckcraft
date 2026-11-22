@@ -297,6 +297,9 @@ pub struct ToolState {
     pub guide_hover: Option<usize>,
     /// Pressure from the pointer event being handled, if the device reported one.
     pressure: Option<f32>,
+    /// Where the last right-click landed (slide points), when there is a link there: the
+    /// context menu's Open Link follows it.
+    pub context_link: Option<Point>,
 }
 
 impl ToolState {

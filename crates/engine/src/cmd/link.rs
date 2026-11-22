@@ -221,4 +221,25 @@ mod tests {
         assert!(s.ui_requests.iter().all(|u| !matches!(u, UiRequest::OpenUrl { .. })), "no link there");
         assert_eq!(s.doc().unwrap().selection.shapes, vec![id], "Ctrl+Click off the link adds the shape to the selection");
     }
+
+    #[test]
+    fn a_right_click_on_a_linked_word_offers_its_link() {
+        let (mut s, id) = deck(|_| Action::Url { url: "https://example.com/".into() });
+        let right_click = |s: &mut Session, at: [f64; 2]| {
+            s.pointer(crate::PointerEvent { kind: crate::PointerKind::ContextClick, x: at[0], y: at[1], ..Default::default() }).unwrap();
+        };
+        let at = link_point(&s);
+        right_click(&mut s, at);
+        assert_eq!(s.tool.context_link.map(|p| [p.x, p.y]), Some(at), "the linked word under the right-click, nothing selected first");
+        assert!(selected_link(s.doc().unwrap()).is_none(), "the selection alone would not have offered it");
+        s.execute("link.follow", &json!({"at": at})).unwrap();
+        assert!(s.ui_requests.iter().any(|u| matches!(u, UiRequest::OpenUrl { .. })));
+        // The unlinked word of the same box: no link to offer.
+        let st = s.doc().unwrap();
+        let placed = deckcraft_render::place_slide(&st.doc, 0);
+        let word = placed.links.iter().find(|l| l.text).unwrap().rect;
+        let box_ = placed.shapes.iter().find(|p| p.id == id).unwrap().rect;
+        right_click(&mut s, [(box_.x0 + word.x0) / 2.0, (word.y0 + word.y1) / 2.0]);
+        assert!(s.tool.context_link.is_none(), "no link off the linked word");
+    }
 }
