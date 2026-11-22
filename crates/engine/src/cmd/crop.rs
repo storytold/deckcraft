@@ -402,6 +402,8 @@ fn crop_fill(s: &mut Session, p: &Value) -> Result<Value> {
     for (id, x, inset, c) in pictures(s, p)? {
         let Some(inset) = inset else { continue };
         let Some(img) = image_rect(x.w, x.h, inset, c) else { continue };
+        // Fill/Fit targets the whole frame; crop_of inverts fillRect so the renderer still
+        // places the whole image there. Aspect Ratio instead fits the inset rectangle.
         let (kx, ky) = (x.w / img.width(), x.h / img.height());
         let k = if fit { kx.min(ky) } else { kx.max(ky) };
         let (w, h) = (img.width() * k, img.height() * k);

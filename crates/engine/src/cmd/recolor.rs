@@ -169,11 +169,10 @@ fn picture_pixel_at(s: &Session, p: &Value, at: &Value) -> Result<(ShapeId, Rgba
         if !(local.is_finite() && (0.0..=xf.w).contains(&local.x) && (0.0..=xf.h).contains(&local.y)) {
             continue;
         }
-        let PictureMode::Stretch { fill_rect: [l, t, r, b] } = fill.mode else {
+        let PictureMode::Stretch { fill_rect } = fill.mode else {
             return Err(bad(CMD, "a tiled picture has no single pixel under a point; give `color`"));
         };
-        let inner = Rect::new(l * xf.w, t * xf.h, xf.w - r * xf.w, xf.h - b * xf.h);
-        let dest = deckcraft_render::crop_dest(inner, fill.crop);
+        let dest = deckcraft_render::stretch_dest(Rect::new(0.0, 0.0, xf.w, xf.h), fill_rect, fill.crop);
         let img =
             st.doc.media(fill.media).and_then(|m| deckcraft_render::decode_image(&m.data)).ok_or_else(|| bad(CMD, "the picture can't be read"))?;
         let (u, v) = ((local.x - dest.x0) / dest.width(), (local.y - dest.y0) / dest.height());
