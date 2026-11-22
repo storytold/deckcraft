@@ -91,6 +91,11 @@ impl AnimState {
     pub fn is_identity(&self) -> bool {
         *self == AnimState::default()
     }
+    /// Whether any of the shape is on screen: it is visible and neither faded nor dissolved away
+    /// completely. A shape a dissolve shows none of is not there to click, nor to morph from.
+    pub fn is_shown(&self) -> bool {
+        self.visible && self.opacity > 0.0 && self.dissolve.unwrap_or(1.0) > 0.0
+    }
     /// Opacity for a part that cannot dissolve (a paragraph of a text build): a dissolve fades.
     pub fn fade_opacity(&self) -> f64 {
         self.opacity * self.dissolve.unwrap_or(1.0)

@@ -204,7 +204,7 @@ pub(super) fn shapes_under_pointer(ctx: &egui::Context, ui: &Ui, show: &mut Show
             HitShape { id: s.id, parent: s.parent, is_group: s.is_group, link: s.link.as_ref().map(|l| l.action.clone()), under_pointer }
         })
         .collect();
-    let visible: Vec<bool> = states.iter().map(|a| a.visible && a.opacity > 0.0).collect();
+    let visible: Vec<bool> = states.iter().map(AnimState::is_shown).collect();
     let mut under = Under { shapes: hits, visible, pick: None };
     let shown = |id: ShapeId| under.visible(id);
     // A hyperlink in text applies when its shape is the one on top.

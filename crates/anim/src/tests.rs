@@ -1230,6 +1230,19 @@ fn dissolve_in_shows_a_growing_share_not_a_fade() {
 }
 
 #[test]
+fn a_shape_a_dissolve_shows_none_of_is_not_shown() {
+    // The show does not hit-test it and Morph does not start from it.
+    let st = |dissolve, opacity, visible| AnimState { dissolve, opacity, visible, ..Default::default() };
+    assert!(st(None, 1.0, true).is_shown());
+    assert!(st(Some(0.3), 1.0, true).is_shown());
+    assert!(!st(Some(0.0), 1.0, true).is_shown(), "a dissolve at share 0");
+    assert!(!st(None, 0.0, true).is_shown() && !st(None, 1.0, false).is_shown());
+    let tl = Timeline::new(&slide_with(vec![anim(1, AnimClass::Entrance, "dissolve", AnimStart::OnClick)]), W, H);
+    assert!(!tl.state(ShapeId(1), None, 0, 0.0).is_shown(), "before the effect starts");
+    assert!(tl.state(ShapeId(1), None, 0, 0.5).is_shown(), "part way through");
+}
+
+#[test]
 fn dissolve_share_follows_powerpoints_s_curve() {
     // PowerPoint's Dissolve In on a 4 s effect, from its video export, at p = .1 .. .9.
     let measured = [0.003, 0.040, 0.140, 0.305, 0.508, 0.707, 0.866, 0.962, 0.997];

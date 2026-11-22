@@ -6,7 +6,7 @@
 //! `CELL_W` x `CELL_H` pt in slide space with smooth interpolation (the cell size is the best fit of
 //! simulated noise against the measured autocorrelation), seeded by the shape.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use kurbo::{Affine, Rect};
 use vello_cpu::Mask;
@@ -69,6 +69,79 @@ fn value_below(share: f64) -> f64 {
     }
 }
 
+/// The noise of one shape over an area of the canvas, one byte per pixel (the value in 1/256ths).
+/// It depends only on the shape, the area and the view, so the frames of an effect share it: a frame
+/// is then a comparison per pixel instead of the interpolation of the noise (about 100 ms a 4K
+/// shape, against a few ms).
+struct Noise {
+    x0: usize,
+    x1: usize,
+    y0: usize,
+    y1: usize,
+    values: Vec<u8>,
+}
+
+type NoiseKey = (u16, u16, u64, [u64; 4], [u64; 4]);
+
+/// The noise fields of the last few dissolving shapes. A field of a 4K canvas is 8 MB at most.
+const CACHED_FIELDS: usize = 6;
+
+fn cache() -> &'static Mutex<Vec<(NoiseKey, Arc<Noise>)>> {
+    static C: OnceLock<Mutex<Vec<(NoiseKey, Arc<Noise>)>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn noise(key: NoiseKey, cw: usize, rect: (usize, usize, usize, usize), view: [f64; 6], seed: u64) -> Arc<Noise> {
+    if let Ok(mut c) = cache().lock() {
+        if let Some(at) = c.iter().position(|(k, _)| *k == key) {
+            let hit = c.remove(at);
+            let n = Arc::clone(&hit.1);
+            c.push(hit);
+            return n;
+        }
+    }
+    let (x0, x1, y0, y1) = rect;
+    let _ = cw;
+    let [sx, _, _, sy, tx, ty] = view;
+    let mut values = vec![0u8; (x1 - x0) * (y1 - y0)];
+    // Per column: the grid cell and the smooth position inside it; the same per row.
+    let grid = |px: usize, scale: f64, offset: f64, cell: f64| {
+        let g = ((px as f64 + 0.5 - offset) / scale) / cell;
+        let i = g.floor();
+        (i as i64, smooth(g - i))
+    };
+    let cols: Vec<(i64, f64)> = (x0..x1).map(|px| grid(px, sx, tx, CELL_W)).collect();
+    if let (Some(first), Some(last)) = (cols.iter().map(|c| c.0).min(), cols.iter().map(|c| c.0).max()) {
+        // The corners of the current row of cells, and of the one below it.
+        let mut row_cache: Option<(i64, Vec<f64>, Vec<f64>)> = None;
+        for (row, py) in (y0..y1).enumerate() {
+            let (gy, fy) = grid(py, sy, ty, CELL_H);
+            if row_cache.as_ref().is_none_or(|r| r.0 != gy) {
+                let line = |y: i64| (first..=last + 1).map(|x| corner(x, y, seed)).collect::<Vec<f64>>();
+                row_cache = Some((gy, line(gy), line(gy + 1)));
+            }
+            let Some((_, upper, lower)) = row_cache.as_ref() else { continue };
+            let width = x1 - x0;
+            let Some(out) = values.get_mut(row * width..(row + 1) * width) else { continue };
+            for (slot, (gx, fx)) in out.iter_mut().zip(&cols) {
+                let k = (gx - first) as usize;
+                let (Some(&a), Some(&b), Some(&c), Some(&d)) = (upper.get(k), upper.get(k + 1), lower.get(k), lower.get(k + 1)) else { continue };
+                let top = a + (b - a) * fx;
+                let bottom = c + (d - c) * fx;
+                *slot = ((top + (bottom - top) * fy) * 256.0).clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    let field = Arc::new(Noise { x0, x1, y0, y1, values });
+    if let Ok(mut c) = cache().lock() {
+        c.push((key, Arc::clone(&field)));
+        if c.len() > CACHED_FIELDS {
+            c.remove(0);
+        }
+    }
+    field
+}
+
 /// What a dissolve at `share` shows: a mask for the whole canvas (`w` x `h` px, as the layer needs),
 /// nonzero only inside `area` (device pixels). `view` maps slide points to device pixels and only
 /// scales and translates. `None` when the canvas is too big for a mask.
@@ -78,11 +151,13 @@ pub(crate) fn mask(w: u16, h: u16, area: Rect, view: Affine, seed: u64, share: f
         return None;
     }
     let mut data = vec![0u8; cw * ch];
-    let [sx, _, _, sy, tx, ty] = view.as_coeffs();
+    let coeffs = view.as_coeffs();
+    let [sx, _, _, sy, _, _] = coeffs;
     if sx.abs() < 1e-9 || sy.abs() < 1e-9 || !area.is_finite() {
         return Some(Mask::from_parts(data, w, h));
     }
-    let limit = value_below(share);
+    // The values are in 256ths: a pixel shows where its value is below the level's.
+    let limit = (value_below(share) * 256.0).round() as u16;
     let x0 = area.x0.floor().max(0.0) as usize;
     let x1 = (area.x1.ceil().max(0.0) as usize).min(cw);
     let y0 = area.y0.floor().max(0.0) as usize;
@@ -90,33 +165,16 @@ pub(crate) fn mask(w: u16, h: u16, area: Rect, view: Affine, seed: u64, share: f
     if x0 >= x1 || y0 >= y1 {
         return Some(Mask::from_parts(data, w, h));
     }
-    // Per column: the grid cell and the smooth position inside it; the same per row.
-    let grid = |px: usize, scale: f64, offset: f64, cell: f64| {
-        let g = ((px as f64 + 0.5 - offset) / scale) / cell;
-        let i = g.floor();
-        (i as i64, smooth(g - i))
-    };
-    let cols: Vec<(i64, f64)> = (x0..x1).map(|px| grid(px, sx, tx, CELL_W)).collect();
-    let (first, last) = match (cols.iter().map(|c| c.0).min(), cols.iter().map(|c| c.0).max()) {
-        (Some(a), Some(b)) => (a, b),
-        _ => return Some(Mask::from_parts(data, w, h)),
-    };
-    // The corners of the current row of cells, and of the one below it.
-    let mut row_cache: Option<(i64, Vec<f64>, Vec<f64>)> = None;
-    for py in y0..y1 {
-        let (gy, fy) = grid(py, sy, ty, CELL_H);
-        if row_cache.as_ref().is_none_or(|r| r.0 != gy) {
-            let line = |y: i64| (first..=last + 1).map(|x| corner(x, y, seed)).collect::<Vec<f64>>();
-            row_cache = Some((gy, line(gy), line(gy + 1)));
-        }
-        let Some((_, upper, lower)) = row_cache.as_ref() else { continue };
-        let Some(out) = data.get_mut(py * cw + x0..py * cw + x1) else { continue };
-        for (slot, (gx, fx)) in out.iter_mut().zip(&cols) {
-            let k = (gx - first) as usize;
-            let (Some(&a), Some(&b), Some(&c), Some(&d)) = (upper.get(k), upper.get(k + 1), lower.get(k), lower.get(k + 1)) else { continue };
-            let top = a + (b - a) * fx;
-            let bottom = c + (d - c) * fx;
-            if top + (bottom - top) * fy < limit {
+    let bits = |a: [f64; 6]| [a[0].to_bits(), a[3].to_bits(), a[4].to_bits(), a[5].to_bits()];
+    let key = (w, h, seed, [x0 as u64, x1 as u64, y0 as u64, y1 as u64], bits(coeffs));
+    let field = noise(key, cw, (x0, x1, y0, y1), coeffs, seed);
+    let width = field.x1 - field.x0;
+    for (row, py) in (field.y0..field.y1).enumerate() {
+        let (Some(src), Some(out)) = (field.values.get(row * width..(row + 1) * width), data.get_mut(py * cw + field.x0..py * cw + field.x1)) else {
+            continue;
+        };
+        for (slot, v) in out.iter_mut().zip(src) {
+            if u16::from(*v) < limit {
                 *slot = 255;
             }
         }

@@ -3513,5 +3513,5 @@ fn a_dissolve_half_way_is_the_pinned_pattern() {
     let on = shown(&dissolved(Some(0.5), 1.0), 1.0);
     let hash = on.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3));
     assert_eq!(on.len(), 106_400);
-    assert_eq!((on.iter().filter(|b| **b).count(), hash), (52_345, 0x1e4b_6379_749e_03a6));
+    assert_eq!((on.iter().filter(|b| **b).count(), hash), (52_140, 0x251a_8580_6d56_c7bf));
 }
