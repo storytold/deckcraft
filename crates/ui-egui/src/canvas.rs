@@ -336,7 +336,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         draw_guides(app, &painter, xf, slide_rect, &t);
     }
     if app.ui.ruler {
-        ruler(&painter, avail, slide_rect, scale, app.session.prefs.units, &t);
+        if crate::units::pixels(app) {
+            rulers::px_ruler(&painter, avail, slide_rect, scale, &t);
+        } else {
+            ruler(&painter, avail, slide_rect, scale, app.session.prefs.units, &t);
+        }
         ruler_markers(app, ui, &painter, avail, xf, &t);
     }
     pointer(app, ui, &resp, xf);

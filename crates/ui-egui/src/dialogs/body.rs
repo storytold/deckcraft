@@ -19,7 +19,11 @@ use super::theme_colors::theme_colors_dialog;
 use super::theme_fonts::theme_fonts_dialog;
 use super::trim::{seconds_text_to_ms, trim_seed};
 use super::zoom::zoom_dialog;
-use super::{Dialog, SlideApp, Tokens, Ui, Value, buttons, check, field, field_of, json, num, theme, vec2};
+use super::{
+    Dialog, SlideApp, Tokens, Ui, Value, buttons, buttons_multiline, check, close_button, dropdown_row, field, field_of, json, num, number, theme,
+    vec2,
+};
+use egui::CornerRadius;
 
 /// Returns true when the dialog should close.
 pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -197,17 +201,11 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let seed = hyperlink_seed_of(app.session.active());
     let slide_default = seed.slide.to_string();
     let mode = d.get("mode", seed.mode);
-    ui.horizontal(|ui| {
-        if ui.selectable_label(mode == "url", "Web Page or File").clicked() {
-            d.fields.insert("mode".into(), "url".into());
-        }
-        if ui.selectable_label(mode == "slide", "This Document").clicked() {
-            d.fields.insert("mode".into(), "slide".into());
-        }
-        if ui.selectable_label(mode == "email", "Email Address").clicked() {
-            d.fields.insert("mode".into(), "email".into());
-        }
-    });
+    let modes = ["url", "slide", "email"];
+    let at = modes.iter().position(|m| *m == mode).unwrap_or(0);
+    if let Some(k) = crate::form::tabs(ui, &["Web Page or File", "This Document", "Email Address"], at) {
+        d.fields.insert("mode".into(), modes.get(k).copied().unwrap_or("url").into());
+    }
     match mode.as_str() {
         "slide" => {
             let titles: Vec<String> = app
@@ -216,18 +214,22 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 .map(|s| s.doc.slides.iter().enumerate().map(|(i, sl)| format!("{}. {}", i + 1, sl.title())).collect())
                 .unwrap_or_default();
             let sel = d.get("slide", &slide_default).parse::<usize>().unwrap_or(0);
-            egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                for (i, t) in titles.iter().enumerate() {
-                    if ui.selectable_label(sel == i, t).clicked() {
-                        d.fields.insert("slide".into(), i.to_string());
+            let t = Tokens::get(ui.ctx());
+            egui::Frame::NONE.fill(t.field).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    for (i, t) in titles.iter().enumerate() {
+                        if ui.selectable_label(sel == i, t).clicked() {
+                            d.fields.insert("slide".into(), i.to_string());
+                        }
                     }
-                }
+                });
             });
         }
-        "email" => field(ui, d, "Email address:", "email", &seed.email),
-        _ => field(ui, d, "Address:", "url", &seed.url),
+        "email" => field(ui, d, "Email address", "email", &seed.email),
+        _ => field(ui, d, "Address", "url", &seed.url),
     }
-    field(ui, d, "ScreenTip:", "tip", &seed.tip);
+    field(ui, d, "ScreenTip", "tip", &seed.tip);
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
         let mode_now = d.get("mode", seed.mode);
@@ -244,17 +246,19 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 
 fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let sh = app.session.active().map(|s| s.doc.show.clone()).unwrap_or_default();
-    let ty = d.get("type", &sh.show_type);
-    ui.label("Show type");
-    for (l, v) in [
-        ("Presented by a speaker (full screen)", "speaker"),
-        ("Browsed by an individual (window)", "browsed"),
-        ("Browsed at a kiosk (full screen)", "kiosk"),
-    ] {
-        if ui.radio(ty == v, l).clicked() {
-            d.fields.insert("type".into(), v.into());
-        }
-    }
+    dropdown_row(
+        ui,
+        d,
+        "Show type",
+        "type",
+        &sh.show_type,
+        &[
+            ("speaker", "Presented by a speaker (full screen)"),
+            ("browsed", "Browsed by an individual (window)"),
+            ("kiosk", "Browsed at a kiosk (full screen)"),
+        ],
+    );
+    crate::form::section(ui, "Show options");
     let lp = check(ui, d, "Loop continuously until 'Esc'", "loop", sh.loop_until_esc);
     let nn = check(ui, d, "Show without narration", "nn", sh.without_narration);
     let na = check(ui, d, "Show without animation", "na", sh.without_animation);
@@ -357,9 +361,11 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
 
 fn dlg_comment(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut v = d.get("text", "");
-    ui.add(egui::TextEdit::multiline(&mut v).hint_text("Comment").desired_rows(4).desired_width(320.0));
+    let w = ui.available_width();
+    crate::form::text_area(ui, &mut v, w, 4, "Comment");
     d.fields.insert("text".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Post");
+    // Enter is a new line in a comment; ⌘Enter posts it.
+    let (ok, cancel) = buttons_multiline(ui, "Post");
     if ok && !v.trim().is_empty() {
         run(app, "comment.add", json!({"text": v}));
         app.ui.pane = Some("comments".into());
@@ -951,7 +957,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ),
     };
     if list.is_empty() {
-        ui.label("The spelling check is complete. No issues found.");
+        crate::form::note(ui, "The spelling check is complete. No issues found.");
     }
     let mut add_ignore = None;
     egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
@@ -1090,8 +1096,7 @@ fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             });
         }
     });
-    let (ok, cancel) = buttons(ui, "Close");
-    ok || cancel
+    close_button(ui, "Close")
 }
 
 fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -1160,8 +1165,10 @@ fn dlg_custom_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if started {
         return true;
     }
-    field(ui, d, "New show name:", "name", "Custom Show 1");
-    field(ui, d, "Slides (e.g. 1,3,5):", "slides", "1");
+    crate::form::section(ui, "New custom show");
+    field(ui, d, "Name", "name", "Custom Show 1");
+    field(ui, d, "Slides", "slides", "1");
+    crate::form::note(ui, "Slide numbers in the order to show them, e.g. 1, 3, 5.");
     let (ok, cancel) = buttons(ui, "Create");
     if ok {
         let idx: Vec<usize> =
@@ -1226,10 +1233,13 @@ fn dlg_chart_data(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 
 fn dlg_trim(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let seed = trim_seed(app.session.active());
-    field(ui, d, "Start time (s):", "start", &seed.start);
-    field(ui, d, "End trim (s):", "end", &seed.end);
-    field(ui, d, "Fade in (s):", "fin", &seed.fade_in);
-    field(ui, d, "Fade out (s):", "fout", &seed.fade_out);
+    let secs = |v: &str| v.trim().parse::<f64>().unwrap_or(0.0);
+    crate::form::section(ui, "Trim");
+    number(ui, d, "Start", "start", secs(&seed.start), "s", 0.1, (0.0, 36_000.0));
+    number(ui, d, "End trim", "end", secs(&seed.end), "s", 0.1, (0.0, 36_000.0));
+    crate::form::section(ui, "Fade");
+    number(ui, d, "Fade in", "fin", secs(&seed.fade_in), "s", 0.1, (0.0, 60.0));
+    number(ui, d, "Fade out", "fout", secs(&seed.fade_out), "s", 0.1, (0.0, 60.0));
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
         run(
@@ -1247,7 +1257,7 @@ fn dlg_trim(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 }
 
 fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label("Pick a graphic; type one item per line.");
+    crate::form::note(ui, "Pick a graphic; type one item per line.");
     let kind = d.get("kind", "process");
     ui.horizontal_wrapped(|ui| {
         for (k, l) in [
@@ -1350,6 +1360,14 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if ui.checkbox(&mut dark, "Dark appearance").changed() {
         let _ = app.run("view.dark", json!({"on": dark}));
     }
+    ui.horizontal(|ui| {
+        ui.label("Layout:");
+        for (shell, label) in [(crate::Shell::Classic, "Ribbon"), (crate::Shell::Canvas, "Canvas")] {
+            if ui.radio(app.ui.shell == shell, label).clicked() {
+                let _ = app.run("view.shell", json!({"shell": shell.id()}));
+            }
+        }
+    });
     // While the pointer holds the slider its value only waits in the dialog: applying it
     // would rescale the slider under the pointer and run it to an end (#767). It applies
     // on release, and at once from the keyboard.

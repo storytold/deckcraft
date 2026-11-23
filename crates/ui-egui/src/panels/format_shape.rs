@@ -255,7 +255,7 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
 }
 
 /// Render the shape-format pane with fill/line, effects, size/properties, text, and picture tabs.
-pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
+pub(crate) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let Some(sh) = st.selected_shapes().first().map(|s| (*s).clone()) else {

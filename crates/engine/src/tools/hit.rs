@@ -1,4 +1,4 @@
-use super::{Affine, Hit, Point, Rect, Shape, ShapeId, ShapeKind, TextSel, Vec2, Xfrm, cmd, xfrm_of};
+use super::{Affine, Hit, Point, Rect, Shape, ShapeId, ShapeKind, TextSel, Vec2, Xfrm, cmd, xfrm_on_slide};
 
 pub(super) fn is_text_first(st: &crate::DocState, id: ShapeId) -> bool {
     st.shape(id).is_some_and(|s| s.ph.is_some() || s.text_box)
@@ -9,7 +9,7 @@ pub(super) fn is_text_first(st: &crate::DocState, id: ShapeId) -> bool {
 /// mapped through `group_child_affine`, exactly as `hit_shape` does for group hit-testing.
 pub(super) fn text_member_at(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) -> Option<ShapeId> {
     let ShapeKind::Group { children, child } = &sh.kind else { return None };
-    let x = xfrm_of(&st.doc, &st.selection, sh);
+    let x = xfrm_on_slide(&st.doc, &st.selection, sh);
     let ch = Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
     member_at(children, deckcraft_geom::group_child_affine(&x, ch), p, tol)
 }
@@ -72,7 +72,7 @@ pub(super) fn edited_box(st: &crate::DocState) -> Option<EditedBox> {
         return None;
     }
     let sh = st.shape(t.shape)?;
-    Some(EditedBox { id: t.shape, xfrm: xfrm_of(&st.doc, &st.selection, sh), movable: !sh.is_line() && !sh.locked })
+    Some(EditedBox { id: t.shape, xfrm: xfrm_on_slide(&st.doc, &st.selection, sh), movable: !sh.is_line() && !sh.locked })
 }
 
 /// Where a point falls against the box of the text being edited.
@@ -218,7 +218,11 @@ pub(super) fn in_table_cell(st: &crate::DocState, id: ShapeId, p: Point) -> bool
 
 /// Resolve a shape's target at slide point `p`, using its effective fill for interior hits.
 pub(super) fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) -> Option<Hit> {
-    let x = xfrm_of(&st.doc, &st.selection, sh);
+    hit_shape_at(st, sh, xfrm_on_slide(&st.doc, &st.selection, sh), p, tol)
+}
+
+/// [`hit_shape`] with the shape's box on the slide given (a grouped layer's).
+pub(super) fn hit_shape_at(st: &crate::DocState, sh: &Shape, x: Xfrm, p: Point, tol: f64) -> Option<Hit> {
     let inv = x.affine().inverse();
     let local = inv * p;
     // Table borders resize rows and columns.

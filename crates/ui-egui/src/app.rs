@@ -1,13 +1,14 @@
 use super::clock::{monotonic_secs, now_ms};
 use super::ime_hooks::ime_in_ui_pass_key;
 use super::services::{InboxEvent, Services};
-use super::state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp, LocatedPlace, RECENT_MAX, UiState, ViewMode};
+use super::state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp, LocatedPlace, RECENT_MAX, Shell, UiState, ViewMode};
 #[cfg(not(target_arch = "wasm32"))]
 use super::updates_ui;
 use super::{
     AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
-    PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture, dialogs, doc_window,
-    eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast, uifonts,
+    PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, canvas_shell, capture, dialogs,
+    doc_window, eyedropper, find, json, media, menus, native_menu, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures,
+    theme, thumbs, toast, uifonts,
 };
 
 mod clipboard;
@@ -57,7 +58,9 @@ impl SlideApp {
             media: media::MediaHost::new(audio_out),
             status: None,
             opening: None,
-            toast: None,
+            toasts: Vec::new(),
+            native_menu: None,
+            find: None,
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
             synthetic: vec![],
@@ -91,12 +94,20 @@ impl SlideApp {
             styled: false,
             restyle: true,
             fonts_ready: false,
+            detached: Default::default(),
+            slides_focus: false,
+            thumbs_rect: None,
+            states_focus: false,
+            strip_rect: None,
+            slide_anchor: None,
+            slide_cursor: None,
             last_time: 0.0,
             last_recovery: 0.0,
             quit_confirmed: false,
             notes_buf: (0, usize::MAX, notes::Draft::default()),
             ui_fonts: uifonts::UiFonts::default(),
             thumb_drag: None,
+            thumb_drag_in_grid: false,
             selpane: selpane::State::default(),
             align_to: None,
             doc_window: None,
@@ -127,8 +138,40 @@ impl SlideApp {
         self
     }
 
+    /// Engine behaviour that follows the layout: in the canvas shell clicks pass through locked
+    /// layers (select them in the Layers list); the ribbon keeps PowerPoint's lock.
+    fn sync_shell_prefs(&mut self) {
+        self.session.prefs.locked_click_through = self.ui.shell == Shell::Canvas;
+        self.session.prefs.cmd_deep_select = self.ui.shell == Shell::Canvas;
+        self.session.prefs.group_keeps_aspect = self.ui.shell == Shell::Canvas;
+    }
+
+    /// Run `cmds` as one undo step named `label` (each command would make its own).
+    pub fn run_as_one(&mut self, label: &str, cmds: Vec<(&str, Value)>) {
+        let before = self.session.active().map(|d| d.history.undo.len()).unwrap_or(0);
+        for (id, p) in cmds {
+            if let Err(e) = self.run(id, p) {
+                self.set_status(e);
+            }
+        }
+        let Some(st) = self.session.active_mut() else { return };
+        let undo = &mut st.history.undo;
+        if undo.len() > before + 1 {
+            // Keep the first step (the document before them all), drop the ones after it.
+            undo.truncate(before + 1);
+            if let Some(e) = undo.last_mut() {
+                e.label = label.to_string();
+            }
+        }
+    }
+
     pub fn set_status(&mut self, msg: impl Into<String>) {
-        self.status = Some((msg.into(), now_ms()));
+        let msg = msg.into();
+        // The canvas layout has no status bar: the message is a notice there.
+        if self.ui.shell == Shell::Canvas && !msg.is_empty() {
+            toast::post(self, "DeckCraft", msg.clone(), false);
+        }
+        self.status = Some((msg, now_ms()));
     }
 
     /// Turn on the automatic check for a newer release at start-up (desktop shell only; tests and
@@ -149,7 +192,7 @@ impl SlideApp {
     /// A message that must be seen wherever the user is: a toast, which also shows over the start
     /// screen and the File tab, where there is no status bar.
     pub fn notify(&mut self, msg: impl Into<String>) {
-        self.toast = Some(toast::Toast { text: msg.into(), at: now_ms() });
+        toast::post(self, "DeckCraft", msg.into(), false);
     }
 
     /// The transient status message while it is fresh; clears it once stale. Both the status bar
@@ -308,6 +351,9 @@ impl SlideApp {
         self.opening_ui(&ctx);
         if self.show.is_some() {
             self.anim_preview = None;
+        }
+        // A full slide show takes the window; an inline preview plays in the canvas.
+        if self.show.as_ref().is_some_and(|s| !s.inline) {
             show::ui(self, ui);
             doc_window::show(self, &ctx);
             self.perf.frame_ms = now_ms() - t0;
@@ -315,9 +361,25 @@ impl SlideApp {
             return;
         }
         self.sync_backstage();
+        native_menu::run(self, &ctx);
         self.keyboard(&ctx);
+        // Drawn again below when the slide list (or the states strip) is shown.
+        self.thumbs_rect = None;
+        self.strip_rect = None;
         self.sync_backstage();
+        self.sync_shell_prefs();
         ribbon::title_bar(self, ui);
+        // The menus: in the macOS menu bar when there is one, else under the title bar (canvas
+        // layout; the ribbon has its own tabs).
+        if self.native_menu.is_none() && self.ui.shell == Shell::Canvas && self.backstage.is_none() {
+            native_menu::bar_ui(self, ui);
+        }
+        ribbon::doc_strip(self, ui);
+        if self.ui.shell == Shell::Canvas && self.backstage.is_none() {
+            canvas_shell::show(self, ui);
+            self.finish_frame(&ctx, t0);
+            return;
+        }
         if self.backstage.is_none() && self.session.active().is_some() {
             ribbon::show(self, ui);
             status::status_bar(self, ui);
@@ -351,13 +413,24 @@ impl SlideApp {
                         if self.ui.notes {
                             status::notes_pane(self, ui);
                         }
-                        canvas::show(self, ui);
+                        if self.previewing() {
+                            show::ui(self, ui);
+                        } else {
+                            canvas::show(self, ui);
+                        }
                     });
                 }
             }
         });
+        self.finish_frame(&ctx, t0);
+    }
+
+    /// Toasts, dialogs, the palette and queued requests: drawn over whichever shell is in use.
+    fn finish_frame(&mut self, ctx: &egui::Context, t0: f64) {
+        let ctx = ctx.clone();
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
+        find::show(self, &ctx);
         dialogs::show(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);

@@ -49,9 +49,15 @@ pub(super) fn handle_keys(
         // by an embedded presenter viewport.
         consumed.push((k, m));
     }
-    for action in actions {
+    let mut pending: std::collections::VecDeque<_> = actions.into();
+    while let Some(action) = pending.pop_front() {
         if !show.apply(action, doc, now) {
-            keep = false;
+            // A preview runs on to the slides it covers (a slide's states), then ends.
+            if show.stop_after.is_some_and(|last| show.state.slide < last) {
+                pending.push_back(show.state.next(doc));
+            } else {
+                keep = false;
+            }
         }
     }
     (keep, consumed)

@@ -1277,7 +1277,8 @@ fn actual_modal_without_discard_suspends_and_queues_no_token() {
 
     // A normal About pass, no request_discard: the modal is an explicitly ineligible route even
     // though the canvas is painted behind it.
-    h.state_mut().dialog = Some(crate::dialogs::Dialog::new("about"));
+    // A dialog with a text field of its own (the dialog is modal: nothing behind it takes focus).
+    h.state_mut().dialog = Some(crate::dialogs::Dialog::new("comment"));
     h.run_steps(2);
     assert!(
         matches!(root_phase(&h), crate::ImeResetPhase::Suspended { request: None, .. }),
@@ -1288,12 +1289,16 @@ fn actual_modal_without_discard_suspends_and_queues_no_token() {
 
     // Force a stock descriptor while the modal stays open. A token queued on the modal pass would
     // be attached to this descriptor by egui; there must be none.
-    let notes = egui::Id::unique("notes_edit");
-    h.ctx.memory_mut(|m| m.request_focus(notes));
-    h.run_steps(1);
-    let stock = h.output().platform_output.ime.as_ref().expect("the notes field publishes its own descriptor");
+    {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_role_and_label(egui::accesskit::Role::MultilineTextInput, "Comment").focus();
+    }
+    h.run_steps(2);
+    let stock = h.output().platform_output.ime.as_ref().expect("the comment field publishes its own descriptor");
     assert!(stock.reset_request.is_none(), "the modal pass did not queue a custom token for stock output");
-    h.ctx.memory_mut(|m| m.surrender_focus(notes));
+    if let Some(id) = h.ctx.memory(|m| m.focused()) {
+        h.ctx.memory_mut(|m| m.surrender_focus(id));
+    }
 
     // Returning to the custom editor publishes exactly one replacement, and only its exact
     // completion admits the suffix.

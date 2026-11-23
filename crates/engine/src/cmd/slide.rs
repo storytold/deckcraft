@@ -40,8 +40,24 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "slide.selectRange", "Select Slide Range", [], None, "{to: index, from?: index (default the current slide), add?: bool (keep the slides already selected)}", has_slide, select_range),
         cmd!(noundo "slide.selectSlides", "Select Slides", [], None, "{ids?: [slide id], indices?: [index], add?: bool}", has_slide, select_slides),
         cmd!("slide.hide", "Hide Slide", ["Slide Show", "Set Up"], None, "{index?, hidden?: bool}", has_slide, hide),
-        cmd!("slide.layout", "Layout", ["Home", "Slides"], None, "{layout: name or kind, index?}", has_slide, set_layout),
-        cmd!("slide.reset", "Reset", ["Home", "Slides"], None, "{index?}", has_slide, reset),
+        cmd!(
+            "slide.layout",
+            "Layout",
+            ["Home", "Slides"],
+            None,
+            "{layout: name or kind, index?, adopt?: bool} — adopt: the slide takes the layout (its placeholders follow the new layout's) but keeps its layers where they are, with no empty placeholders added",
+            has_slide,
+            set_layout
+        ),
+        cmd!(
+            "slide.reset",
+            "Reset",
+            ["Home", "Slides"],
+            None,
+            "{index?, adopt?: bool} — adopt: its placeholders go back to their layout's position and formatting, with no placeholders added",
+            has_slide,
+            reset
+        ),
         cmd!(
             "slide.notes",
             "Notes",
@@ -489,6 +505,33 @@ fn hide(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Re-map a slide's placeholders onto a new layout (content kept, matched by type/index).
+/// Give slide `index` the layout `layout` without adding or removing anything: each placeholder
+/// it has takes the matching place on the new layout (same kind, else a compatible one), keeping
+/// its own position; a placeholder with no place there stays a placeholder of its kind.
+pub fn adopt_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> Result<()> {
+    let places: Vec<deckcraft_model::Placeholder> = doc
+        .layout(layout)
+        .map(|(_, l)| l.shapes.iter().filter_map(|x| x.ph.clone()).collect())
+        .ok_or_else(|| bad("slide.layout", "no such layout"))?;
+    let slide = Arc::make_mut(doc.slides.get_mut(index).ok_or_else(|| bad("slide.layout", "no slide"))?);
+    let mut taken: Vec<u32> = vec![];
+    for sh in slide.shapes.iter_mut() {
+        let Some(ph) = sh.ph.as_mut() else { continue };
+        let fits = |p: &&deckcraft_model::Placeholder| !taken.contains(&p.idx) || p.kind.is_title();
+        let same = places.iter().filter(fits).find(|p| p.kind == ph.kind || (p.kind.is_title() && ph.kind.is_title()));
+        let compatible = || {
+            places.iter().filter(fits).find(|p| !p.kind.is_title() && !p.kind.is_footer_kind() && !ph.kind.is_title() && !ph.kind.is_footer_kind())
+        };
+        if let Some(p) = same.or_else(compatible) {
+            ph.kind = p.kind;
+            ph.idx = p.idx;
+            taken.push(p.idx);
+        }
+    }
+    slide.layout = layout;
+    Ok(())
+}
+
 pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> Result<()> {
     let lay_shapes: Vec<deckcraft_model::Shape> =
         doc.layout(layout).map(|(_, l)| l.shapes.clone()).ok_or_else(|| bad("slide.layout", "no such layout"))?;
@@ -545,11 +588,16 @@ fn set_layout(s: &mut Session, p: &Value) -> Result<Value> {
             if v.is_empty() { vec![st.selection.slide] } else { v }
         }
     };
+    let adopt = bool_or(p, "adopt", false);
     s.edit(|doc, sel| {
         let master = current_master(doc, sel);
         let layout = find_layout(doc, &key, master).ok_or_else(|| bad("slide.layout", format!("no layout {key}")))?;
         for i in &targets {
-            apply_layout(doc, *i, layout)?;
+            if adopt {
+                adopt_layout(doc, *i, layout)?;
+            } else {
+                apply_layout(doc, *i, layout)?;
+            }
         }
         sel.shapes.clear();
         sel.text = None;
@@ -557,32 +605,44 @@ fn set_layout(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Clear what a placeholder sets for itself (position, fill, outline, effects, shape, text
+/// formatting), so its layout and master drive it again. Its text stays; links and languages
+/// stay with the words.
+pub(crate) fn clear_own_format(sh: &mut deckcraft_model::Shape) {
+    sh.xfrm = None;
+    sh.fill = None;
+    sh.line = None;
+    sh.effects = None;
+    sh.style = None;
+    sh.geom = Default::default();
+    if let Some(t) = sh.text.as_mut() {
+        t.body = Default::default();
+        t.list_style = Default::default();
+        for para in &mut t.paragraphs {
+            para.props = Default::default();
+            para.end_props = deckcraft_model::text::RunProps { lang: para.end_props.lang.take(), ..Default::default() };
+            for r in &mut para.runs {
+                r.props = deckcraft_model::text::RunProps { link: r.props.link.take(), lang: r.props.lang.take(), ..Default::default() };
+            }
+        }
+    }
+}
+
 fn reset(s: &mut Session, p: &Value) -> Result<Value> {
     let i = index_of(s, p)?;
+    let adopt = bool_or(p, "adopt", false);
     s.edit(|doc, sel| {
         let layout = doc.slides.get(i).map(|x| x.layout).unwrap_or_default();
-        apply_layout(doc, i, layout)?;
+        // Adopt: its placeholders go back on the layout, nothing is added and nothing moves in
+        // front of or behind anything else.
+        if !adopt {
+            apply_layout(doc, i, layout)?;
+        }
         if let Some(sl) = doc.slides.get_mut(i) {
             let sl = Arc::make_mut(sl);
             sl.background = None;
-            for sh in &mut sl.shapes {
-                if sh.ph.is_some() {
-                    sh.xfrm = None;
-                    sh.fill = None;
-                    sh.line = None;
-                    sh.effects = None;
-                    sh.geom = Default::default();
-                    if let Some(t) = sh.text.as_mut() {
-                        t.body = Default::default();
-                        t.list_style = Default::default();
-                        for para in &mut t.paragraphs {
-                            para.props = Default::default();
-                            for r in &mut para.runs {
-                                r.props = Default::default();
-                            }
-                        }
-                    }
-                }
+            for sh in sl.shapes.iter_mut().filter(|sh| sh.ph.is_some()) {
+                clear_own_format(sh);
             }
         }
         sel.shapes.clear();

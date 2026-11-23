@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::updates_ui;
-use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, theme};
+use super::{Shell, SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, selpane, theme};
 
 fn grid_options_touched(p: &Value) -> bool {
     ["spacing", "snap", "smartGuides", "gridlines", "guides"].iter().any(|k| p.get(*k).is_some())
@@ -56,6 +56,19 @@ impl SlideApp {
             "view.reading" => self.start_show(self.session.active().map(|d| d.selection.slide).unwrap_or(0), true),
             "view.notes" => self.ui.notes = self.flag(p, self.ui.notes),
             "view.ruler" => self.ui.ruler = self.flag(p, self.ui.ruler),
+            "view.panels" => {
+                // Hide both while either shows; show both when both are hidden.
+                // `on`: the panels shown.
+                let shown = self.flag(p, !self.ui.hide_left || !self.ui.hide_right);
+                self.ui.hide_left = !shown;
+                self.ui.hide_right = !shown;
+            }
+            "view.leftPanel" => self.ui.hide_left = !self.flag(p, !self.ui.hide_left),
+            "view.collapseLayers" => {
+                if let Some(d) = self.session.active() {
+                    self.selpane.collapsed.extend(selpane::all_groups(d.shapes()));
+                }
+            }
             "view.gridlines" => self.ui.gridlines = self.flag(p, self.ui.gridlines),
             "view.guides" => {
                 self.ui.guides = self.flag(p, self.ui.guides);
@@ -159,8 +172,18 @@ impl SlideApp {
                 self.ui.brightness = if on { theme::Brightness::Dark } else { theme::Brightness::Light };
                 self.restyle = true;
             }
+            "view.shell" => {
+                self.ui.shell = match p.get("shell").and_then(Value::as_str) {
+                    Some(id) => Shell::parse(id).ok_or_else(|| format!("unknown layout `{id}` (classic or canvas)"))?,
+                    None if self.ui.shell == Shell::Classic => Shell::Canvas,
+                    None => Shell::Classic,
+                };
+                self.sync_shell_prefs();
+                return Ok(json!({"shell": self.ui.shell.id()}));
+            }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),
             "view.newWindow" => return doc_window::command(self, p),
+            "edit.pasteToReplace" => return self.paste_to_replace(),
             "show.start" => {
                 if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                     self.start_custom_show(name, false);

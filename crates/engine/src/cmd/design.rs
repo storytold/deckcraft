@@ -11,8 +11,8 @@ use deckcraft_model::{Background, Fill, PhType, Presentation, Shape, ShapeId, de
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, NO_ID_SPACE, always, bad, bool_or, bool_param, cmd, color_param, color_value, f64_param, has_doc, has_slide, ok, opt_usize_param,
-    rect_param, str_param, usize_param, with_param,
+    CommandSpec, NO_ID_SPACE, always, bad, bool_or, bool_param, cmd, color_param, color_value, f64_param, has_doc, ok, opt_usize_param, rect_param,
+    str_param, usize_param, with_param,
 };
 use crate::{Result, Session, Target};
 
@@ -62,11 +62,19 @@ pub fn specs() -> Vec<CommandSpec> {
             "Format Background",
             ["Design", "Customize"],
             None,
-            "{color? | gradient? | picture?: base64 | pattern? | style?: 1..12 | reset?, all?: bool, index?, transparency?: 0..1, pictureProps?: {tile?, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0.01..10, align?, mirror?, stretch?: [l,t,r,b], rotateWithShape?}, copy?: bool}",
-            has_slide,
+            "{color? | gradient? | picture?: base64 | pattern? | style?: 1..12 | reset?, all?: bool, index?, transparency?: 0..1, pictureProps?: {tile?, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0.01..10, align?, mirror?, stretch?: [l,t,r,b], rotateWithShape?}, copy?: bool} — the current slide's, or in Slide Master view the master's or layout's",
+            has_doc,
             background
         ),
-        cmd!("design.hideBackgroundGraphics", "Hide Background Graphics", ["Format Background"], None, "{hide?: bool}", has_slide, hide_bg_graphics),
+        cmd!(
+            "design.hideBackgroundGraphics",
+            "Hide Background Graphics",
+            ["Format Background"],
+            None,
+            "{hide?: bool} — the current slide's, or in Slide Master view the layout's",
+            has_doc,
+            hide_bg_graphics
+        ),
         cmd!(
             "design.slideSize",
             "Slide Size",
@@ -85,7 +93,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             header_footer
         ),
-        cmd!(noundo "view.slideMaster", "Slide Master", ["View", "Master Views"], None, "{master?: index, layout?: index}", has_doc, master_view),
+        cmd!(noundo "view.slideMaster", "Slide Master", ["View", "Master Views"], None, "{master?: index, layout?: index|null (null, or a master alone: the master itself)}", has_doc, master_view),
         cmd!(
             "view.handoutMaster",
             "Handout Master",

@@ -1,4 +1,4 @@
-use super::{NO_ID_SPACE, Result, Session, Value, bad, bool_or, bool_param, edit_geometry, edit_shapes, f64_param, json};
+use super::{NO_ID_SPACE, Result, Session, Value, bad, bool_or, bool_param, edit_geometry, edit_shapes, f64_param, json, targets};
 
 pub(super) fn crop(s: &mut Session, p: &Value) -> Result<Value> {
     let c = [f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom")];
@@ -72,6 +72,22 @@ pub(super) fn picture_change(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn media_options(s: &mut Session, p: &Value) -> Result<Value> {
+    // Start automatically or on a click: the play step in the slide's animations follows, so the
+    // choice is saved in the file (PowerPoint keeps it there).
+    if let Some(auto) = bool_param(p, "autoplay") {
+        let ids = targets(s, p)?;
+        s.edit(|doc, sel| {
+            if let Some(sl) = doc.slides.get_mut(sel.slide).filter(|_| sel.target == crate::Target::Slides) {
+                let sl = std::sync::Arc::make_mut(sl);
+                for id in &ids {
+                    if deckcraft_model::find_shape(&sl.shapes, *id).is_some_and(|x| matches!(x.kind, deckcraft_model::ShapeKind::Media(_))) {
+                        crate::cmd::animation::set_media_start(sl, *id, auto);
+                    }
+                }
+            }
+            Ok(())
+        })?;
+    }
     edit_shapes(s, p, "media.options", |sh| {
         if let deckcraft_model::ShapeKind::Media(m) = &mut sh.kind {
             if let Some(v) = bool_param(p, "autoplay") {

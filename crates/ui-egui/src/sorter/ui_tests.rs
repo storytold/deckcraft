@@ -171,6 +171,66 @@ fn dragging_a_section_moves_it_and_keeps_it_collapsed() {
     assert!(beta.top() < alpha.top());
 }
 
+/// The slide ids in order.
+fn order(h: &Harness<'_, SlideApp>) -> Vec<u32> {
+    h.state().session.active().unwrap().doc.slides.iter().map(|s| s.id.0).collect()
+}
+
+/// The grid cell for slide `n` (1-based): the right-most node so named (the slide list, at the
+/// left, may name its rows the same way).
+fn cell(h: &Harness<'_, SlideApp>, n: usize) -> egui::Rect {
+    let label = format!("Slide {n}");
+    h.query_all_by_label(&label).map(|x| x.rect()).max_by(|a, b| a.min.x.total_cmp(&b.min.x)).unwrap()
+}
+
+#[test]
+fn a_slide_dragged_in_the_canvas_grid_lands_where_the_line_shows() {
+    let mut s = Session::with_new();
+    for _ in 0..5 {
+        s.execute("slide.new", &json!({})).unwrap();
+    }
+    let mut app = SlideApp::new(s, Services::default());
+    app.run("view.shell", json!({"shell": "canvas"})).unwrap();
+    app.run("view.sorter", json!({})).unwrap();
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    let ids = order(&h);
+    // Slide 1 dropped in the gap between slides 3 and 4 (the slide list is on screen too).
+    let (a, b) = (cell(&h, 3), cell(&h, 4));
+    assert!((a.center().y - b.center().y).abs() < 1.0, "3 and 4 share a row in this window");
+    let gap = Pos2::new((a.max.x + b.min.x) / 2.0, a.center().y);
+    let start = cell(&h, 1).center();
+    h.drag_at(start);
+    h.run_steps(1);
+    for k in 1..=6 {
+        h.hover_at(start.lerp(gap, k as f32 / 6.0));
+        h.run_steps(1);
+    }
+    h.drop_at(gap);
+    h.run_steps(3);
+    assert_eq!(order(&h), vec![ids[1], ids[2], ids[0], ids[3], ids[4], ids[5]]);
+}
+
+#[test]
+fn the_drop_slot_is_the_nearest_gap_in_the_nearest_row() {
+    use egui::{Rect, pos2, vec2};
+    // Two rows of three 100-wide cells with 10 between them.
+    let cell = |i: usize| (i, Rect::from_min_size(pos2(20.0 + (i % 3) as f32 * 110.0, 10.0 + (i / 3) as f32 * 90.0), vec2(100.0, 80.0)));
+    let rects: Vec<_> = (0..6).map(cell).collect();
+    let slot = |x: f32, y: f32| super::drop_slot_at(&rects, pos2(x, y)).map(|s| s.0);
+    assert_eq!(slot(125.0, 50.0), Some(1), "in the gap between the first two");
+    assert_eq!(slot(5.0, 50.0), Some(0), "left of the row");
+    assert_eq!(slot(400.0, 50.0), Some(3), "right of the first row: after its last cell");
+    assert_eq!(slot(250.0, 135.0), Some(5), "the second row, from inside the gap above it");
+    assert_eq!(slot(400.0, 500.0), Some(6), "past the end");
+}
+
 fn slide_order(h: &Harness<'_, SlideApp>) -> Vec<u32> {
     h.state().session.active().unwrap().doc.slides.iter().map(|s| s.id.0).collect()
 }

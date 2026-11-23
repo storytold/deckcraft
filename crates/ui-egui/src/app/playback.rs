@@ -27,6 +27,27 @@ impl SlideApp {
         Ok(Some(from))
     }
 
+    /// Preview slides `from..=to` in the editor's canvas (not full screen): their animations and
+    /// transitions play by themselves, then editing carries on. Esc or a click stops it early.
+    pub fn preview_inline(&mut self, from: usize, to: usize) {
+        self.media.stop_owned(media::Owner::Editor);
+        if let Some(d) = self.session.active() {
+            self.show_instance = self.show_instance.wrapping_add(1).max(1);
+            let mut s = show::Show::new(&d.doc, from, false, false);
+            s.instance = self.show_instance;
+            s.inline = true;
+            s.preview_only = true;
+            s.autoplay = true;
+            s.stop_after = Some(to.max(from));
+            self.show = Some(s);
+        }
+    }
+
+    /// Is a preview playing in the canvas?
+    pub fn previewing(&self) -> bool {
+        self.show.as_ref().is_some_and(|s| s.inline)
+    }
+
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
     /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {

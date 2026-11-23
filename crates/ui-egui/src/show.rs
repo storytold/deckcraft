@@ -46,6 +46,10 @@ pub struct Show {
     pub preview_only: bool,
     /// Play every step automatically (animation preview).
     pub autoplay: bool,
+    /// Playing in the editor's canvas (a preview): no full screen, no presenter window.
+    pub inline: bool,
+    /// A preview runs on through the slides up to this one (a slide's states), then ends.
+    pub stop_after: Option<usize>,
     pub rehearse: bool,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
     pub keep_cursor: bool,
@@ -225,6 +229,8 @@ impl Show {
             presenter,
             preview_only: false,
             autoplay: false,
+            inline: false,
+            stop_after: None,
             rehearse: false,
             keep_cursor: false,
             timeline: None,
@@ -383,7 +389,12 @@ impl Show {
             if !holding && (step_due || (!self.rehearse && self.state.auto_advance_due(doc, idle) && !self.ended)) {
                 actions.push(self.state.next(doc));
             } else if self.preview_only && cur_step >= n_steps && idle > 0.8 {
-                return false;
+                // A preview runs on to the slides it covers (a slide's states), then ends.
+                if self.stop_after.is_some_and(|last| self.state.slide < last) {
+                    actions.push(self.state.next(doc));
+                } else {
+                    return false;
+                }
             }
         }
         true
@@ -415,7 +426,7 @@ impl Show {
     /// Whether a still pointer is hidden: after 2.5 s in a full-screen show, unless Keep mouse
     /// cursor visible is on. Reading View always keeps it.
     fn hides_idle_cursor(&self, now: f64) -> bool {
-        !self.pointer_awake(now) && !self.reading && !self.keep_cursor
+        !self.pointer_awake(now) && !self.reading && !self.inline && !self.keep_cursor
     }
 
     /// Pen and laser are different pointers: turning one on puts the other away.
@@ -535,7 +546,7 @@ impl Show {
                 self.step_end = now;
                 self.media_clock = None;
                 self.strokes.clear();
-                if self.preview_only {
+                if self.preview_only && self.stop_after.is_none_or(|last| i > last) {
                     return false;
                 }
                 self.after_enter(doc, now);
@@ -560,7 +571,9 @@ impl Show {
     fn after_enter(&mut self, doc: &Presentation, now: f64) {
         let started = if self.state.playing {
             Some(self.state.step)
-        } else if self.autoplay {
+        } else if self.autoplay && self.state.step < self.timeline(doc).steps() {
+            // (A slide with no steps has nothing to start: `next` would leave it for the next
+            // slide at once, with no transition, and a preview from a state skipped that state.)
             match self.state.next(doc) {
                 ShowAction::PlayStep(k) => Some(k),
                 _ => None,

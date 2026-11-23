@@ -1231,16 +1231,146 @@ fn draw_chrome_and_status(p: &Pen<'_>, icon: Icon) -> bool {
             p.rect((3.0, 10.5, 16.5, 21.5), 1.8, N, K);
             p.seg((9.75, 14.5), (9.75, 17.5), K);
         }
-        I::Eye | I::EyeOff => {
+        I::Detach => {
+            // The link's two halves pulled apart, with the break marked between them.
+            let link = |c: P2| {
+                let local = rrect_pts(-4.5, -2.8, 4.5, 2.8, 2.8);
+                p.shape(&tf(c, -45.0, &local), N, K);
+            };
+            link((7.0, 17.0));
+            link((17.0, 7.0));
+            p.seg((9.0, 4.0), (10.0, 7.0), K);
+            p.seg((4.0, 9.0), (7.0, 10.0), K);
+            p.seg((15.0, 20.0), (14.0, 17.0), K);
+            p.seg((20.0, 15.0), (17.0, 14.0), K);
+        }
+        I::PanelLeft | I::PanelRight => {
+            p.rect((3.5, 5.0, 20.5, 19.0), 2.0, N, K);
+            let x = if matches!(icon, I::PanelLeft) { 9.0 } else { 15.0 };
+            p.seg((x, 5.0), (x, 19.0), K);
+        }
+        I::Present => {
+            p.seg((3.0, 4.0), (21.0, 4.0), K);
+            p.rect((4.5, 4.0, 19.5, 15.5), 0.5, N, K);
+            p.seg((12.0, 15.5), (12.0, 20.0), K);
+            p.seg((9.0, 20.0), (15.0, 20.0), K);
+        }
+        I::LayerText => {
+            p.seg((6.0, 6.0), (18.0, 6.0), K);
+            p.seg((12.0, 6.0), (12.0, 19.0), K);
+        }
+        I::LayerShape => p.rect((5.0, 5.0, 19.0, 19.0), 2.0, N, K),
+        I::LayerLine => p.seg((5.0, 19.0), (19.0, 5.0), K),
+        I::Revert => {
+            // Three quarters of a circle, from the left over the top round to the bottom, with
+            // the arrowhead at its start: turning back.
+            p.line(&arc_pts((12.0, 12.0), 7.0, 7.0, 180.0, 450.0), K);
+            p.line(&[(2.5, 10.0), (5.0, 12.8), (7.5, 10.0)], K);
+        }
+        I::Deck => {
+            p.rect((3.5, 4.5, 20.5, 15.5), 1.5, N, K);
+            p.seg((12.0, 15.5), (12.0, 18.0), K);
+            p.line(&[(8.0, 20.5), (12.0, 18.0), (16.0, 20.5)], K);
+        }
+        I::Styles => {
+            for (x, y) in [(8.0, 8.0), (16.0, 8.0), (8.0, 16.0), (16.0, 16.0)] {
+                p.circle((x, y), 2.6, N, K);
+            }
+        }
+        I::Sliders => {
+            // Two vertical tracks, each with a knob at a different height.
+            p.seg((8.0, 4.0), (8.0, 20.0), K);
+            p.seg((16.0, 4.0), (16.0, 20.0), K);
+            p.circle((8.0, 14.5), 2.4, W, K);
+            p.circle((16.0, 9.5), 2.4, W, K);
+        }
+        I::TextTop => {
+            p.seg((5.0, 5.0), (19.0, 5.0), K);
+            p.seg((12.0, 19.0), (12.0, 7.5), K);
+            p.line(&[(8.5, 11.0), (12.0, 7.5), (15.5, 11.0)], K);
+        }
+        I::TextBottom => {
+            p.seg((5.0, 19.0), (19.0, 19.0), K);
+            p.seg((12.0, 5.0), (12.0, 16.5), K);
+            p.line(&[(8.5, 13.0), (12.0, 16.5), (15.5, 13.0)], K);
+        }
+        I::TextMiddle => {
+            p.seg((5.0, 12.0), (19.0, 12.0), K);
+            p.seg((12.0, 3.5), (12.0, 9.0), K);
+            p.line(&[(9.5, 6.5), (12.0, 9.0), (14.5, 6.5)], K);
+            p.seg((12.0, 20.5), (12.0, 15.0), K);
+            p.line(&[(9.5, 17.5), (12.0, 15.0), (14.5, 17.5)], K);
+        }
+        I::Tag => {
+            // A tag with its corner cut to a point and a hole near the point.
+            p.shape(&[(4.0, 6.0), (4.0, 12.0), (12.5, 20.5), (20.5, 12.5), (12.0, 4.0), (6.0, 4.0)], N, K);
+            p.circle((8.5, 8.5), 1.5, N, K);
+        }
+        I::States => {
+            // Three frames in a row, the last one dashed, as the strip under the slide shows them.
+            p.rect((2.5, 8.0, 8.5, 16.0), 1.0, N, K);
+            p.rect((10.0, 8.0, 16.0, 16.0), 1.0, N, K);
+            p.seg((17.5, 12.0), (21.5, 12.0), K);
+            p.seg((19.5, 10.0), (19.5, 14.0), K);
+        }
+        I::Build => {
+            // Three bullet lines, the last one faint, appearing from the left.
+            for (k, y) in [6.5f32, 12.0, 17.5].into_iter().enumerate() {
+                let c = if k == 2 { C::Ink(0.4) } else { K };
+                p.dot((5.0, y), 1.4, c);
+                p.seg((8.5, y), (20.0, y), c);
+            }
+        }
+        I::CornerTl | I::CornerTr | I::CornerBr | I::CornerBl => {
+            // A rounded corner, drawn top-left and mirrored into place.
+            let mut pts = vec![(5.0, 19.0), (5.0, 12.0)];
+            pts.extend(arc_pts((12.0, 12.0), 7.0, 7.0, 180.0, 270.0));
+            pts.push((19.0, 5.0));
+            let (fx, fy) = match icon {
+                I::CornerTr => (true, false),
+                I::CornerBr => (true, true),
+                I::CornerBl => (false, true),
+                _ => (false, false),
+            };
+            let pts: Vec<P2> = pts.into_iter().map(|(x, y)| (if fx { 24.0 - x } else { x }, if fy { 24.0 - y } else { y })).collect();
+            p.line(&pts, K);
+        }
+        I::Corners => {
+            // The four corners of a rounded square, apart.
+            for (fx, fy) in [(false, false), (true, false), (true, true), (false, true)] {
+                let mut pts = vec![(4.0, 9.0), (4.0, 7.5)];
+                pts.extend(arc_pts((7.5, 7.5), 3.5, 3.5, 180.0, 270.0));
+                pts.push((9.0, 4.0));
+                let pts: Vec<P2> = pts.into_iter().map(|(x, y)| (if fx { 24.0 - x } else { x }, if fy { 24.0 - y } else { y })).collect();
+                p.line(&pts, K);
+            }
+        }
+        I::PadH | I::PadV | I::PadSides => {
+            p.rect((3.5, 3.5, 20.5, 20.5), 2.5, N, K);
+            if icon != I::PadV {
+                p.seg((7.5, 7.5), (7.5, 16.5), K);
+                p.seg((16.5, 7.5), (16.5, 16.5), K);
+            }
+            if icon != I::PadH {
+                p.seg((7.5, 7.5), (16.5, 7.5), K);
+                p.seg((7.5, 16.5), (16.5, 16.5), K);
+            }
+        }
+        I::Eye => {
             let mut e = quad_pts((2.0, 12.0), (12.0, 4.0), (22.0, 12.0), 16);
             e.extend(quad_pts((22.0, 12.0), (12.0, 20.0), (2.0, 12.0), 16).into_iter().skip(1));
             e.pop();
             p.shape(&e, N, K);
             p.circle((12.0, 12.0), 3.2, N, K);
-            if icon == I::EyeOff {
-                p.seg_w((4.0, 21.0), (20.0, 3.0), K, 1.1);
+        }
+        I::EyeOff => {
+            // A closed eye: the lid's curve with lashes below it, as canvas editors show it.
+            p.line(&quad_pts((3.0, 10.0), (12.0, 17.0), (21.0, 10.0), 16), K);
+            for (a, b) in [((7.0, 14.0), (5.5, 16.5)), ((12.0, 15.6), (12.0, 18.6)), ((17.0, 14.0), (18.5, 16.5))] {
+                p.seg(a, b, K);
             }
         }
+        I::Pointer => p.rshape(&[(5.5, 3.5), (19.0, 12.0), (12.5, 13.5), (9.0, 20.0)], 1.2, N, K),
         I::Close => {
             p.seg_w((5.5, 5.5), (18.5, 18.5), K, 1.1);
             p.seg_w((18.5, 5.5), (5.5, 18.5), K, 1.1);
@@ -1296,6 +1426,14 @@ fn draw_chrome_and_status(p: &Pen<'_>, icon: Icon) -> bool {
             p.line(&[(7.0, 3.0), (12.0, 8.0), (17.0, 3.0)], K);
             p.line(&[(7.0, 21.0), (12.0, 16.0), (17.0, 21.0)], K);
             p.seg_w((5.0, 12.0), (19.0, 12.0), K.a(0.5), 0.8);
+        }
+        I::CollapseLayers => {
+            // Lines with a fold mark: Figma's Collapse layers.
+            for y in [6.0, 12.0, 18.0] {
+                p.seg((3.0, y), (14.0, y), K);
+            }
+            p.line(&[(16.5, 7.5), (19.0, 10.0), (21.5, 7.5)], K);
+            p.line(&[(16.5, 16.5), (19.0, 14.0), (21.5, 16.5)], K);
         }
         I::Expand => {
             p.line(&[(7.0, 8.0), (12.0, 3.0), (17.0, 8.0)], K);

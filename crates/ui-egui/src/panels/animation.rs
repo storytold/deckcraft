@@ -4,7 +4,7 @@ use super::{
 };
 
 /// Render the animation pane and route its controls through the engine's animation commands.
-pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
+pub(crate) fn animation(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let Some(slide) = st.current_slide() else { return };

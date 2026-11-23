@@ -270,7 +270,7 @@ pub fn icon_toggle(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, on: bool) 
     }
     icons::paint(&painter, rect.shrink(3.0), icon, t.text, !enabled);
     // Named for screen readers (and tests) by its tooltip.
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, tip));
     resp.on_hover_text(tip)
 }
 
@@ -465,6 +465,17 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     {
         out = Some(None);
     }
+    // Any colour: a saturation / value square and hue bar. The colour applies when the pointer is
+    // let go, so a drag is one change.
+    ui.label(egui::RichText::new("Custom").font(theme::bold(12.0)));
+    let pid = ui.scope_id().with("picker");
+    let last: Rgba = ui.data(|d| d.get_temp(pid.with("last"))).unwrap_or(Rgba::rgb(0x33, 0x66, 0xCC));
+    if let Some(p) = crate::colorpick::picker(ui, pid, last, false) {
+        ui.data_mut(|d| d.insert_temp(pid.with("last"), p.color));
+        if p.done {
+            out = Some(Some(ColorRef::rgb(Rgba { a: 255, ..p.color })));
+        }
+    }
     // "More Colors…": a hex field.
     let id = ui.scope_id().with("hex");
     let mut hex: String = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_default());
@@ -527,17 +538,25 @@ pub fn spinner(ui: &mut Ui, id: &str, label: &str, value: f64, step: f64, suffix
     let mut out = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(width).font(theme::font(12.0))).accessible_name(format!("{label} value"));
+        let edit = key.with("edit");
+        if let Some(d) = arrow_step(ui, edit, step) {
+            let v = parse_num(&text).unwrap_or(value) + d;
+            text = fmt_num(v, suffix);
+            out = Some(v);
+        }
+        let r = ui
+            .add(egui::TextEdit::singleline(&mut text).desired_width(width).font(theme::font(12.0)).id(edit))
+            .accessible_name(format!("{label} value"));
         if r.has_focus() {
             ui.data_mut(|d| d.insert_temp(key, text.clone()));
         } else {
             ui.data_mut(|d| d.remove::<String>(key));
         }
-        if r.lost_focus() {
-            let num: String = text.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
-            if let Ok(v) = num.parse::<f64>() {
-                out = Some(v);
-            }
+        if r.lost_focus()
+            && let Some(v) = parse_num(&text)
+            && out.is_none()
+        {
+            out = Some(v);
         }
         let (rect, _) = ui.allocate_exact_size(vec2(12.0, 22.0), Sense::hover());
         let up = ui.interact(Rect::from_min_max(rect.min, pos2(rect.max.x, rect.center().y)), key.with("up"), Sense::click());
@@ -558,6 +577,69 @@ pub fn spinner(ui: &mut Ui, id: &str, label: &str, value: f64, step: f64, suffix
         }
     });
     out
+}
+
+/// ↑ / ↓ pressed in the focused number field `field`: the change to make, `step` (⇧: ten steps),
+/// with the keys taken so the caret doesn't move. None when the field doesn't have the keyboard.
+pub fn arrow_step(ui: &Ui, field: egui::Id, step: f64) -> Option<f64> {
+    if !ui.memory(|m| m.has_focus(field)) {
+        return None;
+    }
+    let mut d = 0.0;
+    ui.input_mut(|i| {
+        i.events.retain(|e| match e {
+            egui::Event::Key { key: k @ (egui::Key::ArrowUp | egui::Key::ArrowDown), pressed, modifiers, .. }
+                if !modifiers.command && !modifiers.alt && !modifiers.ctrl =>
+            {
+                if *pressed {
+                    let n = if modifiers.shift { 10.0 } else { 1.0 };
+                    d += if *k == egui::Key::ArrowUp { n * step } else { -n * step };
+                }
+                false
+            }
+            _ => true,
+        });
+    });
+    (d != 0.0).then_some(d)
+}
+
+/// The number in a field's text ("120 px", "45%", "-3"), if there is one.
+/// The number typed into a field: a number with or without its unit, or arithmetic
+/// (`100/3`, `2*(4+1)`), see [`crate::field_math`].
+pub fn parse_num(text: &str) -> Option<f64> {
+    crate::field_math::eval(text, None)
+}
+
+/// What typed text makes of a field's value `cur`: a number, arithmetic, or an edit relative to
+/// it (`+10`, `*2`, `/4`, and `50%` in a field that isn't a percentage).
+pub fn typed_value(text: &str, cur: Option<f64>, percent_field: bool) -> Option<f64> {
+    match crate::field_math::parse(text, percent_field)? {
+        crate::field_math::Typed::Value(v) => Some(v),
+        crate::field_math::Typed::Rel(r) => match cur {
+            Some(c) => r.apply(c),
+            None => match r {
+                crate::field_math::Rel::Add(v) => Some(v),
+                _ => None,
+            },
+        },
+    }
+}
+
+/// How far a scrub `dx` points long moves a value whose step is `step`: ten times as far with
+/// Shift, a tenth with Alt (from FigCraft).
+pub fn scrub_amount(dx: f64, step: f64, shift: bool, alt: bool) -> f64 {
+    dx * step
+        * match (shift, alt) {
+            (true, false) => 10.0,
+            (false, true) => 0.1,
+            _ => 1.0,
+        }
+}
+
+/// The value a scrub that began at `from` and has moved `amount` shows: whole steps of `quantum`
+/// away from where it began.
+pub fn scrubbed(from: f64, amount: f64, quantum: f64) -> f64 {
+    if quantum > 0.0 && quantum.is_finite() { crate::field_math::stepped(from, (amount / quantum).round(), quantum) } else { from }
 }
 
 pub fn fmt_num(v: f64, suffix: &str) -> String {
@@ -600,6 +682,35 @@ pub fn drop_button(ui: &mut Ui, label: &str, size: egui::Vec2, enabled: bool) ->
     let col = if enabled { t.text_dim } else { t.text_faint };
     chevron(ui.painter(), egui::pos2(r.rect.max.x - 8.0, r.rect.center().y), 3.0, col);
     r
+}
+
+/// A light checkerboard of `cell`-point squares in `rect`: what shows through transparency
+/// (from FigCraft).
+pub fn checker(painter: &egui::Painter, rect: Rect, cell: f32) {
+    painter.rect_filled(rect, CornerRadius::ZERO, Color32::WHITE);
+    if cell <= 0.5 {
+        return;
+    }
+    let nx = (rect.width() / cell).ceil() as i32;
+    let ny = (rect.height() / cell).ceil() as i32;
+    for y in 0..ny.min(400) {
+        for x in 0..nx.min(400) {
+            if (x + y) % 2 == 0 {
+                continue;
+            }
+            let r = Rect::from_min_size(pos2(rect.min.x + x as f32 * cell, rect.min.y + y as f32 * cell), vec2(cell, cell)).intersect(rect);
+            painter.rect_filled(r, CornerRadius::ZERO, Color32::from_gray(0xE6));
+        }
+    }
+}
+
+/// Where a dragged row or item would land: an accent line from `x0` to `x1` at `y`, with end
+/// ticks (from FigCraft).
+pub fn insertion_line(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
+    let s = Stroke::new(2.0, color);
+    painter.line_segment([pos2(x0, y), pos2(x1, y)], s);
+    painter.line_segment([pos2(x0, y - 4.0), pos2(x0, y + 4.0)], s);
+    painter.line_segment([pos2(x1, y - 4.0), pos2(x1, y + 4.0)], s);
 }
 
 #[cfg(test)]
@@ -785,15 +896,18 @@ mod tests {
         });
         harness.get_by_label("Pick").click();
         harness.run();
-        harness.get_by_role(Role::TextInput).click();
+        // The picker's Hex field.
+        harness.get_by_role_and_label(Role::TextInput, "Hex").click();
         harness.run();
-        assert!(harness.query_by_role(Role::TextInput).is_some(), "the menu is still open after clicking the hex field");
-        harness.get_by_role(Role::TextInput).type_text("00FF00");
+        assert!(harness.query_by_role_and_label(Role::TextInput, "Hex").is_some(), "the menu is still open after clicking the hex field");
+        let cmd = egui::Modifiers { command: true, mac_cmd: true, ..Default::default() };
+        harness.key_press_modifiers(cmd, egui::Key::A);
+        harness.get_by_role_and_label(Role::TextInput, "Hex").type_text("00FF00");
         harness.run();
         harness.key_press(egui::Key::Enter);
         harness.run();
         assert_eq!(*picked.borrow(), Some(Some(ColorRef::rgb(Rgba::from_hex("00FF00").unwrap()))));
-        assert!(harness.query_by_role(Role::TextInput).is_none(), "picking a colour closes the menu");
+        assert!(harness.query_by_role_and_label(Role::TextInput, "Hex").is_none(), "picking a colour closes the menu");
     }
 
     /// Choosing Eyedropper closes the menu and asks for it; the colour it takes comes back through
@@ -802,7 +916,7 @@ mod tests {
     fn the_eyedroppers_colour_comes_back_through_the_menu_that_asked() {
         let picked = RefCell::new(None);
         let scheme = deckcraft_model::Theme::default().colors;
-        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 500.0)).build_ui(|ui| {
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 800.0)).build_ui(|ui| {
             theme::install_fonts(ui.ctx());
             let r = ui.button("Pick");
             color_popup(&r).show(|ui| {

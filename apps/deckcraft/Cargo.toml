@@ -34,6 +34,12 @@ image = { workspace = true }
 cpal = "0.16"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# The macOS menu bar (mac_menu.rs): muda, a standalone native menu crate from the tauri-apps org
+# (not Tauri: no webview), AppKit menus behind a safe API. Pinned as PhotoCraft pins it.
+muda = { version = "=0.21.1", default-features = false }
+# Safe AppKit calls only (how a menu item was chosen, Hide); already in Cargo.lock through winit.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSResponder"] }
 # Finder double-click, Open With, Dock drops and `open -a DeckCraft deck.pptx` arrive as a
 # kAEOpenDocuments Apple event, which winit 0.30 doesn't handle. This audited crate (also used by
 # GridCraft, PdfCraft and PhotoCraft) registers the handler (Objective-C interop needs unsafe, which

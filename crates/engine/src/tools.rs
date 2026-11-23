@@ -8,7 +8,7 @@ use deckcraft_model::{Shape, ShapeId, ShapeKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::cmd::{self, xfrm_of};
+use crate::cmd::{self, xfrm_of, xfrm_on_slide};
 use crate::{HistoryEntry, Result, Session, TextSel};
 
 mod click;
@@ -254,6 +254,16 @@ pub struct Guide {
     pub pos: f64,
     pub from: f64,
     pub to: f64,
+}
+
+impl ToolState {
+    /// The layers a move drag is carrying.
+    pub fn moving_ids(&self) -> Option<&[ShapeId]> {
+        match &self.drag {
+            Some(Drag::Move { ids, moved: true, .. }) => Some(ids),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]

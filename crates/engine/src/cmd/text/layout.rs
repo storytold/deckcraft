@@ -36,10 +36,11 @@ pub fn fit_text_box(s: &mut Session, id: ShapeId) -> Result<()> {
     // Change the box in place without an extra undo step (it is part of the edit).
     let st = s.doc_mut()?;
     let mut d = (*st.doc).clone();
+    let frame = crate::cmd::group_frame(&d, &st.selection, id);
     if let Some(list) = crate::shapes_mut(&mut d, &st.selection)
         && let Some(target) = deckcraft_model::find_shape_mut(list, id)
     {
-        target.xfrm = Some(nx);
+        target.xfrm = Some(crate::cmd::stored_xfrm(frame, nx));
     }
     st.doc = Arc::new(d);
     st.revision += 1;

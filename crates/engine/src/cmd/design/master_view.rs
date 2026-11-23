@@ -6,13 +6,13 @@ use super::{
 pub(super) fn master_view(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let mi = opt_usize_param(p, "master", "view.slideMaster")?.unwrap_or_else(|| master_index(&st.doc, &st.selection));
-    // A master thumbnail sends `{master}` and means the master itself. `{master, layout}` selects
-    // that layout. With neither key, follow the current slide's layout.
-    let layout = if p.get("master").is_some() && p.get("layout").is_none() {
-        None
-    } else {
-        opt_usize_param(p, "layout", "view.slideMaster")?
-            .or_else(|| st.current_slide().and_then(|sl| st.doc.masters.get(mi).and_then(|m| m.layouts.iter().position(|l| l.id == sl.layout))))
+    // `layout: null`, or a master thumbnail's `{master}` alone, opens the master itself;
+    // `{master, layout}` selects that layout; with neither key, the current slide's layout.
+    let layout = match p.get("layout") {
+        Some(Value::Null) => None,
+        Some(_) => opt_usize_param(p, "layout", "view.slideMaster")?,
+        None if p.get("master").is_some() => None,
+        None => st.current_slide().and_then(|sl| st.doc.masters.get(mi).and_then(|m| m.layouts.iter().position(|l| l.id == sl.layout))),
     };
     let target = match layout {
         Some(l) => Target::Layout { master: mi, layout: l },

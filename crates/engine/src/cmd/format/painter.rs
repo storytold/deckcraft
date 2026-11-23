@@ -1,6 +1,6 @@
 use super::{
-    Bullet, Effects, Fill, Line, ParaProps, Result, RunProps, Session, Shape, Strike, Value, bad, base64_decode, bool_or, current_para, current_run,
-    ed, edit_shapes, format_run, ids_param, json, ok, resolve, str_param,
+    Bullet, Effects, Fill, Line, ParaProps, Result, RunProps, Session, Shape, Spacing, Strike, Value, bad, base64_decode, bool_or, current_para,
+    current_run, ed, edit_shapes, format_run, ids_param, json, ok, resolve, str_param,
 };
 
 /// Formatting picked up by the Format Painter.
@@ -111,6 +111,7 @@ pub(super) fn state(s: &mut Session, _p: &Value) -> Result<Value> {
         "size": r.size,
         "bold": r.bold.unwrap_or(false),
         "italic": r.italic.unwrap_or(false),
+        "spacing": r.spacing.unwrap_or(0.0),
         "underline": r.underline.as_deref().is_some_and(|u| u != "none"),
         "strike": r.strike.is_some_and(|x| x != Strike::None),
         "superscript": r.baseline.unwrap_or(0.0) > 0.0,
@@ -120,6 +121,10 @@ pub(super) fn state(s: &mut Session, _p: &Value) -> Result<Value> {
         "numbering": matches!(pp.bullet, Some(Bullet::AutoNum { .. })),
         "lang": r.lang,
         "lineSpacing": serde_json::to_value(pp.line_spacing).unwrap_or_default(),
+        "indentLeft": pp.margin_left.unwrap_or(0.0),
+        "indentFirst": pp.indent.unwrap_or(0.0),
+        "spaceBefore": match pp.space_before { Some(Spacing::Pts(v)) => json!(v), _ => json!(0.0) },
+        "spaceAfter": match pp.space_after { Some(Spacing::Pts(v)) => json!(v), _ => json!(0.0) },
         "painter": s.painter.is_some(),
     }))
 }

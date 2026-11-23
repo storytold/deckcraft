@@ -53,7 +53,11 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         child.spacing_mut().item_spacing.x = 2.0;
         let has_doc = app.session.active().is_some();
         let dirty = app.session.active().is_some_and(|d| d.is_dirty());
-        crate::qat::show(app, &mut child);
+        // The canvas shell keeps the title bar clear, as canvas editors do: Home is in the
+        // presentation's menu and the tab row, the rest on the keyboard (⌘S, ⌘Z, ⇧⌘Z, ⌘↩).
+        if app.ui.shell == crate::Shell::Classic {
+            crate::qat::show(app, &mut child);
+        }
         let title =
             app.session.active().map(|d| format!("{}{}", d.title(), if dirty { " — Edited" } else { "" })).unwrap_or_else(|| "DeckCraft".into());
         ui.painter().text(rect.center(), Align2::CENTER_CENTER, title, theme::font(13.0), t.text);
@@ -67,15 +71,18 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         if icon_toggle(&mut right, Icon::Search, "Search commands (⇧⌘P)", true, false).clicked() {
             app.palette = Some((String::new(), 0));
         }
-        let share = right.add(
-            egui::Button::new(egui::RichText::new("  Present  ").color(t.accent_text).font(theme::bold(13.0)))
-                .fill(t.accent)
-                .corner_radius(control_h / 2.0)
-                .min_size(vec2(84.0, control_h)),
-        );
-        if share.clicked() && has_doc {
-            let from = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
-            app.start_show(from, false);
+        // The canvas shell presents from its inspector.
+        if app.ui.shell == crate::Shell::Classic {
+            let share = right.add(
+                egui::Button::new(egui::RichText::new("  Present  ").color(t.accent_text).font(theme::bold(13.0)))
+                    .fill(t.accent)
+                    .corner_radius(control_h / 2.0)
+                    .min_size(vec2(84.0, control_h)),
+            );
+            if share.clicked() && has_doc {
+                let from = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
+                app.start_show(from, false);
+            }
         }
         if icon_toggle(&mut right, Icon::CommentsBubble, "Comments", has_doc, app.ui.pane.as_deref() == Some("comments")).clicked() {
             let _ = app.run("view.pane", json!({"pane": "comments", "toggle": true}));

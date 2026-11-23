@@ -202,8 +202,17 @@ pub(crate) fn add_shape(s: &mut Session, cmd: &str, mut shape: Shape, select: bo
             shape.name = first_free_name(&base, &taken, count);
         }
         let id = shape.id;
+        let media = matches!(shape.kind, ShapeKind::Media(_));
         let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("insert", "no slide"))?;
         list.push(shape);
+        // Media on a slide plays on the next click of the show, as PowerPoint inserts it
+        // ("In Click Sequence"): its play step is a media animation, saved in the file.
+        if media
+            && sel.target == crate::Target::Slides
+            && let Some(sl) = doc.slides.get_mut(sel.slide)
+        {
+            std::sync::Arc::make_mut(sl).animations.push(super::animation::media_play(id, false));
+        }
         if select {
             sel.shapes = vec![id];
             sel.text = None;

@@ -294,9 +294,49 @@ icons! {
     Lock => "lock",
     /// Open padlock (Selection pane: an object that isn't locked).
     Unlock => "unlock",
+    /// A broken link (detach text from its style).
+    Detach => "detach",
+    /// Text box padding: left and right, top and bottom, each side.
+    PadH => "pad-h",
+    PadV => "pad-v",
+    PadSides => "pad-sides",
+    /// Corner radius: each corner on its own, and the corners themselves.
+    Corners => "corners",
+    CornerTl => "corner-tl",
+    CornerTr => "corner-tr",
+    CornerBr => "corner-br",
+    CornerBl => "corner-bl",
+    /// Four small circles: styles (text styles, colour styles), as canvas editors mark them.
+    Styles => "styles",
+    /// Two sliders: more settings for a section (type details).
+    Sliders => "sliders",
+    /// Text anchored at the top, middle or bottom of its box: an arrow onto a line.
+    TextTop => "text-top",
+    TextMiddle => "text-middle",
+    TextBottom => "text-bottom",
+    /// A window with its left (or right) column marked: show or hide that side panel.
+    PanelLeft => "panel-left",
+    PanelRight => "panel-right",
+    /// A projection screen on a stand: present the slides.
+    Present => "present",
+    /// Layers list kinds, as canvas editors mark them: text (a T), a shape, a line.
+    LayerText => "layer-text",
+    LayerShape => "layer-shape",
+    LayerLine => "layer-line",
+    /// A circular arrow: put back as it was (a placeholder onto its layout's position).
+    Revert => "revert",
+    /// A slide on an easel: a presentation (document tabs).
+    Deck => "deck",
+    /// A luggage tag: what placeholder of the layout a box is.
+    Tag => "tag",
+    /// A row of frames with a plus: the slide's animation states.
+    States => "states",
+    /// Lines appearing one by one: build a text box's paragraphs one at a time.
+    Build => "build",
     Eye => "eye",
     EyeOff => "eye-off",
     Close => "close",
+    Pointer => "pointer",
     Check => "check",
     Plus => "plus",
     Minus => "minus",
@@ -313,6 +353,7 @@ icons! {
     List => "list",
     Collapse => "collapse",
     Expand => "expand",
+    CollapseLayers => "collapse-layers",
     Pin => "pin",
     // File tab (Backstage)
     BackCircle => "back-circle",
@@ -349,7 +390,19 @@ pub fn paint(painter: &egui::Painter, rect: egui::Rect, icon: Icon, ink: egui::C
         return;
     }
     let origin = rect.center() - vec2(size * 0.5, size * 0.5);
-    let pen = Pen { p: painter, o: origin, k: size / 24.0, sw: stroke_width(size), ink, dis: disabled };
+    let pen = Pen { p: painter, o: origin, k: size / 24.0, sw: stroke_width(size), ink, dis: disabled, mono: false };
+    draw(&pen, icon);
+}
+
+/// [`paint`] in `ink` alone: accent colours are drawn in the ink too (the canvas shell's panel,
+/// whose icons are one grey, as in canvas editors).
+pub fn paint_mono(painter: &egui::Painter, rect: egui::Rect, icon: Icon, ink: egui::Color32, disabled: bool) {
+    let size = rect.width().min(rect.height());
+    if !size.is_finite() || size <= 0.5 {
+        return;
+    }
+    let origin = rect.center() - vec2(size * 0.5, size * 0.5);
+    let pen = Pen { p: painter, o: origin, k: size / 24.0, sw: stroke_width(size), ink, dis: disabled, mono: true };
     draw(&pen, icon);
 }
 

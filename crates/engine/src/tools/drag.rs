@@ -35,9 +35,9 @@ impl Session {
                 return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
             }
             Drag::Resize { id, orig, ids, handle, origs, start } => {
-                let keep_aspect = mods.shift || self.is_picture(id);
+                let keep_aspect = self.resize_keeps_aspect(id, mods);
                 let nx = resize_box(&orig, handle, p - start, keep_aspect, mods.alt);
-                let nx = self.snap_resize(nx, handle, &ids, tol);
+                let nx = self.snap_resize(nx, &orig, handle, &ids, tol, keep_aspect);
                 let sx = if orig.w > 1e-9 { (nx.w / orig.w) * if nx.flip_h != orig.flip_h { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
                 let sy = if orig.h > 1e-9 { (nx.h / orig.h) * if nx.flip_v != orig.flip_v { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
                 let div = if mods.alt { 2.0 } else { 1.0 };
@@ -245,10 +245,11 @@ impl Session {
         self.tool.guides = guides;
         let origs2: Vec<(ShapeId, Xfrm)> = if duplicate { ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect() } else { origs.clone() };
         self.edit(|doc, sel| {
+            let frames: Vec<Option<(Xfrm, Xfrm)>> = origs2.iter().map(|(id, _)| cmd::group_frame(doc, sel, *id)).collect();
             let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("move", "no slide"))?;
-            for (id, o) in &origs2 {
+            for ((id, o), frame) in origs2.iter().zip(frames) {
                 if let Some(sh) = deckcraft_model::find_shape_mut(list, *id) {
-                    sh.xfrm = Some(Xfrm { x: o.x + d.x, y: o.y + d.y, ..*o });
+                    sh.xfrm = Some(cmd::stored_xfrm(frame, Xfrm { x: o.x + d.x, y: o.y + d.y, ..*o }));
                 }
             }
             // A connector dragged away from shapes that stay put comes unglued at those ends.

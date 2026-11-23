@@ -5952,6 +5952,184 @@ fn an_exhausted_id_space_refuses_growth() {
 }
 
 #[test]
+fn command_click_selects_a_layer_inside_a_group() {
+    let mut s = session();
+    s.prefs.snap_to_grid = false;
+    s.prefs.smart_guides = false;
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.select", &json!({"ids": [a, b]})).unwrap();
+    s.execute("arrange.group", &json!({})).unwrap();
+    let group = s.doc().unwrap().selection.shapes[0].0 as u64;
+    let ev = |kind, x, y, cmd| PointerEvent { kind, x, y, mods: Mods { cmd, ..Mods::default() }, tol: 3.0, pressure: None };
+    let click = |s: &mut Session, x, y, cmd| {
+        s.pointer(ev(PointerKind::Down, x, y, cmd)).unwrap();
+        s.pointer(ev(PointerKind::Up, x, y, cmd)).unwrap();
+    };
+    let selected = |s: &Session| s.doc().unwrap().selection.shapes.iter().map(|i| i.0 as u64).collect::<Vec<_>>();
+    // A plain click picks the group.
+    click(&mut s, 340.0, 130.0, false);
+    assert_eq!(selected(&s), vec![group]);
+    // Without the canvas preference ⌘-click adds and removes, as in PowerPoint.
+    click(&mut s, 340.0, 130.0, true);
+    assert_eq!(selected(&s), Vec::<u64>::new());
+    // With it, ⌘-click picks the grouped rectangle itself.
+    s.prefs.cmd_deep_select = true;
+    click(&mut s, 340.0, 130.0, true);
+    assert_eq!(selected(&s), vec![b]);
+    // And dragging it moves just that one.
+    s.pointer(ev(PointerKind::Down, 340.0, 130.0, true)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 360.0, 140.0, true)).unwrap();
+    s.pointer(ev(PointerKind::Up, 360.0, 140.0, true)).unwrap();
+    let st = s.doc().unwrap();
+    let bx = st.shape(ShapeId(b as u32)).unwrap().xfrm.unwrap();
+    let ax = st.shape(ShapeId(a as u32)).unwrap().xfrm.unwrap();
+    assert_eq!((bx.x, bx.y), (320.0, 110.0), "the grouped layer moved");
+    assert_eq!((ax.x, ax.y), (100.0, 100.0), "its sibling stayed");
+}
+
+#[test]
+fn a_grouped_layer_follows_its_group_and_moves_on_the_slide() {
+    let mut s = session();
+    s.prefs.snap_to_grid = false;
+    s.prefs.smart_guides = false;
+    s.prefs.cmd_deep_select = true;
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32;
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32;
+    s.execute("selection.select", &json!({"ids": [a, b]})).unwrap();
+    s.execute("arrange.group", &json!({})).unwrap();
+    // Move and stretch the group: its layers go with it.
+    s.execute("shape.move", &json!({"dx": 50, "dy": 20})).unwrap();
+    s.execute("shape.resize", &json!({"w": 560})).unwrap();
+    let on_slide = |s: &Session, id: u32| {
+        let st = s.doc().unwrap();
+        cmd::xfrm_on_slide(&st.doc, &st.selection, st.shape(ShapeId(id)).unwrap())
+    };
+    let bx = on_slide(&s, b);
+    assert!((bx.x - 550.0).abs() < 0.01 && (bx.y - 120.0).abs() < 0.01 && (bx.w - 160.0).abs() < 0.01, "{bx:?}");
+    // ⌘-click finds it where it is now, and a drag moves it by as much on the slide.
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods { cmd: true, ..Mods::default() }, tol: 3.0, pressure: None };
+    s.pointer(ev(PointerKind::Down, 600.0, 150.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 610.0, 160.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 610.0, 160.0)).unwrap();
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(b)]);
+    let moved = on_slide(&s, b);
+    assert!((moved.x - 560.0).abs() < 0.01 && (moved.y - 130.0).abs() < 0.01, "{moved:?}");
+    // Once picked, a plain drag (no ⌘) moves it, not the group.
+    let plain = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    s.pointer(plain(PointerKind::Down, 610.0, 160.0)).unwrap();
+    s.pointer(plain(PointerKind::Drag, 620.0, 160.0)).unwrap();
+    s.pointer(plain(PointerKind::Up, 620.0, 160.0)).unwrap();
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(b)], "still the layer");
+    assert!((on_slide(&s, b).x - 570.0).abs() < 0.01);
+    s.execute("shape.move", &json!({"dx": -10})).unwrap();
+    assert!((moved.w - 160.0).abs() < 0.01, "size kept");
+    // The panel's X field (shape.move) works on the slide too.
+    s.execute("shape.move", &json!({"x": 600})).unwrap();
+    assert!((on_slide(&s, b).x - 600.0).abs() < 0.01);
+    assert!((on_slide(&s, a).x - 150.0).abs() < 0.01, "the sibling stays");
+}
+
+#[test]
+fn a_grouped_layers_x_follows_the_group() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32;
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [600, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32;
+    s.execute("selection.select", &json!({"ids": [a, b]})).unwrap();
+    s.execute("arrange.group", &json!({})).unwrap();
+    // The group's X set to 0: its first layer is at 0 on the slide, and says so.
+    s.execute("shape.move", &json!({"x": 0})).unwrap();
+    s.execute("selection.select", &json!({"ids": [a]})).unwrap();
+    let st = s.doc().unwrap();
+    let x = cmd::xfrm_on_slide(&st.doc, &st.selection, st.shape(ShapeId(a)).unwrap());
+    assert!(x.x.abs() < 0.01, "the layer reports where it is: {}", x.x);
+    // Setting the layer's X moves it there on the slide.
+    s.execute("shape.move", &json!({"x": 50})).unwrap();
+    let st = s.doc().unwrap();
+    let x = cmd::xfrm_on_slide(&st.doc, &st.selection, st.shape(ShapeId(a)).unwrap());
+    assert!((x.x - 50.0).abs() < 0.01, "{}", x.x);
+    let inspect = s.execute("shape.inspect", &json!({"id": a})).unwrap();
+    assert!((inspect["box"]["x"].as_f64().unwrap() - 50.0).abs() < 0.01, "{inspect}");
+}
+
+#[test]
+fn a_group_keeps_its_proportions_unless_shift_is_held() {
+    let mut s = session();
+    s.prefs.snap_to_grid = false;
+    s.prefs.smart_guides = false;
+    s.prefs.group_keeps_aspect = true;
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 100, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.select", &json!({"ids": [a, b]})).unwrap();
+    s.execute("arrange.group", &json!({})).unwrap();
+    let id = s.doc().unwrap().selection.shapes[0];
+    let size = |s: &Session| s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+    let drag = |s: &mut Session, shift: bool, to: (f64, f64)| {
+        let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods { shift, ..Mods::default() }, tol: 3.0, pressure: None };
+        let x = size(s);
+        let (cx, cy) = (x.x + x.w, x.y + x.h);
+        s.pointer(ev(PointerKind::Down, cx, cy)).unwrap();
+        s.pointer(ev(PointerKind::Drag, cx + to.0, cy + to.1)).unwrap();
+        s.pointer(ev(PointerKind::Up, cx + to.0, cy + to.1)).unwrap();
+    };
+    let ratio = size(&s).w / size(&s).h;
+    drag(&mut s, false, (150.0, 0.0));
+    assert!((size(&s).w / size(&s).h - ratio).abs() < 0.01, "kept: {:?}", size(&s));
+    // Snapping to other things doesn't stretch it.
+    s.prefs.smart_guides = true;
+    s.prefs.snap_to_grid = true;
+    drag(&mut s, false, (37.0, 3.0));
+    assert!((size(&s).w / size(&s).h - ratio).abs() < 0.01, "kept while snapping: {:?}", size(&s));
+    let r2 = size(&s).w / size(&s).h;
+    drag(&mut s, true, (0.0, 80.0));
+    assert!((size(&s).w / size(&s).h - r2).abs() > 0.05, "⇧ frees it: {:?}", size(&s));
+}
+
+#[test]
+fn option_hover_measures_from_the_selection() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 110, 50, 30]})).unwrap();
+    s.execute("selection.select", &json!({"ids": [a]})).unwrap();
+    // Over the other rectangle: the 50 pt gap between them, and its box.
+    let (lines, target) = s.measure_hover(deckcraft_geom::Point::new(220.0, 120.0), 2.0, false);
+    assert_eq!(lines.iter().filter_map(|m| m.len).collect::<Vec<_>>(), vec![50.0]);
+    assert!(target.is_some());
+    // Over empty space (a corner, clear of the placeholders): to the slide's four edges.
+    let size = s.doc().unwrap().doc.slide_size;
+    let (lines, target) = s.measure_hover(deckcraft_geom::Point::new(size.width - 3.0, size.height - 3.0), 2.0, false);
+    assert_eq!(lines.iter().filter(|m| m.len.is_some()).count(), 4);
+    assert!(target.is_none());
+}
+
+#[test]
+fn inside_a_group_clicks_pick_its_layers_and_escape_steps_out() {
+    let mut s = session();
+    s.prefs.cmd_deep_select = true;
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.select", &json!({"ids": [a, b]})).unwrap();
+    s.execute("arrange.group", &json!({})).unwrap();
+    let group = s.doc().unwrap().selection.shapes[0].0 as u64;
+    let ev = |kind, x, y, cmd| PointerEvent { kind, x, y, mods: Mods { cmd, ..Mods::default() }, tol: 3.0, pressure: None };
+    let click = |s: &mut Session, x, y, cmd| {
+        s.pointer(ev(PointerKind::Down, x, y, cmd)).unwrap();
+        s.pointer(ev(PointerKind::Up, x, y, cmd)).unwrap();
+    };
+    let selected = |s: &Session| s.doc().unwrap().selection.shapes.iter().map(|i| i.0 as u64).collect::<Vec<_>>();
+    click(&mut s, 140.0, 130.0, true);
+    assert_eq!(selected(&s), vec![a], "⌘-click goes in");
+    click(&mut s, 340.0, 130.0, false);
+    assert_eq!(selected(&s), vec![b], "a plain click on its sibling stays inside the group");
+    s.key("Escape", Mods::default()).unwrap();
+    assert_eq!(selected(&s), vec![group], "Esc selects the group");
+    s.key("Escape", Mods::default()).unwrap();
+    assert!(selected(&s).is_empty(), "and then nothing");
+    click(&mut s, 340.0, 130.0, false);
+    assert_eq!(selected(&s), vec![group], "outside the group's context a click picks the group");
+}
+
+#[test]
 fn shape_ids_beyond_u32_are_rejected_not_wrapped() {
     let (mut s, a, b) = two_shapes();
     let wrap = |id: deckcraft_model::ShapeId| u64::from(id.0) + (1u64 << 32);

@@ -46,11 +46,43 @@ pub enum ViewMode {
     Reading,
 }
 
+/// The window layout around the slide.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Shell {
+    /// PowerPoint-style: ribbon, thumbnails, status bar.
+    #[default]
+    Classic,
+    /// Canvas-first: a slides-and-layers sidebar, an inspector on the right, no ribbon.
+    Canvas,
+}
+
+impl Shell {
+    pub fn id(self) -> &'static str {
+        match self {
+            Shell::Classic => "classic",
+            Shell::Canvas => "canvas",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Shell> {
+        match s {
+            "classic" => Some(Shell::Classic),
+            "canvas" => Some(Shell::Canvas),
+            _ => None,
+        }
+    }
+}
+
 /// Persisted UI state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub brightness: theme::Brightness,
+    pub shell: Shell,
+    /// Canvas shell inspector tab: `design` or `animate`. Not saved: the app always opens on
+    /// Design.
+    #[serde(skip)]
+    pub inspector_tab: String,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -94,12 +126,17 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// Canvas shell: the left panel (slides and layers) and the right panel (design) are hidden.
+    pub hide_left: bool,
+    pub hide_right: bool,
 }
 
 impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            shell: Shell::Classic,
+            inspector_tab: "design".into(),
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
@@ -127,6 +164,8 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            hide_left: false,
+            hide_right: false,
         }
     }
 }

@@ -797,12 +797,20 @@ fn select_all_slides(s: &mut Session) -> Result<Value> {
 fn deselect(s: &mut Session, _p: &Value) -> Result<Value> {
     s.painter = None;
     s.anim_painter = None;
-    s.select(|_, sel| {
+    s.select(|doc, sel| {
         if let Some(t) = sel.text.take() {
             // Esc while editing text selects the shape.
             if !t.notes {
                 sel.shapes = vec![t.shape];
             }
+        } else if let Some(parent) = (|| {
+            // Esc on layers inside a group selects the group (stepping out, as canvas editors do).
+            let list = super::current_shapes(doc, sel)?;
+            let first = *sel.shapes.first()?;
+            deckcraft_model::parent_of(list, first).flatten()
+        })() {
+            sel.shapes = vec![parent];
+            sel.cells = None;
         } else {
             sel.shapes.clear();
             sel.cells = None;

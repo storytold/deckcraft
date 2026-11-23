@@ -1,5 +1,6 @@
 use super::clipboard::OBJECTS_MARKER;
-use super::{Mods, SlideApp, Value, backstage, json, menus};
+use super::{Mods, Shell, SlideApp, Value, ViewMode, backstage, canvas_shell, json, menus, selpane, thumbs};
+use crate::states;
 
 impl SlideApp {
     /// The app shortcuts that still make sense on the empty File/start screen: create, open,
@@ -95,7 +96,20 @@ impl SlideApp {
         {
             ctx.memory_mut(|m| m.surrender_focus(id));
         }
-        if ctx.memory(|m| m.focused().is_some()) || modal {
+        self.track_slides_focus(ctx);
+        // The preview playing in the canvas has the keys (→, Esc).
+        if self.show.is_some() {
+            return;
+        }
+        // A Layers row with the keyboard keeps its own keys (↑ / ↓, Home / End, F2, Esc) and takes
+        // no typing, but shortcuts (⌘G, ⇧⌘G, ⌘C, Delete…) act on the layers selected there.
+        let focused = ctx.memory(|m| m.focused());
+        let layer_row = focused.is_some_and(|f| selpane::is_row(self, f));
+        let slides_keys = self.slides_focus || (self.ui.view == ViewMode::Sorter && self.ui.shell == Shell::Canvas);
+        // Nothing selected on the slide: Delete and Cut have nothing to act on (the engine would
+        // take the slide), as in PowerPoint.
+        let nothing = self.session.active().is_some_and(|d| d.selection.shapes.is_empty() && d.selection.text.is_none());
+        if (focused.is_some() && !layer_row) || modal {
             // A stock field/modal/palette owns input now. Retire the custom fence, then visit
             // controls in raw order; stock text/key events are left for the stock widgets.
             self.suspend_ime_reset(viewport);
@@ -109,12 +123,8 @@ impl SlideApp {
             self.drain_requests();
             return;
         }
-        let img = if image_paste { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
-        if let Some(png) = img {
-            let data = deckcraft_engine::cmd::base64_encode(&png);
-            if let Err(e) = self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": data})) {
-                self.set_status(e.to_string());
-            }
+        if image_paste {
+            self.paste_dropped_v(pasted_image_event);
         }
         for e in events {
             // An earlier command in this raw batch may have settled the composition. Request the
@@ -131,9 +141,13 @@ impl SlideApp {
                     }
                     Err(e) => self.set_status(e),
                 },
+                egui::Event::Text(_) if layer_row => {}
                 egui::Event::Text(t) => {
                     let revision = self.session.active().map(|d| d.revision);
-                    if self.session.active().is_some_and(|d| d.selection.text.is_some() || d.selection.shapes.len() == 1)
+                    // In the canvas shell letters pick tools unless text is being edited (Enter
+                    // edits a selected shape's text); the ribbon types over a selected shape.
+                    let types_over = self.ui.shell == Shell::Classic;
+                    if self.session.active().is_some_and(|d| d.selection.text.is_some() || (types_over && d.selection.shapes.len() == 1))
                         && let Err(e) = self.session.type_text(&t)
                     {
                         self.set_status(e.to_string());
@@ -142,70 +156,144 @@ impl SlideApp {
                         self.note_application_edit(ctx);
                     }
                 }
-                egui::Event::Ime(ime) => self.ime_event(ctx, &ime),
-                egui::Event::Copy => self.publish_clipboard(ctx, false),
-                egui::Event::Cut => self.publish_clipboard(ctx, true),
-                egui::Event::Paste(text) => {
-                    // Our own marker for objects without text: paste what the session copied.
+                egui::Event::Ime(ime) if !layer_row => self.ime_event(ctx, &ime),
+                // The slide list copies and cuts whole slides, a slide with its states.
+                egui::Event::Copy => self.copy_or_cut(ctx, false, slides_keys),
+                egui::Event::Cut if nothing && !slides_keys => {}
+                egui::Event::Cut => self.copy_or_cut(ctx, true, slides_keys),
+                // ⇧⌘V (and ⌥⇧⌘V, the Mac's Paste and Match Style) pastes the text alone.
+                egui::Event::Paste(text) if ctx.input(|i| i.modifiers.shift) => {
                     let text = if text == OBJECTS_MARKER { String::new() } else { text };
-                    // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
-                    // Text keeps its HTML (bold, italic, underline) when the host can read it.
-                    let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
-                    // egui 0.37 sends `PasteImage` directly; the services fallback stays for
-                    // integrations that still send an empty `Paste`, and for a browser's Copy
-                    // Image, whose text is only the picture's link. Never insert twice.
-                    let wants_picture = text.is_empty() || super::clipboard::names_a_picture(&text, html.as_deref());
-                    let img = if wants_picture && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
-                    let revision = self.session.active().map(|d| d.revision);
-                    let r = match img {
-                        Some(png) => self
-                            .session
-                            .execute("insert.picture", &json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)})),
-                        None => {
-                            let mut params = json!({"text": text});
-                            if let Some(h) = html {
-                                params["html"] = Value::String(h);
-                            }
-                            self.session.execute("edit.paste", &params)
-                        }
-                    };
-                    if let Err(e) = r {
+                    if let Err(e) = self.session.execute("edit.pasteText", &json!({"text": text})) {
                         self.set_status(e.to_string());
                     }
-                    if self.session.active().map(|d| d.revision) != revision {
-                        self.note_application_edit(ctx);
-                    }
                 }
+                egui::Event::Paste(text) => self.paste_event(ctx, text, pasted_image_event),
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
-                    if key == egui::Key::Tab {
-                        // The slide has the keyboard, so Tab is ours (indent, tab character, next
-                        // shape). Left to egui it would also focus the first ribbon widget, and
-                        // every key after it would go there instead of the slide (#78).
-                        ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
-                    }
-                    if key == egui::Key::Escape && self.anim_preview.is_some() && !modifiers.command && !modifiers.ctrl && !modifiers.alt {
-                        self.anim_preview = None;
-                        continue;
-                    }
-                    let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
-                    if !self.session.tool.drawing_freeform() && menus::ui_shortcut(self, key, mods) {
-                        continue;
-                    }
-                    let name = key_name(key);
-                    let revision = self.session.active().map(|d| d.revision);
-                    match self.session.key(name, mods) {
-                        Ok(_) => {}
-                        Err(e) => self.set_status(e.to_string()),
-                    }
-                    if self.session.active().map(|d| d.revision) != revision {
-                        self.note_application_edit(ctx);
-                    }
+                    self.key_event(ctx, key, modifiers, KeyContext { layer_row, slides_keys, nothing })
                 }
                 _ => {}
             }
         }
         self.drain_requests();
     }
+
+    /// ⌘V whose key press egui-winit dropped (only an image on the clipboard): the image, else
+    /// what was copied here (shapes, slides).
+    fn paste_dropped_v(&mut self, pasted_image_event: bool) {
+        // That paste: an image on the clipboard, else what was copied here (shapes, slides).
+        let img = self.services.clipboard_image.as_mut().and_then(|f| f());
+        if let Some(png) = img {
+            let data = deckcraft_engine::cmd::base64_encode(&png);
+            if let Err(e) = self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": data})) {
+                self.set_status(e.to_string());
+            }
+        } else if !pasted_image_event
+            && (!self.session.clipboard.shapes.is_empty() || !self.session.clipboard.slides.is_empty())
+            && let Err(e) = self.session.execute("edit.paste", &json!({}))
+        {
+            self.set_status(e.to_string());
+        }
+    }
+
+    /// Copy or cut: the slide list copies and cuts whole slides, a slide with its states.
+    fn copy_or_cut(&mut self, ctx: &egui::Context, cut: bool, slides_keys: bool) {
+        if slides_keys {
+            thumbs::select_runs(self);
+        }
+        self.publish_clipboard(ctx, cut, slides_keys);
+    }
+
+    /// A paste from the system clipboard.
+    fn paste_event(&mut self, ctx: &egui::Context, text: String, pasted_image_event: bool) {
+        // Our own marker for objects without text: paste what the session copied.
+        let text = if text == OBJECTS_MARKER { String::new() } else { text };
+        // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
+        // Text keeps its HTML (bold, italic, underline) when the host can read it.
+        let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
+        // egui 0.37 sends `PasteImage` directly; the services fallback stays for
+        // integrations that still send an empty `Paste`, and for a browser's Copy
+        // Image, whose text is only the picture's link. Never insert twice.
+        let wants_picture = text.is_empty() || super::clipboard::names_a_picture(&text, html.as_deref());
+        let img = if wants_picture && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+        let revision = self.session.active().map(|d| d.revision);
+        let r = match img {
+            Some(png) => {
+                self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)}))
+            }
+            None => {
+                let mut params = json!({"text": text});
+                if let Some(h) = html {
+                    params["html"] = Value::String(h);
+                }
+                self.session.execute("edit.paste", &params)
+            }
+        };
+        if let Err(e) = r {
+            self.set_status(e.to_string());
+        }
+        if self.session.active().map(|d| d.revision) != revision {
+            self.note_application_edit(ctx);
+        }
+    }
+
+    /// A key press for the slide (or the slide list, the states strip, a Layers row).
+    fn key_event(&mut self, ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers, kc: KeyContext) {
+        let KeyContext { layer_row, slides_keys, nothing } = kc;
+        use egui::Key::{ArrowDown, ArrowUp, End, Escape, F2, Home, Tab};
+        if layer_row && !modifiers.command && !modifiers.ctrl && matches!(key, ArrowUp | ArrowDown | Home | End | F2 | Escape | Tab) {
+            return;
+        }
+        if key == egui::Key::Tab {
+            // The slide has the keyboard, so Tab is ours (indent, tab character, next
+            // shape). Left to egui it would also focus the first ribbon widget, and
+            // every key after it would go there instead of the slide (#78).
+            ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+        }
+        if key == egui::Key::Escape && self.anim_preview.is_some() && !modifiers.command && !modifiers.ctrl && !modifiers.alt {
+            self.anim_preview = None;
+            return;
+        }
+        let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
+        if self.states_focus && states::strip_key(self, key, mods) {
+            return;
+        }
+        if slides_keys && thumbs::slide_key(self, key, mods) {
+            return;
+        }
+        if nothing && !slides_keys && matches!(key, egui::Key::Delete | egui::Key::Backspace) {
+            return;
+        }
+        if self.ui.shell == Shell::Canvas && canvas_shell::tool_key(self, key, mods) {
+            return;
+        }
+        if menus::mac_shortcut(self, key, mods) {
+            return;
+        }
+        if !self.session.tool.drawing_freeform() && menus::ui_shortcut(self, key, mods) {
+            return;
+        }
+        let name = key_name(key);
+        let revision = self.session.active().map(|d| d.revision);
+        match self.session.key(name, mods) {
+            Ok(_) => {}
+            Err(e) => self.set_status(e.to_string()),
+        }
+        if self.session.active().map(|d| d.revision) != revision {
+            self.note_application_edit(ctx);
+        }
+    }
+}
+
+/// Who has the keyboard besides the slide, for [`SlideApp::key_event`].
+#[derive(Clone, Copy)]
+struct KeyContext {
+    /// A Layers row has focus.
+    layer_row: bool,
+    /// The slide list (or the canvas layout's grid) has the keyboard.
+    slides_keys: bool,
+    /// Nothing is selected on the slide.
+    nothing: bool,
 }
 
 /// Engine key name for an egui key.

@@ -202,6 +202,9 @@ impl SlideApp {
     /// delivered exactly once in the next real UI pass. `ViewportInfo::visible()` is not a phase
     /// signal: a hidden root still gets a full pass for a screenshot or `RequestPaintWhileHidden`.
     pub fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(menu) = self.native_menu.as_mut() {
+            menu.raw_input(raw);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         for f in std::mem::take(&mut raw.dropped_files) {
             let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());

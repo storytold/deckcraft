@@ -1078,6 +1078,83 @@ fn the_next_preview_fits_its_column_whatever_the_slide_shape() {
     assert_eq!(next_rect(right, &doc).width(), 400.0);
 }
 
+fn with_video() -> (crate::SlideApp, ShapeId) {
+    let mut app = crate::SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    let bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../media/tests/fixtures/clip-h264.mov")).unwrap();
+    let data = deckcraft_engine::cmd::base64_encode(&bytes);
+    let r = app.run("insert.video", json!({"data": data, "name": "clip.mov"})).unwrap();
+    (app, ShapeId(r["id"].as_u64().unwrap() as u32))
+}
+
+fn harness(app: crate::SlideApp) -> egui_kittest::Harness<'static, crate::SlideApp> {
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 800.0)).build_ui_state(
+        |ui, app: &mut crate::SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(4);
+    h
+}
+
+#[test]
+fn the_next_click_plays_an_inserted_video_before_moving_on() {
+    let (mut app, id) = with_video();
+    app.run("slide.new", json!({})).unwrap();
+    app.run("slide.go", json!({"index": 0})).unwrap();
+    let a = &app.session.active().unwrap().doc.slides[0].animations;
+    assert!(a.iter().any(|x| x.shape == id && x.class == deckcraft_model::anim::AnimClass::Media), "inserted with a play step: {a:?}");
+    app.start_show(0, false);
+    let mut h = harness(app);
+    assert!(h.state().media.status(id).is_none(), "nothing plays before the click");
+    for pressed in [true, false] {
+        h.event(egui::Event::Key { key: egui::Key::ArrowRight, physical_key: None, pressed, repeat: false, modifiers: Default::default() });
+    }
+    h.run_steps(6);
+    // The test clip is a few frames long: started is what counts.
+    assert!(h.state().media.status(id).is_some(), "→ played the video");
+    assert_eq!(h.state().show.as_ref().map(|s| s.state.slide), Some(0), "and stayed on its slide");
+}
+
+#[test]
+fn arrow_keys_reach_the_show_while_an_editor_control_has_focus() {
+    let mut app = crate::SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    app.run("slide.new", json!({})).unwrap();
+    app.run("slide.go", json!({"index": 0})).unwrap();
+    let mut h = harness(app);
+    // Something in the editor (a slide row, a field) has the keyboard.
+    h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("an editor control")));
+    h.run_steps(2);
+    h.state_mut().start_show(0, false);
+    h.run_steps(4);
+    assert!(h.ctx.memory(|m| m.focused()).is_none(), "the show took the keyboard");
+    for pressed in [true, false] {
+        h.event(egui::Event::Key { key: egui::Key::ArrowRight, physical_key: None, pressed, repeat: false, modifiers: Default::default() });
+    }
+    h.run_steps(4);
+    assert_eq!(h.state().show.as_ref().map(|s| s.state.slide), Some(1), "→ moved on without a click first");
+}
+
+#[test]
+fn start_automatically_is_kept_in_the_file() {
+    let (mut app, id) = with_video();
+    app.run("selection.select", json!({"ids": [id.0]})).unwrap();
+    app.run("media.options", json!({"autoplay": true})).unwrap();
+    let data = app.session.execute("file.saveBytes", &json!({"format": "pptx"})).unwrap()["data"].clone();
+    app.session.execute("file.openBytes", &json!({"name": "v.pptx", "data": data})).unwrap();
+    let doc = app.session.active().unwrap().doc.clone();
+    let a = &doc.slides[0].animations;
+    assert!(
+        a.iter().any(|x| x.class == deckcraft_model::anim::AnimClass::Media && x.start != deckcraft_model::anim::AnimStart::OnClick),
+        "the automatic play step came back: {a:?}"
+    );
+    let vid = doc.slides[0].shapes.iter().find(|s| matches!(s.kind, deckcraft_model::ShapeKind::Media(_))).unwrap().id;
+    app.start_show(0, false);
+    let h = harness(app);
+    assert!(h.state().media.status(vid).is_some(), "it plays as the slide shows");
+}
+
 #[test]
 fn back_leaves_a_slide_whose_first_animation_is_with_previous() {
     // #844: Back on such a slide undid its first step, and the next frame played that step

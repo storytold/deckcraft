@@ -3,10 +3,10 @@
 
 use std::collections::HashSet;
 
-use deckcraft_engine::Target;
+use deckcraft_engine::{Mods, Target};
 use deckcraft_model::SlideId;
 use egui::{Align2, Color32, CornerRadius, Rect, Role, Sense, Stroke, Ui, WidgetInfo, pos2, vec2};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::SlideApp;
 use crate::theme::{self, Tokens};
@@ -128,7 +128,8 @@ fn section_starts(doc: &deckcraft_model::Presentation) -> std::collections::Hash
 }
 
 /// Render the scrollable thumbnail list, scrolling the current slide into view when it changes.
-fn list(app: &mut SlideApp, ui: &mut Ui) {
+pub(crate) fn list(app: &mut SlideApp, ui: &mut Ui) {
+    app.thumbs_rect = Some(ui.clip_rect());
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
@@ -152,7 +153,18 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     let mut rects = vec![];
     let section_starts = section_starts(&doc);
     let mut need_more = false;
+    // The canvas shell lists a slide and its states (slides after it entering with Morph) once.
+    let grouped = groups_states(app);
+    // When the current slide changes (arrow keys, the canvas, a command), bring it into view.
+    let seen_id = ui.scope_id().with("thumbs_current");
+    let now = (app.session.active().map(|d| d.uid).unwrap_or(0), cur);
+    let scroll_to_current = ui.data_mut(|d| d.get_temp::<(u64, usize)>(seen_id)) != Some(now);
+    ui.data_mut(|d| d.insert_temp(seen_id, now));
     for i in 0..doc.slides.len() {
+        if grouped && crate::states::is_state_step(&doc, i) {
+            continue;
+        }
+        let run = if grouped { crate::states::run_of(&doc, i) } else { i..i + 1 };
         if let Some(si) = section_starts.get(&i)
             && let Some(sec) = doc.sections.get(*si)
         {
@@ -197,9 +209,11 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
         let img = crate::textures::device_pixel_rect(Rect::from_min_size(pos2(row.min.x + 30.0, row.min.y + 6.0), vec2(tw, th)), ppp);
         rects.push((i, row));
+        if run.contains(&cur) && scroll_to_current {
+            ui.scroll_to_rect(row, None);
+        }
         let p = ui.painter();
-        let id = doc.slides.get(i).map(|s| s.id);
-        let selected = i == cur || id.is_some_and(|id| multi.contains(&id));
+        let selected = run.clone().any(|k| k == cur || doc.slides.get(k).is_some_and(|s| multi.contains(&s.id)));
         let hidden = doc.slides.get(i).is_some_and(|s| s.hidden);
         p.text(
             pos2(row.min.x + 14.0, img.min.y + 2.0),
@@ -214,6 +228,11 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         let has_anim = doc.slides.get(i).is_some_and(|s| !s.animations.is_empty() || s.transition.as_ref().is_some_and(|tr| tr.kind != "none"));
         if has_anim {
             p.text(pos2(row.min.x + 14.0, img.min.y + 20.0), Align2::CENTER_TOP, "★", theme::font(10.0), t.text_faint);
+        }
+        // While the list has the keyboard its selected rows are tinted, so it's clear where ⌘D and
+        // Delete go.
+        if selected && app.slides_focus {
+            p.rect_filled(row.shrink2(vec2(4.0, 0.0)), CornerRadius::same(6), t.accent.gamma_multiply(0.14));
         }
         let wpx = (img.width() * ppp).round() as u32;
         // Only rows in view (plus a little margin) ask for a thumbnail: with every row asking, a
@@ -234,8 +253,22 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                 need_more |= near;
             }
         }
+        if run.len() > 1 {
+            // "3 states" in a pill on the thumbnail's bottom right.
+            let text = format!("{} states", run.len());
+            let galley = ui.painter().layout_no_wrap(text, theme::bold(10.5), Color32::WHITE);
+            let pill = Rect::from_min_size(
+                pos2(img.max.x - galley.size().x - 14.0, img.max.y - galley.size().y - 10.0),
+                vec2(galley.size().x + 10.0, galley.size().y + 4.0),
+            );
+            ui.painter().rect_filled(pill, CornerRadius::same(8), Color32::from_black_alpha(150));
+            ui.painter().galley(pill.min + vec2(5.0, 2.0), galley, Color32::WHITE);
+        }
+        let p = ui.painter();
         if selected {
-            p.rect_stroke(img.expand(2.0), CornerRadius::same(4), Stroke::new(3.0, t.accent), egui::StrokeKind::Outside);
+            // Accent while the list has the keyboard, grey when it doesn't (as macOS lists do).
+            let c = if app.slides_focus { t.accent } else { t.text_faint };
+            p.rect_stroke(img.expand(2.0), CornerRadius::same(4), Stroke::new(3.0, c), egui::StrokeKind::Outside);
         } else {
             p.rect_stroke(
                 img,
@@ -244,25 +277,7 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                 egui::StrokeKind::Outside,
             );
         }
-        if resp.clicked() {
-            let (shift, cmd) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
-            if let Some(id) = id {
-                if shift {
-                    // Shift: the slides between the current one and this one. Ctrl+Shift keeps what is selected.
-                    let _ = app.run("slide.selectRange", json!({"to": i, "add": cmd}));
-                } else if cmd {
-                    let _ = app.run("slide.selectSlides", json!({"ids": [id.0], "add": true}));
-                } else {
-                    let _ = app.run("slide.go", json!({"index": i}));
-                }
-            }
-        }
-        if resp.double_clicked() {
-            app.start_show(i, false);
-        }
-        if resp.drag_started() {
-            start_slide_drag(app, i);
-        }
+        thumb_input(app, ui, &resp, &doc, i, &run, cur, grouped);
         resp.context_menu(|ui| slide_menu(app, ui, i));
     }
     if need_more {
@@ -272,8 +287,8 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     if slide_changed && let Some((_, row_rect)) = rects.iter().find(|(i, _)| *i == cur) {
         ui.scroll_to_rect(*row_rect, None);
     }
-    // Drag reorder: insertion line.
-    if slide_drag_live(app, drag_button(ui)) {
+    // Drag reorder: insertion line (for a drag started here, not in the grid).
+    if !app.thumb_drag_in_grid && slide_drag_live(app, drag_button(ui)) {
         if let Some(pp) = ui.input(|i| i.pointer.interact_pos()) {
             let mut to = doc.slides.len();
             for (i, r) in &rects {
@@ -286,7 +301,8 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                 d.slot = to;
             }
             let y = rects.iter().find(|(i, _)| *i == to).map(|(_, r)| r.min.y + 2.0).or_else(|| rects.last().map(|(_, r)| r.max.y)).unwrap_or(0.0);
-            ui.painter().line_segment([pos2(26.0, y), pos2(width, y)], Stroke::new(2.0, t.accent));
+            let x0 = ui.min_rect().left() + 26.0;
+            crate::widgets::insertion_line(ui.painter(), x0, ui.min_rect().left() + width - 4.0, y, t.accent);
         }
         if ui.input(|i| i.pointer.any_released()) {
             drop_slide_drag(app);
@@ -302,6 +318,274 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
+/// A thumbnail's clicks and drag: the selection (a slide with its states in the canvas list),
+/// the keyboard for the list, the show on a double-click, and a slide drag.
+#[allow(clippy::too_many_arguments)]
+fn thumb_input(
+    app: &mut SlideApp,
+    ui: &Ui,
+    resp: &egui::Response,
+    doc: &deckcraft_model::Presentation,
+    i: usize,
+    run: &std::ops::Range<usize>,
+    cur: usize,
+    grouped: bool,
+) {
+    let id = doc.slides.get(i).map(|s| s.id);
+    if resp.clicked() || resp.drag_started() {
+        app.slides_focus = true;
+        app.states_focus = false;
+    }
+    if resp.clicked() {
+        let (shift, cmd) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
+        if !shift {
+            app.slide_anchor = Some(i);
+        }
+        app.slide_cursor = Some(i);
+        if id.is_some() {
+            let ids_in = |r: std::ops::Range<usize>| -> Vec<u32> { doc.slides.get(r).unwrap_or(&[]).iter().map(|s| s.id.0).collect() };
+            if shift && grouped {
+                // A slide's states go with it.
+                let (a, b) = (cur.min(i), cur.max(i));
+                let ids = ids_in(crate::states::run_of(doc, a).start..crate::states::run_of(doc, b).end);
+                let _ = app.run("slide.selectSlides", json!({"ids": ids}));
+                let _ = app.run("slide.go", json!({"index": i}));
+                let _ = app.run("slide.selectSlides", json!({"ids": ids}));
+            } else if shift {
+                // Shift: the slides between the current one and this one. Ctrl+Shift keeps what is selected.
+                let _ = app.run("slide.selectRange", json!({"to": i, "add": cmd}));
+            } else if cmd {
+                let _ = app.run("slide.selectSlides", json!({"ids": ids_in(run.clone()), "add": true}));
+            } else {
+                // A run's entry keeps the state being edited current.
+                let to = if run.contains(&cur) { cur } else { i };
+                let _ = app.run("slide.go", json!({"index": to}));
+            }
+        }
+    }
+    if resp.double_clicked() {
+        app.start_show(i, false);
+    }
+    if resp.drag_started() {
+        start_slide_drag(app, i);
+        app.thumb_drag_in_grid = false;
+        // A slide drags with its states.
+        if grouped
+            && run.len() > 1
+            && let Some(d) = app.thumb_drag.as_mut()
+        {
+            let have: HashSet<SlideId> = d.ids.iter().copied().collect();
+            let mut ids: Vec<SlideId> = Vec::new();
+            for (k, s) in doc.slides.iter().enumerate() {
+                if have.contains(&s.id) || run.contains(&k) {
+                    ids.push(s.id);
+                }
+            }
+            d.ids = ids;
+        }
+    }
+}
+
+/// Does the slide list show a slide's states as one entry (the canvas shell's list; the grid
+/// shows every slide)?
+pub fn groups_states(app: &SlideApp) -> bool {
+    app.ui.shell == crate::Shell::Canvas && app.ui.view != crate::ViewMode::Sorter
+}
+
+/// The `slide.move` steps that move the slides in `block` to just before slide `to` (`to` past
+/// the last slide: to the end), keeping their order. Nothing when `to` is inside the block or
+/// right after it.
+pub fn block_moves(block: std::ops::Range<usize>, to: usize) -> Vec<(usize, usize)> {
+    let n = block.len();
+    if to <= block.start {
+        (0..n).map(|k| (block.start + k, to + k)).filter(|(f, t)| f != t).collect()
+    } else if to > block.end {
+        (0..n).map(|_| (block.start, to - 1)).collect()
+    } else {
+        vec![]
+    }
+}
+
+/// Grouped list: widen the slide selection to whole runs of states (the current slide stays
+/// current), so Delete, Duplicate, Cut and Copy take a slide's states with it.
+pub fn select_runs(app: &mut SlideApp) {
+    if !groups_states(app) {
+        return;
+    }
+    let Some(st) = app.session.active() else { return };
+    let doc = &st.doc;
+    let cur = st.selection.slide;
+    let mut picked: Vec<usize> = st.selection.slides.iter().filter_map(|id| doc.slide_index(*id)).collect();
+    picked.push(cur);
+    let mut all: Vec<usize> = picked.iter().flat_map(|i| crate::states::run_of(doc, *i)).collect();
+    all.sort_unstable();
+    all.dedup();
+    if all.len() <= picked.len() && all.len() <= 1 {
+        return;
+    }
+    let mut ids: Vec<u32> = all.iter().filter(|i| **i != cur).filter_map(|i| doc.slides.get(*i)).map(|s| s.id.0).collect();
+    ids.extend(doc.slides.get(cur).map(|s| s.id.0));
+    let _ = app.run("slide.selectSlides", json!({"ids": ids}));
+}
+
+/// Keys for the slide list while it has the keyboard (`SlideApp::slides_focus`), as in Keynote
+/// and PowerPoint: ⌘D duplicates the selected slides, Delete removes them, ⇧⌘H hides or shows
+/// them (⌘H is the Mac's Hide app), ⌘↑ / ⌘↓ (or ⌘← / ⌘→) move them one place and ⇧⌘↑ / ⇧⌘↓ to
+/// the start or end, ↑ / ↓ go to the previous or next slide and ⇧↑ / ⇧↓ extend the selection,
+/// ⌘A selects every slide. True when consumed.
+pub fn slide_key(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
+    use egui::Key::*;
+    let Some(st) = app.session.active() else { return false };
+    let n = st.doc.slides.len();
+    let cur = st.selection.slide;
+    let ids: Vec<u32> = st.doc.slides.iter().map(|s| s.id.0).collect();
+    let mut selected: Vec<usize> = st.selection.slides.iter().filter_map(|id| st.doc.slide_index(*id)).collect();
+    if selected.is_empty() {
+        selected.push(cur);
+    }
+    selected.sort_unstable();
+    let run = |app: &mut SlideApp, id: &str, p: Value| {
+        if let Err(e) = app.run(id, p) {
+            app.set_status(e);
+        }
+    };
+    let back = matches!(key, ArrowUp | ArrowLeft);
+    let forth = matches!(key, ArrowDown | ArrowRight);
+    if groups_states(app) && grouped_key(app, m, back, forth) {
+        return true;
+    }
+    match (key, m.cmd, m.shift, m.alt) {
+        (D, true, false, false) => {
+            select_runs(app);
+            run(app, "slide.duplicate", json!({}));
+        }
+        (Delete | Backspace, false, false, false) => {
+            select_runs(app);
+            run(app, "slide.delete", json!({}));
+        }
+        (H, true, true, false) => run(app, "slide.hide", json!({})),
+        (A, true, false, false) => run(app, "slide.selectSlides", json!({"ids": ids})),
+        (_, true, shift, false) if back || forth => {
+            let order = moves(&selected, n, forth, shift);
+            if order.is_empty() {
+                return true;
+            }
+            let keep: Vec<u32> = selected.iter().filter_map(|i| ids.get(*i).copied()).collect();
+            let cmds = order.into_iter().map(|(from, to)| ("slide.move", json!({"from": from, "to": to}))).collect();
+            app.run_as_one(if keep.len() > 1 { "Move Slides" } else { "Move Slide" }, cmds);
+            // The moved slides stay selected, the current one last.
+            let current = st_id(app, cur, &ids);
+            let mut sel: Vec<u32> = keep.into_iter().filter(|id| Some(*id) != current).collect();
+            sel.extend(current);
+            run(app, "slide.selectSlides", json!({"ids": sel}));
+        }
+        (_, false, true, false) if back || forth => {
+            let cursor = app.slide_cursor.filter(|c| *c < n).unwrap_or(cur);
+            let anchor = app.slide_anchor.filter(|a| *a < n).unwrap_or(cursor);
+            let to = if back { cursor.saturating_sub(1) } else { (cursor + 1).min(n.saturating_sub(1)) };
+            let (a, b) = (anchor.min(to), anchor.max(to));
+            // The cursor's slide last: it becomes the current one.
+            let mut sel: Vec<u32> = (a..=b).filter(|i| *i != to).filter_map(|i| ids.get(i).copied()).collect();
+            sel.extend(ids.get(to));
+            run(app, "slide.selectSlides", json!({"ids": sel}));
+            app.slide_anchor = Some(anchor);
+            app.slide_cursor = Some(to);
+        }
+        (_, false, false, false) if back || forth || matches!(key, Home | End) => {
+            let to = match key {
+                Home => 0,
+                End => n.saturating_sub(1),
+                _ if back => cur.saturating_sub(1),
+                _ => (cur + 1).min(n.saturating_sub(1)),
+            };
+            run(app, "slide.go", json!({"index": to}));
+            app.slide_anchor = Some(to);
+            app.slide_cursor = Some(to);
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// Keys that work on whole runs of states in the grouped list: ↑ / ↓ go to the previous or next
+/// entry, ⌘↑ / ⌘↓ move the current one past its neighbour (⇧⌘ to the start or end).
+fn grouped_key(app: &mut SlideApp, m: Mods, back: bool, forth: bool) -> bool {
+    use crate::states::run_of;
+    let Some(st) = app.session.active() else { return false };
+    let doc = st.doc.clone();
+    let n = doc.slides.len();
+    let cur = st.selection.slide;
+    let here = run_of(&doc, cur);
+    if !(back || forth) || m.alt || n == 0 {
+        return false;
+    }
+    match (m.cmd, m.shift) {
+        (false, false) => {
+            let to = if back { run_of(&doc, here.start.saturating_sub(1)).start } else { here.end.min(n - 1) };
+            let to = if forth && here.end >= n { here.start } else { to };
+            let _ = app.run("slide.go", json!({"index": to}));
+            app.slide_anchor = Some(to);
+            app.slide_cursor = Some(to);
+            true
+        }
+        (true, shift) => {
+            let to = match (back, shift) {
+                (true, true) => 0,
+                (true, false) if here.start > 0 => run_of(&doc, here.start - 1).start,
+                (false, true) => n,
+                (false, false) if here.end < n => run_of(&doc, here.end).end,
+                _ => return true,
+            };
+            let cmds: Vec<(&str, Value)> =
+                block_moves(here.clone(), to).into_iter().map(|(f, t)| ("slide.move", json!({"from": f, "to": t}))).collect();
+            if cmds.is_empty() {
+                return true;
+            }
+            let id = doc.slides.get(cur).map(|s| s.id.0);
+            app.run_as_one(if here.len() > 1 { "Move Slides" } else { "Move Slide" }, cmds);
+            if let Some(id) = id {
+                let _ = app.run("slide.go", json!({"id": id}));
+            }
+            true
+        }
+        // ⇧↑ / ⇧↓ extend the selection as in the plain list.
+        (false, true) => false,
+    }
+}
+
+/// The current slide's id after slides moved (it moved with them).
+fn st_id(app: &SlideApp, cur: usize, before: &[u32]) -> Option<u32> {
+    let id = before.get(cur).copied()?;
+    app.session.active()?.doc.slides.iter().any(|s| s.id.0 == id).then_some(id)
+}
+
+/// The `slide.move` steps that move the `selected` slides (sorted indices) one place back or
+/// forth, or (`to_end`) to the start or end, keeping their order. Each step's indices hold after
+/// the steps before it.
+pub fn moves(selected: &[usize], n: usize, forth: bool, to_end: bool) -> Vec<(usize, usize)> {
+    let mut out = vec![];
+    if !forth {
+        let mut limit = 0;
+        for (k, &i) in selected.iter().enumerate() {
+            let to = if to_end { k } else { i.saturating_sub(1).max(limit) };
+            if to != i {
+                out.push((i, to));
+            }
+            limit = to + 1;
+        }
+    } else {
+        let mut limit = n.saturating_sub(1);
+        for (k, &i) in selected.iter().rev().enumerate() {
+            let to = if to_end { n.saturating_sub(1 + k) } else { (i + 1).min(limit) };
+            if to != i {
+                out.push((i, to));
+            }
+            limit = to.saturating_sub(1);
+        }
+    }
+    out
+}
+
 pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
     if app.session.active().is_some_and(|d| d.selection.slide != i && !d.selection.slides.iter().any(|id| d.doc.slide_index(*id) == Some(i))) {
         let _ = app.run("slide.go", json!({"index": i}));
@@ -312,6 +596,9 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         ("Paste", "edit.paste", json!({"scope": "slides"})),
     ] {
         if ui.button(l).clicked() {
+            if id != "edit.paste" {
+                select_runs(app);
+            }
             let _ = app.run(id, p);
             ui.close();
         }
@@ -322,10 +609,12 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         ui.close();
     }
     if ui.button("Duplicate Slide").clicked() {
+        select_runs(app);
         let _ = app.run("slide.duplicate", json!({}));
         ui.close();
     }
     if ui.button("Delete Slide").clicked() {
+        select_runs(app);
         let _ = app.run("slide.delete", json!({}));
         ui.close();
     }
@@ -348,7 +637,9 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         }
     });
     if ui.button("Reset Slide").clicked() {
-        let _ = app.run("slide.reset", json!({}));
+        // The canvas layout keeps the slide's layers (no empty placeholders added).
+        let adopt = app.ui.shell == crate::Shell::Canvas;
+        let _ = app.run("slide.reset", json!({"adopt": adopt}));
         ui.close();
     }
     if ui.button("Format Background…").clicked() {
@@ -362,7 +653,7 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
     }
 }
 
-fn master_list(app: &mut SlideApp, ui: &mut Ui) {
+pub(crate) fn master_list(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
@@ -412,13 +703,37 @@ fn master_list(app: &mut SlideApp, ui: &mut Ui) {
                     Some(l) => m.layouts.get(l).map(|x| x.name.clone()).unwrap_or_default(),
                     None => format!("{} Slide Master", m.name),
                 };
-                let resp = resp.on_hover_text(name);
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &name));
+                let resp = resp.on_hover_text(&name);
+                let pick = |app: &mut SlideApp| match li {
+                    Some(l) => {
+                        let _ = app.run("view.slideMaster", json!({"master": mi, "layout": l}));
+                    }
+                    // `layout: null` picks the master itself (no layout opens the current slide's).
+                    None => {
+                        let _ = app.run("view.slideMaster", json!({"master": mi, "layout": null}));
+                    }
+                };
                 if resp.clicked() {
-                    let p = match li {
-                        Some(l) => json!({"master": mi, "layout": l}),
-                        None => json!({"master": mi}),
-                    };
-                    let _ = app.run("view.slideMaster", p);
+                    pick(app);
+                }
+                if li.is_some() {
+                    resp.context_menu(|ui| {
+                        pick(app);
+                        if ui.button("Rename Layout…").clicked() {
+                            app.dialog = Some(crate::dialogs::Dialog::new("renameLayout"));
+                            ui.close();
+                        }
+                        if ui.button("New Layout").clicked() {
+                            let _ = app.run("master.insertLayout", json!({}));
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Delete Layout").clicked() {
+                            let _ = app.run("master.deleteLayout", json!({}));
+                            ui.close();
+                        }
+                    });
                 }
             }
         }

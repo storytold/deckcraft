@@ -6,7 +6,7 @@ use deckcraft_model::text::RunKind;
 use deckcraft_model::{Paragraph, Shape, ShapeKind, Slide, TextBody};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, bool_or, cmd, has_doc, str_param};
+use super::{CommandSpec, bad, bool_or, cmd, has_doc, id_param, ok, str_param, usize_param};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -28,6 +28,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{text, with, matchCase?, wholeWords?, at?: a text.find match (replace just that one; default: replace all)} → {replaced}",
             has_doc,
             replace
+        ),
+        cmd!(
+            noundo "edit.showMatch",
+            "Show Find Result",
+            [],
+            None,
+            "{slide, shape?: id (null = notes), cell?: [row, col], para, start, end} (a text.find match): go to its slide and select those characters in the shape's text",
+            has_doc,
+            show_match
         ),
     ]
 }
@@ -158,6 +167,24 @@ fn find(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(Value::Array(out))
 }
 
+/// Go to a `text.find` match: its slide, and the matched characters selected as text being
+/// edited (in a table, in its cell). A match in the notes only goes to the slide.
+fn show_match(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "edit.showMatch";
+    let slide = usize_param(p, "slide").ok_or_else(|| bad(CMD, "missing `slide`"))?;
+    s.execute("slide.go", &json!({"index": slide}))?;
+    let Some(id) = id_param(p, "shape", CMD)? else { return ok() };
+    let para = usize_param(p, "para").unwrap_or(0);
+    let (start, end) = (usize_param(p, "start").unwrap_or(0), usize_param(p, "end").unwrap_or(0));
+    let mut edit = json!({"id": id, "at": [para, start]});
+    if let Some(cell) = p.get("cell").filter(|c| c.is_array()) {
+        edit["cell"] = cell.clone();
+    }
+    s.execute("text.edit", &edit)?;
+    s.execute("text.select", &json!({"anchor": [para, start], "caret": [para, end]}))?;
+    ok()
+}
+
 fn replace(s: &mut Session, p: &Value) -> Result<Value> {
     let o = Opts::from(p, "text.replace")?;
     let with = str_param(p, "with").unwrap_or("").to_string();
@@ -212,6 +239,23 @@ mod tests {
 
     fn opts(t: &str, case: bool, whole: bool) -> Opts {
         Opts { pat: t.chars().collect(), case, whole }
+    }
+
+    #[test]
+    fn show_match_selects_a_found_word_on_its_slide() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect": [40, 40, 400, 80], "text": "Our plan\nThe plan works"})).unwrap();
+        s.execute("text.exit", &json!({})).unwrap();
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        let found = s.execute("text.find", &json!({"text": "plan"})).unwrap();
+        let list = found.as_array().unwrap();
+        assert_eq!(list.len(), 2);
+        s.execute("edit.showMatch", &list[1]).unwrap();
+        let st = s.doc().unwrap();
+        assert_eq!(st.selection.slide, 1);
+        let t = st.selection.text.as_ref().unwrap();
+        assert_eq!((t.anchor, t.caret), ((1, 4), (1, 8)), "the second paragraph's \"plan\"");
     }
 
     #[test]

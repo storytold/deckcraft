@@ -74,10 +74,22 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     show.observe_visible_frame(now, web_time::Instant::now());
+    // The show has the keyboard: a control the editor left focused (a slide or layer row, a
+    // field) would take the arrow keys to move focus, and → wouldn't reach the slides until the
+    // show was clicked.
+    ctx.memory_mut(|m| {
+        if let Some(id) = m.focused() {
+            m.surrender_focus(id);
+        }
+    });
+    // The click or key that started a preview in the canvas is still in this frame's input.
+    let fresh = !show.started && show.inline;
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
-    let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
+    let keep = if fresh { true } else { keyboard(&ctx, &mut show, &doc, now, false) };
+    let mut out = Out { keep, actions: vec![] };
     if show.presenter
         && !show.reading
+        && !show.inline
         && let Some(host) = app.services.presenter.as_mut()
     {
         if show.remote_opened && show.presenter_grid && !host.is_open() {
@@ -117,6 +129,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         }
     }
     let (clicked, secondary, moved) = ctx.input(|i| (i.pointer.primary_clicked(), i.pointer.secondary_clicked(), i.pointer.delta().length() > 0.0));
+    let (clicked, secondary) = if fresh { (false, false) } else { (clicked, secondary) };
     if moved {
         show.last_move = now;
     }
@@ -220,7 +233,7 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.show_start = now;
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
-        if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
+        if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) && !show.inline {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
         }
         show.after_enter(doc, now);
@@ -672,7 +685,11 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
         let tex = frame_texture(show, f, &sl);
         prefetch_next(app, show, f, &sl);
         if !draw_transition(show, f, &sl, painter, &tex) {
-            show.trans = None;
+            // A preview holds each slide (a state) a moment after its transition has played, not
+            // from when it began: else the last state would end the preview as its Morph lands.
+            if show.trans.take().is_some() && show.preview_only {
+                show.step_end = f.now;
+            }
             let (framed, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
             draw_overlay(show, f, &sl, painter, &framed, full_screen);
             draw_media_controls(app, ui, show, f, &sl, painter);
@@ -843,7 +860,7 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
     // Presenter view in a second window.
-    if out.keep && show.presenter && !show.reading && !show.remote_opened {
+    if out.keep && show.presenter && !show.reading && !show.inline && !show.remote_opened {
         presenter_window(ctx, show, doc, now, &mut out.keep);
     }
 }
@@ -857,7 +874,7 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             host.close();
         }
         app.media.stop_owned(crate::media::Owner::Show);
-        if !show.reading {
+        if !show.reading && !show.inline {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
         if show.rehearse {
@@ -870,7 +887,11 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             }
             app.set_status("Slide timings recorded.");
         }
-        let last = show.state.slide;
-        let _ = app.run("slide.go", json!({"index": last}));
+        // A full show leaves you on the slide it ended on; a preview in the canvas gives editing
+        // back where it was (the state it started from).
+        if !show.inline {
+            let last = show.state.slide;
+            let _ = app.run("slide.go", json!({"index": last}));
+        }
     }
 }

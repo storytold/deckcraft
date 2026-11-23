@@ -187,18 +187,18 @@ fn opening_a_file_with_missing_fonts_shows_a_toast_once() {
         SlideApp::new(Session::with_new(), Services::default()),
     );
     harness.run_steps(2);
-    assert!(harness.state().toast.is_none(), "a new presentation has nothing to say");
+    assert!(harness.state().toasts.is_empty(), "a new presentation has nothing to say");
     harness.state_mut().session.execute("file.openBytes", &json!({"name": "a.pptx", "data": data})).unwrap();
     harness.run_steps(2);
-    let text = harness.state().toast.as_ref().map(|t| t.text.clone()).unwrap_or_default();
+    let text = harness.state().toasts.first().map(|t| t.text.clone()).unwrap_or_default();
     assert!(text.starts_with("Qqq Nonexistent Sans isn't installed"), "{text}");
     assert!(harness.query_by_label_contains("Qqq Nonexistent Sans isn't installed").is_some());
     // Closed, it stays closed for that document.
     harness.get_by_label("Close").click();
     harness.run_steps(2);
-    assert!(harness.state().toast.is_none());
+    assert!(harness.state().toasts.is_empty());
     harness.run_steps(2);
-    assert!(harness.state().toast.is_none());
+    assert!(harness.state().toasts.is_empty());
 }
 
 /// #115: Change Picture replaced nothing — it inserted a second picture.
@@ -1016,7 +1016,7 @@ fn missing_recent_is_marked_and_its_error_shows() {
         harness.run_steps(1);
     }
     harness.run_steps(2);
-    assert!(harness.state().toast.is_some(), "the open error was raised");
+    assert!(!harness.state().toasts.is_empty(), "the open error was raised");
     assert!(harness.get_all_by_label_contains("missing.deckcraft").count() >= 2, "the open error is drawn on the page, next to the entry");
 }
 

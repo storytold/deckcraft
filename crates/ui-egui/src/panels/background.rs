@@ -1,6 +1,6 @@
 use super::{Fill, SlideApp, Ui, Value, cref_param, json, run, scheme, theme, vec2, widgets};
 
-pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
+pub(crate) fn background(app: &mut SlideApp, ui: &mut Ui) {
     let sc = scheme(app);
     let bg = app.session.active().and_then(|d| d.current_slide().and_then(|s| s.background.clone()));
     let fill = match &bg {

@@ -53,6 +53,17 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             app.close_presentation();
             return true;
         }
+        // ⌃Tab / ⌃⇧Tab: the next or previous presentation tab (⌘Tab is the Mac's app switcher).
+        (Tab, true, shift, false) => {
+            let n = app.session.documents().len();
+            if n < 2 {
+                return false;
+            }
+            let i = app.session.active_index().unwrap_or(0);
+            let to = if shift { (i + n - 1) % n } else { (i + 1) % n };
+            let _ = app.run("window.next", json!({"index": to}));
+            return true;
+        }
         (O, true, false, false) => "app.openDialog",
         (V, true, false, true) if app.session.active().is_some() => {
             app.dialog = Some(crate::dialogs::Dialog::new("pasteSpecial"));
@@ -60,6 +71,12 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
         }
         (P, true, true, false) => "app.palette",
         (Comma, true, false, false) => "app.preferences",
+        // As in canvas editors: ⌘. (or ⌘\) hides both side panels, ⌥⌘. the left one.
+        (Period | Backslash, true, false, false) if app.ui.shell == crate::Shell::Canvas => "view.panels",
+        (Period, true, false, true) if app.ui.shell == crate::Shell::Canvas => "view.leftPanel",
+        (L, false, false, true) if app.ui.shell == crate::Shell::Canvas && app.session.active().is_some_and(|d| d.selection.text.is_none()) => {
+            "view.collapseLayers"
+        }
         (Equals | Plus, true, false, false) => "view.zoomIn",
         (Minus, true, false, false) => "view.zoomOut",
         (Num0, true, false, false) => "view.fit",
@@ -68,6 +85,11 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
         (F9, false, false, true) => "view.guides",
         (K, true, false, false) => {
             app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
+            return true;
+        }
+        // ⌘F: in the canvas layout, the find bar over the slide; in the ribbon, Find and Replace.
+        (F, true, false, false) if app.ui.shell == crate::Shell::Canvas => {
+            crate::find::open(app);
             return true;
         }
         (F, true, false, false) => "app.find",
@@ -111,6 +133,60 @@ fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, S
     items.sort_by_key(|(_, l, _)| !l.to_lowercase().starts_with(q));
     items.truncate(60);
     items
+}
+
+/// Mac-style object shortcuts, as in Keynote and canvas editors, beside PowerPoint's (⌥⌘G, ⇧⌘],
+/// ⌘D… stay bound by the commands themselves): ⌘G groups, ⇧⌘G ungroups, ⌥⌘] / ⌥⌘[ bring to
+/// front / send to back, ⇧⌘L locks or unlocks, ⇧⌘H hides or shows, ⇧⌘R pastes to replace, ⇧⌘Z
+/// redoes. True when consumed.
+pub fn mac_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
+    use egui::Key::*;
+    if !m.cmd {
+        return false;
+    }
+    if (key, m.shift, m.alt) == (Z, true, false) {
+        let _ = app.run("edit.redo", json!({}));
+        return true;
+    }
+    let Some(st) = app.session.active() else { return false };
+    let canvas = app.ui.shell == crate::Shell::Canvas;
+    // Canvas layout, as in canvas editors: ⇧⌘L unlocks every layer here (locked layers can't be
+    // clicked there, so it works with nothing selected).
+    if canvas && st.selection.text.is_none() && (key, m.shift, m.alt) == (L, true, false) {
+        let mut ids = vec![];
+        deckcraft_model::walk(st.shapes(), &mut |sh, _| {
+            if sh.locked {
+                ids.push(sh.id.0);
+            }
+        });
+        if !ids.is_empty() {
+            let _ = app.run("shape.lock", json!({"ids": ids, "locked": false}));
+        }
+        return true;
+    }
+    if st.selection.text.is_some() || st.selection.shapes.is_empty() {
+        return false;
+    }
+    let shapes = st.selected_shapes();
+    // Lock and hide act on the whole selection: any unlocked (shown) one makes them all locked (hidden).
+    let any_unlocked = shapes.iter().any(|s| !s.locked);
+    let any_shown = shapes.iter().any(|s| !s.hidden);
+    let (id, p) = match (key, m.shift, m.alt) {
+        (G, false, false) => ("arrange.group", json!({})),
+        (G, true, false) => ("arrange.ungroup", json!({})),
+        (CloseBracket | CloseCurlyBracket, false, true) => ("arrange.bringToFront", json!({})),
+        (OpenBracket | OpenCurlyBracket, false, true) => ("arrange.sendToBack", json!({})),
+        // ⌘L toggles the lock in the canvas layout (the ribbon keeps ⌘L for Align Left).
+        (L, false, false) if canvas => ("shape.lock", json!({"locked": any_unlocked})),
+        (L, true, false) => ("shape.lock", json!({"locked": any_unlocked})),
+        (H, true, false) => ("shape.visible", json!({"visible": !any_shown})),
+        (R, true, false) => ("edit.pasteToReplace", json!({})),
+        _ => return false,
+    };
+    if let Err(e) = app.run(id, p) {
+        app.set_status(e);
+    }
+    true
 }
 
 /// ⇧⌘P: search every command by name and run it.
@@ -204,6 +280,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Paste", "edit.paste"),
                 ("Paste and Match Formatting", "edit.pasteText"),
                 ("Paste Special…", "app.pasteSpecial"),
+                ("Paste to Replace", "edit.pasteToReplace"),
                 ("-", ""),
                 ("Select All", "edit.selectAll"),
                 ("Duplicate", "edit.duplicate"),
@@ -226,6 +303,10 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Slide Master", "view.slideMaster"),
                 ("Handout Master", "view.handoutMaster"),
                 ("Notes Master", "view.notesMaster"),
+                ("-", ""),
+                ("Show/Hide Side Panels", "view.panels"),
+                ("Show/Hide Left Panel", "view.leftPanel"),
+                ("Collapse Layers", "view.collapseLayers"),
                 ("-", ""),
                 ("Ruler", "view.ruler"),
                 ("Gridlines", "view.gridlines"),

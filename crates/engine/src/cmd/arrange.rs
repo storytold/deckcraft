@@ -341,6 +341,28 @@ pub fn child_to_parent(group: &Xfrm, ch: &Xfrm, c: &Xfrm) -> Xfrm {
     Xfrm { x: center.x - w / 2.0, y: center.y - h / 2.0, w, h, rot: ((rot % 360.0) + 360.0) % 360.0, flip_h: fh, flip_v: fv }
 }
 
+/// The inverse of [`child_to_parent`]: a box on the slide in the group's child space.
+pub(crate) fn parent_to_child(group: &Xfrm, ch: &Xfrm, x: &Xfrm) -> Xfrm {
+    let sx = if ch.w.abs() > 1e-9 { group.w / ch.w } else { 1.0 };
+    let sy = if ch.h.abs() > 1e-9 { group.h / ch.h } else { 1.0 };
+    let a = deckcraft_geom::group_child_affine(group, Rect::new(ch.x, ch.y, ch.x + ch.w, ch.y + ch.h));
+    let center = a.inverse() * Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
+    let (w, h) = (if sx.abs() > 1e-9 { x.w / sx.abs() } else { x.w }, if sy.abs() > 1e-9 { x.h / sy.abs() } else { x.h });
+    let (mut fh, mut fv) = (x.flip_h, x.flip_v);
+    let mut r = x.rot;
+    if group.flip_v {
+        fv = !fv;
+        r = -r + 2.0 * group.rot;
+    }
+    let rot = if group.flip_h {
+        fh = !fh;
+        group.rot - r
+    } else {
+        r - group.rot
+    };
+    Xfrm { x: center.x - w / 2.0, y: center.y - h / 2.0, w, h, rot: ((rot % 360.0) + 360.0) % 360.0, flip_h: fh, flip_v: fv }
+}
+
 fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     s.edit(|doc, sel| {

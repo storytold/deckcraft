@@ -48,7 +48,12 @@ fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
     });
 }
 
-pub(super) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
+pub(crate) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
+    layout_menu_ex(app, ui, cmd, json!({}));
+}
+
+/// [`layout_menu`] with more parameters for the command (the canvas panel adopts the layout).
+pub(crate) fn layout_menu_ex(app: &mut SlideApp, ui: &mut Ui, cmd: &str, extra: Value) {
     let layouts: Vec<(String, deckcraft_model::LayoutId)> = app
         .session
         .active()
@@ -86,7 +91,9 @@ pub(super) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
                 resp
             });
             if resp.inner.clicked() {
-                run(app, cmd, json!({"layout": id.0}));
+                let mut p = extra.clone();
+                p["layout"] = json!(id.0);
+                run(app, cmd, p);
                 ui.close();
             }
             if k % 4 == 3 {

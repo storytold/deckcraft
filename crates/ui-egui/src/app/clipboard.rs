@@ -58,15 +58,95 @@ fn visible_text(html: &str) -> String {
 }
 
 impl SlideApp {
-    /// Offer the copy or cut on the system clipboard.
+    /// The slide list keeps the keyboard until a click lands elsewhere, or a shape or text is
+    /// selected (from the Layers list, say).
+    pub(super) fn track_slides_focus(&mut self, ctx: &egui::Context) {
+        let elsewhere =
+            ctx.input(|i| i.pointer.primary_pressed() && i.pointer.interact_pos().is_some_and(|p| !self.thumbs_rect.is_some_and(|r| r.contains(p))));
+        let editing = self.session.active().is_none_or(|d| !d.selection.shapes.is_empty() || d.selection.text.is_some());
+        if elsewhere || editing {
+            self.slides_focus = false;
+        }
+        let off_strip =
+            ctx.input(|i| i.pointer.primary_pressed() && i.pointer.interact_pos().is_some_and(|p| !self.strip_rect.is_some_and(|r| r.contains(p))));
+        if off_strip || editing || !crate::states::strip_shown(self) {
+            self.states_focus = false;
+        }
+    }
+
+    /// Paste to Replace (⇧⌘R), as in canvas editors: what's on the clipboard (an image, else what
+    /// was copied here) takes each selected object's place: centred on it, at its place in the
+    /// stack, and the object removed. One undo step.
+    pub fn paste_to_replace(&mut self) -> Result<Value, String> {
+        let Some(st) = self.session.active() else { return Err("no presentation".into()) };
+        let top: Vec<deckcraft_model::ShapeId> = st.shapes().iter().map(|s| s.id).collect();
+        let targets: Vec<(deckcraft_model::ShapeId, deckcraft_model::Xfrm)> = st
+            .selection
+            .shapes
+            .iter()
+            .filter(|id| top.contains(id))
+            .filter_map(|id| st.shape(*id).map(|s| (*id, deckcraft_engine::cmd::xfrm_on_slide(&st.doc, &st.selection, s))))
+            .collect();
+        if targets.is_empty() {
+            return Err("Select the objects to replace".into());
+        }
+        let image = self.services.clipboard_image.as_mut().and_then(|f| f());
+        if image.is_none() && self.session.clipboard.shapes.is_empty() {
+            return Err("Copy something to paste in their place".into());
+        }
+        let before = self.session.active().map(|d| d.history.undo.len()).unwrap_or(0);
+        let mut pasted = vec![];
+        for (target, x) in targets {
+            let r = match &image {
+                Some(png) => self.run("insert.picture", json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(png)})),
+                None => self.run("edit.paste", json!({})),
+            };
+            r?;
+            let Some(st) = self.session.active() else { break };
+            let ids = st.selection.shapes.clone();
+            let boxes: Vec<deckcraft_model::Xfrm> =
+                ids.iter().filter_map(|id| st.shape(*id).map(|s| deckcraft_engine::cmd::xfrm_on_slide(&st.doc, &st.selection, s))).collect();
+            let Some(first) = boxes.first() else { continue };
+            let (mut x0, mut y0, mut x1, mut y1) = (first.x, first.y, first.x + first.w, first.y + first.h);
+            for b in &boxes {
+                (x0, y0, x1, y1) = (x0.min(b.x), y0.min(b.y), x1.max(b.x + b.w), y1.max(b.y + b.h));
+            }
+            let (dx, dy) = (x.x + x.w / 2.0 - (x0 + x1) / 2.0, x.y + x.h / 2.0 - (y0 + y1) / 2.0);
+            self.run("shape.move", json!({"ids": ids, "dx": dx, "dy": dy}))?;
+            // Into the target's place in the stack (it moves up as they go in below it).
+            let at = self.session.active().and_then(|d| d.shapes().iter().position(|s| s.id == target)).unwrap_or(0);
+            for (k, id) in ids.iter().enumerate() {
+                self.run("arrange.reorder", json!({"id": id, "index": at + k}))?;
+            }
+            self.run("edit.delete", json!({"ids": [target]}))?;
+            pasted.extend(ids);
+        }
+        let _ = self.run("selection.select", json!({"ids": pasted}));
+        if let Some(st) = self.session.active_mut() {
+            let undo = &mut st.history.undo;
+            if undo.len() > before + 1 {
+                undo.truncate(before + 1);
+            }
+            if undo.len() > before
+                && let Some(e) = undo.last_mut()
+            {
+                e.label = "Paste to Replace".into();
+            }
+        }
+        Ok(json!({"ids": pasted}))
+    }
+
+    /// Offer the copy or cut on the system clipboard (`slides`: the slide list has the keyboard,
+    /// so the selected slides).
     ///
     /// Slides go out as plain text. Text goes out as HTML plus the same plain words, so a paste
     /// back into DeckCraft still uses the internal clipboard. A textless shape leaves the
     /// invisible [`OBJECTS_MARKER`] rather than a picture: with only an image on the clipboard
     /// egui-winit drops Ctrl+V, and the shortcut could no longer paste the shape here (#182).
-    pub(super) fn publish_clipboard(&mut self, ctx: &egui::Context, cut: bool) {
+    pub(super) fn publish_clipboard(&mut self, ctx: &egui::Context, cut: bool, slides: bool) {
         let cmd = if cut { "edit.cut" } else { "edit.copy" };
-        let Ok(v) = self.session.execute(cmd, &json!({})) else { return };
+        let p = if slides { json!({"scope": "slides"}) } else { json!({}) };
+        let Ok(v) = self.session.execute(cmd, &p) else { return };
         let text = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
         let html = v.get("html").and_then(Value::as_str).unwrap_or("").to_string();
         if self.session.clipboard.slides.is_empty() && !html.is_empty() && self.services.clipboard_set_html.as_mut().is_some_and(|f| f(&html, &text))

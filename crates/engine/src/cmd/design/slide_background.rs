@@ -292,9 +292,21 @@ fn apply_picture_props(pf: &mut deckcraft_model::style::PictureFill, pp: &Value)
 
 pub(super) fn hide_bg_graphics(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|doc, sel| {
-        if let Some(sl) = doc.slides.get_mut(sel.slide) {
-            let sl = Arc::make_mut(sl);
-            sl.show_master_shapes = !bool_param(p, "hide").unwrap_or(sl.show_master_shapes);
+        match sel.target {
+            // A layout hides the master's graphics for every slide using it.
+            Target::Layout { master, layout } => {
+                if let Some(l) = doc.masters.get_mut(master).and_then(|m| Arc::make_mut(m).layouts.get_mut(layout)) {
+                    l.show_master_shapes = !bool_param(p, "hide").unwrap_or(l.show_master_shapes);
+                }
+            }
+            Target::Master { .. } => return Err(bad("design.hideBackgroundGraphics", "the master has no graphics behind it")),
+            Target::Handout | Target::NotesMaster => return Err(bad("design.hideBackgroundGraphics", "open a slide or a layout")),
+            Target::Slides => {
+                if let Some(sl) = doc.slides.get_mut(sel.slide) {
+                    let sl = Arc::make_mut(sl);
+                    sl.show_master_shapes = !bool_param(p, "hide").unwrap_or(sl.show_master_shapes);
+                }
+            }
         }
         Ok(())
     })?;

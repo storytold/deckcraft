@@ -49,9 +49,10 @@ impl Session {
             _ => None,
         });
         self.edit(|doc, sel| {
+            let frame = cmd::group_frame(doc, sel, id);
             let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("tool", "no slide"))?;
             if let Some(sh) = deckcraft_model::find_shape_mut(list, id) {
-                sh.xfrm = Some(x);
+                sh.xfrm = Some(cmd::stored_xfrm(frame, x));
                 if let ShapeKind::Table(t) = &mut sh.kind {
                     // Tables resize their columns and rows proportionally.
                     let heights: Vec<f64> = match &drawn {
@@ -229,7 +230,7 @@ impl Session {
     }
 
     /// Snap the edges that resize handle `handle` drags in the resized box `x` to the smart guides.
-    pub(super) fn snap_resize(&mut self, x: Xfrm, handle: u8, exclude: &[ShapeId], tol: f64) -> Xfrm {
+    pub(super) fn snap_resize(&mut self, x: Xfrm, orig: &Xfrm, handle: u8, exclude: &[ShapeId], tol: f64, keep_aspect: bool) -> Xfrm {
         if x.rot != 0.0 {
             self.tool.guides.clear();
             return x;
@@ -258,6 +259,23 @@ impl Session {
         }
         nx.w = nx.w.max(0.0);
         nx.h = nx.h.max(0.0);
+        // Proportions kept: the snapped side leads, the other follows (from the fixed corner).
+        if keep_aspect && orig.h > 0.0 && orig.w > 0.0 && (off.x != 0.0 || off.y != 0.0) {
+            let ratio = orig.w / orig.h;
+            if off.x != 0.0 && (moves_left || moves_right) {
+                let h = nx.w / ratio;
+                if moves_top {
+                    nx.y += nx.h - h;
+                }
+                nx.h = h;
+            } else if moves_top || moves_bottom {
+                let w = nx.h * ratio;
+                if moves_left {
+                    nx.x += nx.w - w;
+                }
+                nx.w = w;
+            }
+        }
         self.tool.guides = guides;
         nx
     }

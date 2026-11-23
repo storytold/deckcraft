@@ -71,6 +71,8 @@ pub(super) struct Pen<'a> {
     pub(super) sw: f32,
     pub(super) ink: Color32,
     pub(super) dis: bool,
+    /// Accents in the ink.
+    pub(super) mono: bool,
 }
 
 pub(super) fn rad(deg: f32) -> f32 {
@@ -230,7 +232,7 @@ impl Pen<'_> {
         match c {
             C::Ink(a) => self.ink.gamma_multiply(a * dim),
             C::Acc(col, a) => {
-                if self.dis {
+                if self.dis || self.mono {
                     self.ink.gamma_multiply(a * dim)
                 } else {
                     col.gamma_multiply(a)

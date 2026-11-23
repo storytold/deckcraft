@@ -19,11 +19,11 @@ mod format_shape;
 mod smartart;
 mod thesaurus;
 
-use animation::animation;
-use background::background;
+pub(crate) use animation::animation;
+pub(crate) use background::background;
 use comments::{comments, revisions};
 use designer::designer;
-use format_shape::format_shape;
+pub(crate) use format_shape::format_shape;
 pub(crate) use format_shape::text_transparency_slider;
 #[cfg(test)]
 use format_shape::{fill_transparency_to_apply, solid_fill_transparency_percent};

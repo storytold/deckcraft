@@ -1,7 +1,7 @@
-use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, shape_in_front};
+use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, hit_shape_at, in_table_cell, is_text_first, shape_in_front};
 use super::{
-    Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, ShapeId, ShapeKind, TABLE_ERASER,
-    TextTarget, ToolKind, Value, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
+    Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, Shape, ShapeId, ShapeKind, TABLE_ERASER,
+    TextTarget, ToolKind, Value, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of, xfrm_on_slide,
 };
 
 impl Session {
@@ -40,7 +40,7 @@ impl Session {
                 if sh.locked {
                     continue;
                 }
-                let x = xfrm_of(&st.doc, &st.selection, sh);
+                let x = xfrm_on_slide(&st.doc, &st.selection, sh);
                 if sh.is_line() {
                     let a = x.affine();
                     for (end, q) in [(0u8, a * Point::new(0.0, 0.0)), (1u8, a * Point::new(x.w, x.h))] {
@@ -81,10 +81,24 @@ impl Session {
         {
             return Some(Hit::Frame { id: e.id });
         }
+        // A selected layer inside a group (picked with ⌘-click or from Layers) keeps the click,
+        // so it can be dragged without ⌘ instead of the group being picked again (canvas layout;
+        // the ribbon keeps PowerPoint's clicks, where a member in front of edited text takes it).
+        for id in st.selection.shapes.iter().rev().filter(|_| self.prefs.cmd_deep_select) {
+            if cmd::group_frame(&st.doc, &st.selection, *id).is_none() {
+                continue;
+            }
+            if let Some(sh) = st.shape(*id).filter(|s| !s.hidden)
+                && let Some(h) = hit_shape_at(st, sh, xfrm_on_slide(&st.doc, &st.selection, sh), p, tol)
+            {
+                return Some(h);
+            }
+        }
         // Shapes, topmost first.
         // Locked objects are still picked (to format them or type in them); they just don't move.
+        // With `locked_click_through` clicks pass through them to what's below.
         for sh in st.shapes().iter().rev() {
-            if sh.hidden {
+            if sh.hidden || (sh.locked && self.prefs.locked_click_through) {
                 continue;
             }
             if let Some(h) = hit_shape(st, sh, p, tol) {
@@ -92,6 +106,63 @@ impl Session {
             }
         }
         None
+    }
+
+    /// With layers of a group selected: the layer of that group (or the group inside it holding
+    /// the layer) under `p`.
+    fn in_context_hit(&self, st: &crate::DocState, p: Point, tol: f64) -> Option<Hit> {
+        let list = st.shapes();
+        let first = *st.selection.shapes.first()?;
+        let parent = deckcraft_model::parent_of(list, first).flatten()?;
+        let Hit::Shape { id: leaf, text } = self.deep_hit(st, p, tol)? else { return None };
+        // Walk up from the layer hit to the parent's child that holds it.
+        let mut cur = leaf;
+        for _ in 0..64 {
+            match deckcraft_model::parent_of(list, cur).flatten() {
+                Some(up) if up == parent => return Some(Hit::Shape { id: cur, text: text && cur == leaf }),
+                Some(up) => cur = up,
+                None => return None,
+            }
+        }
+        None
+    }
+
+    /// The innermost layer under `p`, inside groups.
+    pub fn deep_shape_at(&self, p: Point, tol: f64) -> Option<ShapeId> {
+        match self.deep_hit(self.active()?, p, tol)? {
+            Hit::Shape { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+
+    /// The innermost layer under `p`, looking inside groups (topmost first), as a shape hit.
+    fn deep_hit(&self, st: &crate::DocState, p: Point, tol: f64) -> Option<Hit> {
+        fn rec(st: &crate::DocState, shapes: &[Shape], p: Point, tol: f64, depth: usize, through: bool) -> Option<Hit> {
+            if depth > 32 {
+                return None;
+            }
+            for sh in shapes.iter().rev() {
+                if sh.hidden || (sh.locked && through) {
+                    continue;
+                }
+                // Where the layer is on the slide (grouped layers too).
+                let x = xfrm_on_slide(&st.doc, &st.selection, sh);
+                match &sh.kind {
+                    ShapeKind::Group { children, .. } => {
+                        if let Some(h) = rec(st, children, p, tol, depth + 1, through) {
+                            return Some(h);
+                        }
+                    }
+                    _ => {
+                        if let Some(h) = hit_shape_at(st, sh, x, p, tol) {
+                            return Some(h);
+                        }
+                    }
+                }
+            }
+            None
+        }
+        rec(st, st.shapes(), p, tol, 0, self.prefs.locked_click_through)
     }
 
     /// Feed a pointer event to the active tool. Returns what happened (for agents).
@@ -271,7 +342,26 @@ impl Session {
             self.tool.drag = Some(Drag::TextSelect { shape, before, press });
             return Ok(json!({"caret": [pos.0, pos.1]}));
         }
-        let hit = self.hit_test(p, tol);
+        let mut hit = self.hit_test(p, tol);
+        let deep = mods.cmd && self.prefs.cmd_deep_select;
+        // Inside a group: with a layer of a group selected, a click on another layer of the same
+        // group picks that layer (canvas editors' selection context); Esc steps back out.
+        if !deep
+            && self.prefs.cmd_deep_select
+            && let Some(Hit::Shape { .. }) = hit
+            && let Some(st) = self.active()
+            && let Some(h) = self.in_context_hit(st, p, tol)
+        {
+            hit = Some(h);
+        }
+        // ⌘-click (canvas editors): the innermost layer under the pointer, inside groups.
+        if deep
+            && matches!(hit, Some(Hit::Shape { .. }) | None)
+            && let Some(st) = self.active()
+            && let Some(h) = self.deep_hit(st, p, tol)
+        {
+            hit = Some(h);
+        }
         // Edit Points: drag a vertex, Ctrl-click one to delete it or the outline to add one;
         // a click anywhere else leaves Edit Points.
         if let Some(eid) = self.doc().ok().and_then(|st| self.tool.editing_points(st)) {
@@ -306,23 +396,24 @@ impl Session {
             Some(Hit::TableColumn { id, col }) => self.begin_table_border(id, true, col, p)?,
             Some(Hit::TableRow { id, row }) => self.begin_table_border(id, false, row, p)?,
             Some(Hit::Resize { id, handle }) => {
-                let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
+                let orig = st.shape(id).map(|s| xfrm_on_slide(&st.doc, &st.selection, s)).unwrap_or_default();
                 let ids: Vec<ShapeId> = if st.selection.shapes.contains(&id) { st.selection.shapes.clone() } else { vec![id] };
                 let origs: Vec<(ShapeId, Xfrm)> =
-                    ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
+                    ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_on_slide(&st.doc, &st.selection, s)))).collect();
                 let ids: Vec<ShapeId> = origs.iter().map(|(id, _)| *id).collect();
                 self.begin("Size");
                 self.tool.drag = Some(Drag::Resize { id, orig, ids, handle, origs, start: p });
             }
             Some(Hit::LineEnd { id, end }) => {
-                let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
+                let orig = st.shape(id).map(|s| xfrm_on_slide(&st.doc, &st.selection, s)).unwrap_or_default();
                 self.begin("Size");
                 self.tool.drag = Some(Drag::LineEnd { id, end, orig });
             }
             Some(Hit::Rotate { id }) => {
                 let ids: Vec<ShapeId> = if st.selection.shapes.contains(&id) { st.selection.shapes.clone() } else { vec![id] };
-                let origs: Vec<(ShapeId, Xfrm)> = ids.iter().filter_map(|i| st.shape(*i).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
-                let center = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s).center()).unwrap_or(p);
+                let origs: Vec<(ShapeId, Xfrm)> =
+                    ids.iter().filter_map(|i| st.shape(*i).map(|s| (*i, xfrm_on_slide(&st.doc, &st.selection, s)))).collect();
+                let center = st.shape(id).map(|s| xfrm_on_slide(&st.doc, &st.selection, s).center()).unwrap_or(p);
                 let start = (p.y - center.y).atan2(p.x - center.x);
                 self.begin("Rotate");
                 self.tool.drag = Some(Drag::Rotate { ids, center, start, origs });
@@ -330,14 +421,14 @@ impl Session {
             // Only reached outside Edit Points (handled above).
             Some(Hit::Vertex { .. } | Hit::Handle { .. }) => {}
             Some(Hit::Adjust { id, index }) => {
-                let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
+                let orig = st.shape(id).map(|s| xfrm_on_slide(&st.doc, &st.selection, s)).unwrap_or_default();
                 self.begin("Adjust Shape");
                 self.tool.drag = Some(Drag::Adjust { id, index, orig });
             }
             Some(Hit::Frame { id }) => {
                 // Like PowerPoint: the box leaves text editing and is selected whole (a click
                 // without a drag stops there), and dragging moves it as one undo step.
-                let origs: Vec<(ShapeId, Xfrm)> = st.shape(id).map(|s| (id, xfrm_of(&st.doc, &st.selection, s))).into_iter().collect();
+                let origs: Vec<(ShapeId, Xfrm)> = st.shape(id).map(|s| (id, xfrm_on_slide(&st.doc, &st.selection, s))).into_iter().collect();
                 self.select(|_, sel| {
                     sel.shapes = vec![id];
                     sel.text = None;
@@ -346,7 +437,7 @@ impl Session {
                 self.tool.drag = Some(Drag::Move { ids: vec![id], start: p, origs, moved: false, duplicate: mods.alt, enter_text: None });
             }
             Some(Hit::Warp { id, index }) => {
-                let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
+                let orig = st.shape(id).map(|s| xfrm_on_slide(&st.doc, &st.selection, s)).unwrap_or_default();
                 let found = st.shape(id).and_then(|sh| {
                     let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection)?;
                     let bp = deckcraft_model::resolve::body(&ctx, sh);
@@ -374,7 +465,7 @@ impl Session {
             }
             Some(Hit::Shape { id, text }) => {
                 let selected = st.selection.shapes.contains(&id);
-                let toggle = mods.shift || mods.cmd;
+                let toggle = mods.shift || (mods.cmd && !deep);
                 let ids: Vec<ShapeId> = if toggle {
                     let mut v = st.selection.shapes.clone();
                     if selected {
@@ -390,7 +481,7 @@ impl Session {
                 };
                 // Locked objects stay put when the selection is dragged.
                 let origs: Vec<(ShapeId, Xfrm)> =
-                    ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
+                    ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_on_slide(&st.doc, &st.selection, s)))).collect();
                 // A click (no drag) on text puts the caret there; unselected text boxes and
                 // placeholders take the caret straight away like PowerPoint. A click in a cell of a
                 // selected table puts the caret there; a click on its grab band keeps the table selected.
@@ -399,7 +490,7 @@ impl Session {
                 // does, so it can be moved, duplicated or deleted; only the inside takes the caret.
                 let on_frame = text
                     && is_text_first(st, id)
-                    && st.shape(id).is_some_and(|s| edit_zone(&xfrm_of(&st.doc, &st.selection, s), p, tol) == EditZone::Frame);
+                    && st.shape(id).is_some_and(|s| edit_zone(&xfrm_on_slide(&st.doc, &st.selection, s), p, tol) == EditZone::Frame);
                 let enter_text =
                     (!toggle && !on_frame && ((text && (selected || is_text_first(st, id))) || (table && selected && in_table_cell(st, id, p))))
                         .then_some((id, p));
@@ -429,7 +520,7 @@ impl Session {
                 }
             }
             None => {
-                let add = mods.shift || mods.cmd;
+                let add = mods.shift || (mods.cmd && !deep);
                 self.select(|_, sel| {
                     sel.text = None;
                     sel.cells = None;
@@ -571,7 +662,7 @@ impl Session {
                 let changed: Vec<ShapeId> = origs
                     .iter()
                     .filter_map(|(id, orig)| {
-                        let current = self.active().and_then(|st| st.shape(*id).map(|s| xfrm_of(&st.doc, &st.selection, s)))?;
+                        let current = self.active().and_then(|st| st.shape(*id).map(|s| xfrm_on_slide(&st.doc, &st.selection, s)))?;
 
                         (current != *orig).then_some(*id)
                     })
@@ -595,6 +686,15 @@ impl Session {
         self.commit();
         let _ = mods;
         Ok(out)
+    }
+
+    /// A resize keeps the proportions: ⇧, or a picture; a group (canvas layout) keeps them unless ⇧.
+    pub(super) fn resize_keeps_aspect(&self, id: ShapeId, mods: Mods) -> bool {
+        if self.prefs.group_keeps_aspect && self.is_group(id) { !mods.shift } else { mods.shift || self.is_picture(id) }
+    }
+
+    pub(super) fn is_group(&self, id: ShapeId) -> bool {
+        self.active().and_then(|d| d.shape(id)).is_some_and(|s| s.is_group())
     }
 
     pub(super) fn is_picture(&self, id: ShapeId) -> bool {

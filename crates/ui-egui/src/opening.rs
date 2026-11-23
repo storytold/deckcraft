@@ -188,7 +188,7 @@ mod tests {
         assert!(app.status.as_ref().is_some_and(|(m, _)| m.starts_with("Still opening missing.pptx")));
         wait(&mut app);
         assert!(app.session.documents().is_empty());
-        assert!(app.toast.as_ref().is_some_and(|t| t.text.contains("missing.pptx")), "the reason is shown");
+        assert!(app.toasts.iter().any(|t| t.text.contains("missing.pptx")), "the reason is shown");
     }
 
     /// Opening a path displays progress; cancelling closes the progress window without opening the

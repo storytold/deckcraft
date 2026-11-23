@@ -17,25 +17,37 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod backstage;
 pub mod canvas;
+pub mod canvas_shell;
 pub mod capture;
+pub mod colorpick;
 pub mod control;
 pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
+pub mod field_math;
+pub mod find;
+pub mod form;
 pub mod icons;
+pub mod inspector;
+pub mod measure_overlay;
 pub mod media;
 pub mod menus;
+pub mod native_menu;
 pub mod opening;
 pub mod presenter;
+pub mod props;
 pub mod ribbon;
 pub mod settings;
 pub mod show;
 pub mod sorter;
+pub mod states;
 pub mod status;
+pub mod textstyles;
 pub mod textures;
 pub mod theme;
 pub mod toast;
 pub mod uifonts;
+pub mod units;
 pub mod widgets;
 
 use std::collections::HashMap;
@@ -74,7 +86,7 @@ pub use panels::thumbs;
 pub use ribbon::qat;
 pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
 use state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp};
-pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
+pub use state::{RECENT_MAX, Shell, UiState, ViewMode, ZOOM_RANGE};
 
 /// The presentation (and place in it) captured when the request started.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +115,9 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.reading", "Reading View", None, "{}"),
     ("view.notes", "Notes", None, "{on?: bool}"),
     ("view.ruler", "Ruler", None, "{on?: bool}"),
+    ("view.panels", "Show/Hide Side Panels", Some("Cmd+."), "{on?: bool} (canvas layout: both side panels)"),
+    ("view.leftPanel", "Show/Hide Left Panel", Some("Alt+Cmd+."), "{on?: bool} (canvas layout: slides and layers)"),
+    ("view.collapseLayers", "Collapse Layers", Some("Alt+L"), "{} (fold every group in the Layers list)"),
     ("view.gridlines", "Gridlines", Some("Shift+F9"), "{on?: bool}"),
     ("view.guides", "Guides", Some("Alt+F9"), "{on?: bool}"),
     ("view.gridOptions", "Grid Options…", None, "{spacing?: pt, snap?: bool, smartGuides?: bool, gridlines?: bool, guides?: bool}"),
@@ -116,6 +131,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
+    ("view.shell", "Interface Layout", None, "{shell?: classic|canvas}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -140,6 +156,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.about", "About DeckCraft", None, "{}"),
     ("app.checkUpdates", "Check for Updates…", None, "{}"),
     ("app.palette", "Command Palette", Some("Cmd+Shift+P"), "{}"),
+    ("edit.pasteToReplace", "Paste to Replace", Some("Cmd+Shift+R"), "{}"),
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
@@ -242,7 +259,12 @@ pub struct SlideApp {
     /// A presentation being read in the background, with its progress window ([`opening`]).
     pub opening: Option<opening::Opening>,
     /// A brief notice over the bottom of the window (missing fonts on opening a file).
-    pub toast: Option<toast::Toast>,
+    /// Notices showing (see `toast.rs`).
+    pub toasts: Vec<toast::Toast>,
+    /// The find bar, while it's open (⌘F).
+    pub find: Option<find::FindBar>,
+    /// The macOS menu bar, when the desktop app installed one (else the menus are in the window).
+    pub native_menu: Option<native_menu::NativeMenu>,
     /// Documents (by uid) whose missing fonts have been mentioned.
     fonts_noted: std::collections::HashSet<u64>,
     pub perf: Perf,
@@ -305,6 +327,23 @@ pub struct SlideApp {
     styled: bool,
     restyle: bool,
     fonts_ready: bool,
+    /// Text detached from its style in the canvas panel this session: shown with every type control
+    /// and left alone when the style is edited, though its values still match the style.
+    pub detached: std::collections::HashSet<deckcraft_model::ShapeId>,
+    /// The slide list has the keyboard (a thumbnail was clicked last): ⌘D, Delete, ⇧⌘H, ⌘↑ / ⌘↓
+    /// and ⇧↑ / ⇧↓ act on slides (see `thumbs::slide_key`). A click anywhere else gives it back.
+    pub slides_focus: bool,
+    /// Where the slide list was drawn last frame, so a click there keeps its focus.
+    pub thumbs_rect: Option<egui::Rect>,
+    /// The states strip has the keyboard (a state was clicked last): ← / → walk the states,
+    /// ⌘← / ⌘→ move one, ⌘D adds one after it, Delete removes it (see `states::strip_key`). A click
+    /// anywhere else, or Esc, gives it back.
+    pub states_focus: bool,
+    /// Where the states strip was drawn last frame, so a click there keeps its focus.
+    pub strip_rect: Option<egui::Rect>,
+    /// The slide a ⇧-extended range starts from, and the one it reaches.
+    pub slide_anchor: Option<usize>,
+    pub slide_cursor: Option<usize>,
     last_time: f64,
     /// When AutoRecover data was last written (monotonic seconds, not wall time).
     pub last_recovery: f64,
@@ -315,6 +354,10 @@ pub struct SlideApp {
     pub ui_fonts: uifonts::UiFonts,
     /// Slide drag in the thumbnail pane or the Slide Sorter: the dragged slides and the drop gap.
     pub(crate) thumb_drag: Option<thumbs::SlideDrag>,
+    /// The drag in `thumb_drag` started in the sorter's grid (else in the slide list). Only the
+    /// view it started in places it: in the canvas layout's grid the slide list is on screen too,
+    /// and it used to move the slide to where the pointer's height fell in the list.
+    pub(crate) thumb_drag_in_grid: bool,
     /// Selection pane: folded groups, renaming, drag and drop.
     pub selpane: selpane::State,
     /// Arrange ▸ Align: Align to Slide (`true`) or Align Selected Objects, ticked for that selection.
@@ -490,6 +533,12 @@ mod datetime_tests;
 
 #[cfg(test)]
 mod inbox_tests;
+
+#[cfg(test)]
+mod paste_tests;
+
+#[cfg(test)]
+mod shortcut_tests;
 
 #[cfg(test)]
 mod host_save_tests;

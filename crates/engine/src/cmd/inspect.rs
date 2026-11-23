@@ -5,7 +5,7 @@ use deckcraft_model::text::Hyperlink;
 use deckcraft_model::{Shape, ShapeKind};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, cmd, has_doc, id_param, opt_usize_param, str_param, usize_param, xfrm_of};
+use super::{CommandSpec, always, bad, cmd, has_doc, id_param, opt_usize_param, str_param, usize_param};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -206,7 +206,7 @@ fn shape(s: &mut Session, p: &Value) -> Result<Value> {
     let id =
         id_param(p, "id", "shape.inspect")?.or_else(|| st.selection.shapes.first().copied()).ok_or_else(|| bad("shape.inspect", "missing `id`"))?;
     let sh = st.shape(id).ok_or_else(|| bad("shape.inspect", format!("no shape {id}")))?;
-    let x = xfrm_of(&st.doc, &st.selection, sh);
+    let x = super::xfrm_on_slide(&st.doc, &st.selection, sh);
     Ok(json!({"shape": serde_json::to_value(sh).unwrap_or_default(), "box": x}))
 }
 
