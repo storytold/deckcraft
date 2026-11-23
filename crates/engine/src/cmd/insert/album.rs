@@ -652,11 +652,14 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
                 break 'slides;
             }
             total += size;
-            let name = if !sh.descr.is_empty() {
-                sh.descr.clone()
-            } else {
-                media.map(|m| m.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| "picture".into())
-            };
+            let name = sh
+                .tags
+                .iter()
+                .find(|(k, _)| k == "album-name")
+                .map(|(_, v)| v.clone())
+                .or_else(|| if !sh.descr.is_empty() { Some(sh.descr.clone()) } else { None })
+                .or_else(|| media.map(|m| m.name.clone()).filter(|n| !n.is_empty()))
+                .unwrap_or_else(|| "picture".into());
             items.push(json!({
                 "name": name,
                 "data": media.map(|m| base64_encode(&m.data)).unwrap_or_default(),
@@ -743,6 +746,13 @@ fn insert_album(s: &mut Session, items: Vec<AlbumItem>, opts: &AlbumOpts, at: Op
                     let Some(id) = inserted.get("id").and_then(Value::as_u64) else {
                         return Err(bad("insert.photoAlbum", "the picture was not inserted"));
                     };
+                    s.edit(|doc, sel| {
+                        let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("insert.photoAlbum", "no slide"))?;
+                        if let Some(sh) = list.iter_mut().find(|x| x.id.0 == id as u32) {
+                            sh.tags.push(("album-name".into(), pic.name.clone()));
+                        }
+                        Ok(())
+                    })?;
                     apply_frame(s, frame, id)?;
                     if opts.grayscale || pic.brightness.abs() > 1e-6 || pic.contrast.abs() > 1e-6 {
                         s.execute(

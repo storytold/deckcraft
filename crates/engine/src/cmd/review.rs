@@ -246,22 +246,58 @@ fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
     Ok(json!({"slide": slide, "index": index, "text": text}))
 }
 
+fn is_undescribed_alt(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    const EXTENSIONS: &[&str] = &[".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".tiff", ".tif", ".ico", ".avif"];
+    EXTENSIONS.iter().any(|ext| lower.ends_with(ext) && !lower.starts_with(ext))
+}
+
+fn is_icon(sh: &deckcraft_model::Shape) -> bool {
+    if sh.tags.iter().any(|(k, v)| k == "icon" || (k == "kind" && v == "icon")) {
+        return true;
+    }
+    if let deckcraft_model::Geom::Custom { paths } = &sh.geom
+        && paths.iter().any(|p| (p.w - 24.0).abs() < 0.01 && (p.h - 24.0).abs() < 0.01)
+    {
+        return crate::icons::find(&sh.name).is_some();
+    }
+    false
+}
+
 fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let mut out = vec![];
+    let mut title_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for sl in &st.doc.slides {
+        let t = sl.title().trim().to_lowercase();
+        if !t.is_empty() {
+            *title_counts.entry(t).or_insert(0) += 1;
+        }
+    }
+
     for (i, sl) in st.doc.slides.iter().enumerate() {
-        if sl.title().trim().is_empty() {
+        let title = sl.title();
+        let t = title.trim();
+        if t.is_empty() {
             out.push(json!({"slide": i, "issue": "Missing slide title"}));
+        } else if title_counts.get(&t.to_lowercase()).copied().unwrap_or(0) > 1 {
+            out.push(json!({"slide": i, "issue": "Duplicate slide title"}));
         }
         deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
+            let is_picture_filled = matches!(sh.fill, Some(deckcraft_model::Fill::Picture(_)));
             let needs_alt = matches!(
                 sh.kind,
                 deckcraft_model::ShapeKind::Picture { .. }
                     | deckcraft_model::ShapeKind::Chart(_)
                     | deckcraft_model::ShapeKind::Media(_)
                     | deckcraft_model::ShapeKind::Group { .. }
-            );
-            if needs_alt && sh.descr.trim().is_empty() && !sh.decorative {
+            ) || is_picture_filled
+                || is_icon(sh);
+            if needs_alt && !sh.decorative && is_undescribed_alt(&sh.descr) {
                 out.push(json!({"slide": i, "shape": sh.id, "name": sh.name, "issue": "Missing alternative text"}));
             }
         });
@@ -1040,5 +1076,67 @@ mod accessibility_contrast_tests {
         }
         assert!(!contrasts.iter().any(|issue| issue["shape"] == 6), "black control warned: {issues}");
         assert!(!contrasts.iter().any(|issue| issue["shape"] == 8), "white break or spaces warned: {issues}");
+    }
+
+    #[test]
+    fn accessibility_duplicate_slide_titles_are_reported() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleOnly", "title": "Results"})).unwrap();
+        s.execute("slide.new", &json!({"layout": "titleOnly", "title": "Introduction"})).unwrap();
+        s.execute("slide.new", &json!({"layout": "titleOnly", "title": "results"})).unwrap();
+
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        let dups: Vec<_> = issues.as_array().unwrap().iter().filter(|issue| issue["issue"] == "Duplicate slide title").collect();
+
+        // Slides 1 and 3 both have title "Results" (case-insensitive duplicate)
+        assert_eq!(dups.len(), 2, "{issues}");
+        assert!(dups.iter().any(|issue| issue["slide"] == 1));
+        assert!(dups.iter().any(|issue| issue["slide"] == 3));
+        assert!(!dups.iter().any(|issue| issue["slide"] == 2));
+    }
+
+    #[test]
+    fn accessibility_reports_missing_alt_for_inserted_picture_icon_and_picture_fill() {
+        let mut s = Session::with_new();
+        let png = [
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 10, 73,
+            68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5, 0, 1, 13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ];
+        let b64 = crate::cmd::base64_encode(&png);
+
+        // 1. Newly inserted picture defaults to empty alt text and is reported as missing alt text
+        let pic_id = s.execute("insert.picture", &json!({"name": "IMG_2041.png", "data": b64})).unwrap()["id"].clone();
+
+        // 2. Inserted icon is reported as missing alt text
+        let icon_id = s.execute("insert.icon", &json!({"name": "star", "rect": [100, 100, 50, 50]})).unwrap()["id"].clone();
+
+        // 3. Shape filled with picture is reported as missing alt text
+        let rect_id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 100, 50, 50]})).unwrap()["id"].clone();
+        s.execute("shape.fill", &json!({"ids": [rect_id], "picture": b64})).unwrap();
+
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        let missing_alt: Vec<_> = issues.as_array().unwrap().iter().filter(|issue| issue["issue"] == "Missing alternative text").collect();
+
+        assert!(missing_alt.iter().any(|issue| issue["shape"] == pic_id), "missing alt for picture: {issues}");
+        assert!(missing_alt.iter().any(|issue| issue["shape"] == icon_id), "missing alt for icon: {issues}");
+        assert!(missing_alt.iter().any(|issue| issue["shape"] == rect_id), "missing alt for picture fill: {issues}");
+
+        // If marked decorative, no longer reported
+        s.execute("shape.altText", &json!({"ids": [icon_id], "decorative": true})).unwrap();
+        let issues2 = s.execute("review.accessibility", &json!({})).unwrap();
+        let missing_alt2: Vec<_> = issues2.as_array().unwrap().iter().filter(|issue| issue["issue"] == "Missing alternative text").collect();
+        assert!(!missing_alt2.iter().any(|issue| issue["shape"] == icon_id), "decorative icon reported: {issues2}");
+
+        // If alt text is set to real description, no longer reported
+        s.execute("shape.altText", &json!({"ids": [pic_id], "text": "Annual revenue graph"})).unwrap();
+        let issues3 = s.execute("review.accessibility", &json!({})).unwrap();
+        let missing_alt3: Vec<_> = issues3.as_array().unwrap().iter().filter(|issue| issue["issue"] == "Missing alternative text").collect();
+        assert!(!missing_alt3.iter().any(|issue| issue["shape"] == pic_id), "described picture reported: {issues3}");
+
+        // If alt text is set to raw file name with extension, it still reports as missing alt text (#2224)
+        s.execute("shape.altText", &json!({"ids": [pic_id], "text": "photo.png"})).unwrap();
+        let issues4 = s.execute("review.accessibility", &json!({})).unwrap();
+        let missing_alt4: Vec<_> = issues4.as_array().unwrap().iter().filter(|issue| issue["issue"] == "Missing alternative text").collect();
+        assert!(missing_alt4.iter().any(|issue| issue["shape"] == pic_id), "file-name alt text not caught: {issues4}");
     }
 }
