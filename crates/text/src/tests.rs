@@ -965,6 +965,9 @@ fn symbol_font_bullets_map_by_font() {
     assert_eq!(map_symbol_bullet(&star, Some("Wingdings 2")), "★");
     assert_eq!(map_symbol_bullet("\u{7d}", Some("Wingdings 3")), "►");
     assert_eq!(map_symbol_bullet("\u{f0a7}", Some("Wingdings")), "▪");
+    // Wingdings' diamonds (`w` is the small one) are not dots (#1137 review).
+    assert_eq!(map_symbol_bullet("w", Some("Wingdings")), "◆");
+    assert_eq!(map_symbol_bullet("u", Some("Wingdings")), "◆");
     assert_eq!(map_symbol_bullet("•", Some("Arial")), "•");
     assert!(is_symbol_font("Wingdings 2") && is_symbol_font("Symbol") && !is_symbol_font("Arial"));
 }

@@ -12,7 +12,7 @@ pub mod bidi;
 pub mod chart;
 pub mod defaults;
 pub mod edit;
-pub mod numfmt;
+pub use craft_drawingml::numfmt;
 pub mod resolve;
 pub mod style;
 pub mod table;

@@ -3440,3 +3440,65 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     quad.paths[0].path = path;
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }
+
+/// A WMF without a placeable header (the frame comes from its window records) holding `records`
+/// (function, parameter bytes).
+fn wmf_bare(records: &[(u16, Vec<u8>)]) -> Vec<u8> {
+    let mut body = Vec::new();
+    let mut max_words = 3u32;
+    for (func, params) in records {
+        let words = (6 + params.len() as u32).div_ceil(2);
+        max_words = max_words.max(words);
+        body.extend(words.to_le_bytes());
+        body.extend(func.to_le_bytes());
+        body.extend(params);
+        if params.len() % 2 == 1 {
+            body.push(0);
+        }
+    }
+    body.extend([3, 0, 0, 0, 0, 0]);
+    let mut f = Vec::new();
+    for v in [1u16, 9, 0x300] {
+        f.extend(v.to_le_bytes());
+    }
+    f.extend((((18 + body.len()) / 2) as u32).to_le_bytes());
+    f.extend(1u16.to_le_bytes());
+    f.extend(max_words.to_le_bytes());
+    f.extend(0u16.to_le_bytes());
+    f.extend(body);
+    f
+}
+
+#[test]
+fn metafile_scaled_viewport_places_each_sub_picture_in_its_half() {
+    // #2069: an 800 × 400 frame drawn as two sub-pictures. Each saves the DC, halves the viewport
+    // width with SCALEVIEWPORTEXT, sets its own 400 × 400 window (the second shifted right by its
+    // window origin), draws a circle and restores the DC: red on the left, blue on the right.
+    let sub = |origin_x: i32, colorref: u32| {
+        let mut brush = 0u16.to_le_bytes().to_vec();
+        brush.extend(colorref.to_le_bytes());
+        brush.extend(0u16.to_le_bytes());
+        vec![
+            (0x001E, vec![]),                    // SAVEDC
+            (0x0103, i16s(&[8])),                // SETMAPMODE MM_ANISOTROPIC
+            (0x0412, i16s(&[1, 1, 2, 1])),       // SCALEVIEWPORTEXT y 1/1, x 1/2
+            (0x020B, i16s(&[0, origin_x])),      // SETWINDOWORG
+            (0x020C, i16s(&[400, 400])),         // SETWINDOWEXT
+            (0x02FC, brush),                     // CREATEBRUSHINDIRECT
+            (0x012D, i16s(&[0])),                // SELECTOBJECT
+            (0x0418, i16s(&[380, 380, 20, 20])), // ELLIPSE
+            (0x0127, i16s(&[-1])),               // RESTOREDC
+            (0x01F0, i16s(&[0])),                // DELETEOBJECT
+        ]
+    };
+    let mut recs = vec![(0x020B, i16s(&[0, 0])), (0x020C, i16s(&[400, 800]))];
+    recs.extend(sub(0, 0x0000_00FF));
+    recs.extend(sub(-400, 0x00FF_0000));
+    let img = crate::metafile::rasterize(&wmf_bare(&recs), 200).expect("raster");
+    assert_eq!(img.dimensions(), (200, 100));
+    let red = |p: &image::Rgba<u8>| p[0] > 200 && p[1] < 60 && p[2] < 60 && p[3] > 200;
+    let blue = |p: &image::Rgba<u8>| p[2] > 200 && p[0] < 60 && p[1] < 60 && p[3] > 200;
+    assert!(red(img.get_pixel(50, 50)), "red circle in the left half: {:?}", img.get_pixel(50, 50));
+    assert!(blue(img.get_pixel(150, 50)), "blue circle in the right half: {:?}", img.get_pixel(150, 50));
+    assert!(img.get_pixel(100, 50)[3] < 128, "the circles don't meet in the middle: {:?}", img.get_pixel(100, 50));
+}
