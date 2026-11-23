@@ -323,6 +323,85 @@ pub(crate) fn apply_leading_tabs(para: &mut deckcraft_model::text::Paragraph) ->
     true
 }
 
+/// The Outline editor sends all paragraphs, with tabs recording their levels. Reserve matches
+/// with unchanged text and level first, then match reindented lines by text alone.
+fn replace_outline(body: &mut TextBody, mut next: TextBody, mut adjust: impl FnMut(&mut deckcraft_model::text::Paragraph)) {
+    use std::collections::{HashMap, VecDeque};
+    type LinesByText<'a> = HashMap<&'a str, VecDeque<usize>>;
+    let old_text: Vec<_> = body.paragraphs.iter().map(|para| para.text()).collect();
+    let mut exact: HashMap<u8, LinesByText<'_>> = HashMap::new();
+    for (i, (text, para)) in old_text.iter().zip(&body.paragraphs).enumerate() {
+        exact.entry(para.level).or_default().entry(text).or_default().push_back(i);
+    }
+    let mut kept = vec![false; old_text.len()];
+    let mut matches: Vec<_> = next
+        .paragraphs
+        .iter_mut()
+        .map(|para| {
+            apply_leading_tabs(para);
+            let text = para.text();
+            let previous = exact.get_mut(&para.level).and_then(|lines| lines.get_mut(text.as_str())).and_then(VecDeque::pop_front);
+            if let Some(i) = previous {
+                kept[i] = true;
+            }
+            (text, previous)
+        })
+        .collect();
+    let mut by_text = LinesByText::new();
+    for (i, text) in old_text.iter().enumerate().filter(|(i, _)| !kept[*i]) {
+        by_text.entry(text).or_default().push_back(i);
+    }
+    for (text, previous) in &mut matches {
+        if previous.is_none() {
+            *previous = by_text.get_mut(text.as_str()).and_then(VecDeque::pop_front);
+            if let Some(i) = *previous {
+                kept[i] = true;
+            }
+        }
+    }
+    let mut changed = kept.into_iter().enumerate().filter_map(|(i, used)| (!used).then_some(i));
+    for (i, (para, (text, previous))) in next.paragraphs.iter_mut().zip(matches).enumerate() {
+        let base = previous
+            .or_else(|| changed.next())
+            .and_then(|i| body.paragraphs.get(i))
+            .or_else(|| body.paragraphs.get(i.min(body.paragraphs.len().saturating_sub(1))));
+        if let Some(base) = base {
+            let level = para.level;
+            if previous.is_some() {
+                *para = base.clone();
+            } else {
+                preserve_outline_run_style(para, base, &text);
+                adjust(para);
+            }
+            para.level = level;
+        } else {
+            adjust(para);
+        }
+    }
+    body.paragraphs = next.paragraphs;
+}
+
+/// Reuse the ordinary text edit for a changed line that still shares a prefix or suffix. A new
+/// line without shared characters starts with its surrounding paragraph's first run style.
+fn preserve_outline_run_style(para: &mut deckcraft_model::text::Paragraph, base: &deckcraft_model::text::Paragraph, text: &str) {
+    let old = base.text();
+    let shares_text = !text.is_empty() && (old.chars().next() == text.chars().next() || old.chars().next_back() == text.chars().next_back());
+    if shares_text {
+        let mut body = TextBody { paragraphs: vec![base.clone()], ..Default::default() };
+        ed::replace_text(&mut body, text);
+        if let Some(updated) = body.paragraphs.pop() {
+            para.runs = updated.runs;
+        }
+    } else {
+        let props = base.runs.first().map_or(&base.end_props, |run| &run.props);
+        for run in &mut para.runs {
+            run.props.clone_from(props);
+        }
+    }
+    para.props.clone_from(&base.props);
+    para.end_props.clone_from(&base.end_props);
+}
+
 pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let text = str_param(p, "text").ok_or_else(|| bad("text.set", "missing `text`"))?.to_string();
     let id = match id_param(p, "id", "text.set")? {
@@ -331,6 +410,7 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let cell = p.get("cell").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)));
     let inherited = inherited_aligns(s, id);
+    let outline = bool_or(p, "outline", false);
     edit_shapes(s, &json!({"id": id}), "text.set", |sh| {
         let target = match (&mut sh.kind, cell) {
             (ShapeKind::Table(t), Some((r, c))) => t.cell_mut(r, c).map(|x| &mut x.text),
@@ -338,9 +418,13 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
             _ => Some(sh.text.get_or_insert_with(TextBody::default)),
         };
         let Some(body) = target else { return Err(bad("text.set", "no text here (tables need `cell`)")) };
+        let mut nb = TextBody::from_text(&text);
+        if outline {
+            replace_outline(body, nb, |para| promote_rtl_if_needed(para, &inherited));
+            return Ok(());
+        }
         let keep = body.paragraphs.first().and_then(|p| p.runs.first()).map(|r| r.props.clone()).unwrap_or_default();
         let levels: Vec<(u8, deckcraft_model::text::ParaProps)> = body.paragraphs.iter().map(|p| (p.level, p.props.clone())).collect();
-        let mut nb = TextBody::from_text(&text);
         for (i, para) in nb.paragraphs.iter_mut().enumerate() {
             // Leading tabs set the outline level.
             if !apply_leading_tabs(para)
@@ -392,5 +476,57 @@ mod select_paragraph_tests {
         let t = s.doc().unwrap().selection.text.clone().unwrap();
         // Clamped to the last (only) paragraph, never past the end of the body.
         assert_eq!((t.anchor, t.caret), ((0, 0), (0, 5)));
+    }
+}
+
+#[cfg(test)]
+mod outline_tests {
+    use super::{Session, edit_shapes};
+    use serde_json::json;
+
+    #[test]
+    fn editing_outline_keeps_the_runs_and_levels_of_the_remaining_paragraphs() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": "One\nTwo\nThree\nFour"})).unwrap();
+        let id = s.doc().unwrap().selection.shapes[0];
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
+            paragraphs[0].runs[0].props.bold = Some(true);
+            paragraphs[1].level = 1;
+            let mut italic = paragraphs[1].runs[0].clone();
+            italic.text = "wo".into();
+            italic.props.italic = Some(true);
+            paragraphs[1].runs[0].text = "T".into();
+            paragraphs[1].runs.push(italic);
+            paragraphs[2].props.margin_left = Some(4.5);
+            Ok(())
+        })
+        .unwrap();
+        let before = s.doc().unwrap().shape(id).unwrap().text.clone().unwrap().paragraphs;
+
+        s.execute("text.set", &json!({"id": id, "text": "\tTwo\nThree\nFour", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &before[1..]);
+    }
+
+    #[test]
+    fn editing_outline_matches_identically_named_lines_at_their_own_levels() {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": "Task\nTask"})).unwrap();
+        let id = s.doc().unwrap().selection.shapes[0];
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
+            paragraphs[0].runs[0].props.bold = Some(true);
+            paragraphs[1].level = 1;
+            paragraphs[1].runs[0].props.italic = Some(true);
+            Ok(())
+        })
+        .unwrap();
+        let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs[1].clone();
+
+        s.execute("text.set", &json!({"id": id, "text": "\tTask", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &[before]);
     }
 }

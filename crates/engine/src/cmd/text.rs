@@ -126,7 +126,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Text",
             [],
             None,
-            "{id?, text, cell?: [r, c]} — replaces the whole text, keeping the first run's formatting",
+            "{id?, text, cell?: [r, c], outline?: bool} — replaces the whole text, keeping the first run's formatting; outline preserves each line's formatting, with leading tabs setting its level",
             has_slide,
             set
         ),
