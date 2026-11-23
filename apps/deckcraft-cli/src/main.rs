@@ -296,7 +296,13 @@ fn render(args: &[String]) -> Result<(), String> {
             "--slide" => slide = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--slide needs a number")?),
             "--all" => all = true,
             "--edit" => edit = true,
-            "--scale" => scale = it.next().and_then(|v| v.parse().ok()).ok_or("--scale needs a number")?,
+            "--scale" => {
+                scale = it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|s: &f64| s.is_finite() && *s > 0.0)
+                    .ok_or("--scale needs a finite positive number")?
+            }
             "--help" | "-h" => {
                 outln!("{}", help_page("render"));
                 return Ok(());
@@ -775,6 +781,18 @@ mod tests {
         let err = render(&args(&["--sample", "--scael", "2", "out.png"])).unwrap_err();
         assert_eq!(err, "unknown option `--scael`");
         assert!(!std::path::Path::new("--scael").exists());
+    }
+
+    #[test]
+    fn render_rejects_invalid_scale_before_resolving_the_output_path() {
+        for value in ["NaN", "inf", "-inf", "0", "-0", "-1", "1e9999", "invalid"] {
+            let err = render(&args(&["--scale", value])).unwrap_err();
+            assert_eq!(err, "--scale needs a finite positive number", "{value}");
+        }
+        assert_eq!(render(&args(&["--scale"])).unwrap_err(), "--scale needs a finite positive number");
+        for value in ["0.25", "2", "1e-10", "1e6"] {
+            assert_eq!(render(&args(&["--scale", value])).unwrap_err(), "render needs an output path", "{value}");
+        }
     }
 
     #[test]
