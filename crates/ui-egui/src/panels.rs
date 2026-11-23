@@ -24,9 +24,9 @@ use background::background;
 use comments::{comments, revisions};
 use designer::designer;
 use format_shape::format_shape;
-pub(crate) use format_shape::text_transparency_slider;
 #[cfg(test)]
 use format_shape::{fill_transparency_to_apply, solid_fill_transparency_percent};
+pub(crate) use format_shape::{preset_label, text_transparency_slider};
 use smartart::smartart;
 use thesaurus::thesaurus;
 
@@ -98,7 +98,7 @@ fn color_button(
 ) {
     let sc = scheme(app);
     ui.horizontal(|ui| {
-        ui.label(label);
+        ui.label(tl!(label));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let r = widgets::drop_button(ui, "Color", vec2(70.0, 22.0), true);
             widgets::color_popup(&r).show(|ui| {
