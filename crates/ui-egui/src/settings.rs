@@ -118,21 +118,46 @@ mod tests {
         assert_eq!(prefs.undo_limit, deckcraft_engine::MAX_UNDO_LIMIT);
         assert_eq!(prefs.recovery_minutes, 0.1);
         assert_eq!(prefs.author.chars().count(), 256);
+        assert!(prefs.author_chosen, "a non-placeholder saved name is necessarily a choice");
         // A zero or negative zoom means "fit".
         std::fs::write(d.join(UI_FILE), r#"{"zoom": 0}"#).unwrap();
         assert_eq!(load(&d).0.unwrap().zoom, None);
     }
 
     #[test]
+    fn author_provenance_round_trips_and_legacy_settings_migrate() {
+        let d = dir("author-provenance");
+        // Files written before provenance existed: the placeholder is the unfilled default, while
+        // any other saved name is necessarily a person's choice.
+        std::fs::write(d.join(PREFS_FILE), r#"{"author":"Presenter"}"#).unwrap();
+        let p = load(&d).1.expect("the legacy placeholder settings");
+        assert_eq!(p.author, deckcraft_engine::DEFAULT_AUTHOR);
+        assert!(!p.author_chosen, "the legacy placeholder remains eligible for first-run autofill");
+        std::fs::write(d.join(PREFS_FILE), r#"{"author":"Ann"}"#).unwrap();
+        let p = load(&d).1.expect("legacy settings with a real name");
+        assert!(p.author_chosen, "a legacy non-placeholder name was chosen");
+
+        // The exact placeholder can itself be chosen, and that choice persists.
+        let mut prefs = Prefs::default();
+        prefs.set_author(deckcraft_engine::DEFAULT_AUTHOR);
+        save(&d, &UiState::default(), &prefs);
+        let p = load(&d).1.expect("the chosen-placeholder settings");
+        assert_eq!(p.author, deckcraft_engine::DEFAULT_AUTHOR);
+        assert!(p.author_chosen, "chosen provenance survives a restart");
+    }
+
+    #[test]
     fn saving_round_trips_and_leaves_no_temporary_file() {
         let d = dir("save");
         let ui = UiState { zoom: Some(1.5), recent: vec!["/a.pptx".into()], ..Default::default() };
-        let prefs = Prefs { author: "Ann".into(), units: deckcraft_geom::Unit::Centimeters, ..Default::default() };
+        let mut prefs = Prefs { units: deckcraft_geom::Unit::Centimeters, ..Default::default() };
+        prefs.set_author("Ann");
         save(&d.join("nested"), &ui, &prefs);
         let (u, p) = load(&d.join("nested"));
         assert_eq!(u.unwrap().zoom, Some(1.5));
         let p = p.unwrap();
         assert_eq!((p.author.as_str(), p.units), ("Ann", deckcraft_geom::Unit::Centimeters));
+        assert!(p.author_chosen);
         let names: Vec<String> =
             std::fs::read_dir(d.join("nested")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
         assert!(names.iter().all(|n| !n.ends_with(".tmp")), "{names:?}");
