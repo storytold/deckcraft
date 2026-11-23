@@ -3796,6 +3796,8 @@ fn a_picture_glow_sizes_its_tiled_background_in_a_stretched_group_like_its_face(
     let image = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
     assert_eq!(image.pixel(172, 180)[..3], [220, 30, 20], "the face's opaque column runs from 148 to 196 pt");
     assert_eq!(image.pixel(222, 180)[..3], [40, 110, 60], "22 pt from the opaque columns, the clear one casts no glow");
+    let beside = image.pixel(198, 180);
+    assert!(beside[0] > 60, "2 pt beside the opaque column, its glow tints the clear fill: {beside:?}");
 }
 
 fn upright_picture_background_alpha(gradient: bool) -> Image {
