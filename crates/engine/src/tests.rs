@@ -4183,6 +4183,15 @@ fn picture_recolor_and_transparent_color() {
     assert!(a.grayscale && a.brightness == 0.0, "washout undone by the next preset");
     assert!(s.execute("picture.recolor", &json!({"ids": [id], "preset": "plaid"})).is_err());
 
+    let before = s.doc().unwrap().doc.clone();
+    let undos = s.doc().unwrap().history.undo.len();
+    for color in ["##FFFFFF", "####FFFFFF", "##FFF", "##FFFFFF80"] {
+        let err = s.execute("picture.transparentColor", &json!({"ids": [id], "color": color})).unwrap_err();
+        assert!(err.to_string().contains("bad colour"), "{err}");
+        assert!(std::sync::Arc::ptr_eq(&before, &s.doc().unwrap().doc));
+        assert_eq!(s.doc().unwrap().history.undo.len(), undos);
+    }
+
     s.execute("picture.transparentColor", &json!({"ids": [id], "color": "#FFFFFF"})).unwrap();
     assert_eq!(adj(&s).clear_color, Some(deckcraft_color::Rgba::rgb(255, 255, 255)));
     // Both survive PPTX.

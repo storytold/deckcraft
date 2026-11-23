@@ -135,7 +135,7 @@ fn transparent_color(s: &mut Session, p: &Value) -> Result<Value> {
         None
     } else {
         let hex = str_param(p, "color").ok_or_else(|| bad("picture.transparentColor", "give `color` (#RRGGBB) or `none: true`"))?;
-        Some(Rgba::from_hex(hex.trim_start_matches('#')).ok_or_else(|| bad("picture.transparentColor", format!("bad colour `{hex}`")))?)
+        Some(Rgba::from_hex(hex).ok_or_else(|| bad("picture.transparentColor", format!("bad colour `{hex}`")))?)
     };
     edit_shapes(s, p, "picture.transparentColor", |sh| {
         if let ShapeKind::Picture { fill } = &mut sh.kind {
