@@ -42,7 +42,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
         // Transient status message, clipped before the controls on the right.
-        if let Some(msg) = app.fresh_status() {
+        if let Some(msg) = app.shown_status() {
             let mx = (rect.min.x + 290.0).max(lr.max.x + 16.0);
             let clip = Rect::from_min_max(pos2(mx, rect.min.y), pos2(right_x.max(mx), rect.max.y));
             let mr = p.with_clip_rect(clip).text(pos2(mx, rect.center().y), Align2::LEFT_CENTER, &msg, theme::font(12.0), t.accent);
