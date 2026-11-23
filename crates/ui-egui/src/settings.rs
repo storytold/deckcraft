@@ -33,9 +33,12 @@ fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     }
 }
 
-/// The saved UI state and preferences in `dir` (each `None` when missing or unusable).
+/// The saved UI state and preferences in `dir` (each `None` when missing or unusable). The
+/// ribbon tab is not restored: every document window, new, opened or at launch, opens on Home. A
+/// hidden ribbon stays hidden, as in PowerPoint.
 pub fn load(dir: &Path) -> (Option<UiState>, Option<Prefs>) {
-    (read::<UiState>(&dir.join(UI_FILE)).map(UiState::sanitized), read::<Prefs>(&dir.join(PREFS_FILE)).map(Prefs::sanitized))
+    let ui = read::<UiState>(&dir.join(UI_FILE)).map(|u| UiState { tab: "Home".into(), ..u.sanitized() });
+    (ui, read::<Prefs>(&dir.join(PREFS_FILE)).map(Prefs::sanitized))
 }
 
 /// Write `bytes` to `path` through a temporary file beside it.
@@ -126,11 +129,13 @@ mod tests {
     #[test]
     fn saving_round_trips_and_leaves_no_temporary_file() {
         let d = dir("save");
-        let ui = UiState { zoom: Some(1.5), recent: vec!["/a.pptx".into()], ..Default::default() };
+        let ui = UiState { zoom: Some(1.5), recent: vec!["/a.pptx".into()], tab: "Design".into(), ribbon_collapsed: true, ..Default::default() };
         let prefs = Prefs { author: "Ann".into(), units: deckcraft_geom::Unit::Centimeters, ..Default::default() };
         save(&d.join("nested"), &ui, &prefs);
         let (u, p) = load(&d.join("nested"));
-        assert_eq!(u.unwrap().zoom, Some(1.5));
+        let u = u.unwrap();
+        assert_eq!(u.zoom, Some(1.5));
+        assert_eq!((u.tab.as_str(), u.ribbon_collapsed), ("Home", true), "a launch opens on Home, keeping a hidden ribbon hidden");
         let p = p.unwrap();
         assert_eq!((p.author.as_str(), p.units), ("Ann", deckcraft_geom::Unit::Centimeters));
         let names: Vec<String> =

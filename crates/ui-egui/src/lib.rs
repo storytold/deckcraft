@@ -21,6 +21,8 @@ pub mod capture;
 pub mod control;
 pub mod dialogs;
 pub mod doc_window;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod doc_windows;
 pub mod eyedropper;
 pub mod icons;
 pub mod media;
@@ -54,6 +56,7 @@ mod ime_hooks;
 pub mod panels;
 mod services;
 mod state;
+mod window_ui;
 
 pub use app::key_name;
 #[cfg(test)]
@@ -72,7 +75,7 @@ pub use panels::notes;
 pub use panels::selpane;
 pub use panels::thumbs;
 pub use ribbon::qat;
-pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
+pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, SavePrompt, Services, WriteFn};
 use state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp};
 pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
 
@@ -310,6 +313,17 @@ pub struct SlideApp {
     pub last_recovery: f64,
     /// Quit was confirmed (changes saved or discarded): let the window close.
     pub quit_confirmed: bool,
+    /// Each presentation has a native window of its own ([`doc_windows::DocWindows`]).
+    pub native_windows: bool,
+    /// Quit is asking about each unsaved presentation in turn ([`SlideApp::request_quit`]): the
+    /// presentation asked about last, if any.
+    quitting: Option<Option<u64>>,
+    /// The other presentations' window state ([`window_ui`]), and the presentation whose state
+    /// the fields hold now.
+    parked: HashMap<u64, window_ui::WindowUi>,
+    live_deck: Option<u64>,
+    /// The native window this UI pass draws, besides the root ([`doc_windows::DocWindows`]).
+    pub(crate) window_viewport: Option<egui::ViewportId>,
     pub(crate) notes_buf: (u64, usize, notes::Draft),
     /// Faces borrowed from the font database for text the interface fonts can't draw (#101).
     pub ui_fonts: uifonts::UiFonts,

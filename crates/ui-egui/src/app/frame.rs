@@ -50,10 +50,16 @@ impl SlideApp {
     /// pass after layout; the outer [`Self::ui`] wrapper observes IME output after this returns.
     pub(super) fn ui_end(&mut self, ctx: &egui::Context) {
         self.ime_frame_viewport = None;
-        self.capture.observe_ui(ctx);
-        if !ctx.will_discard() {
-            let doc = self.session.active().map(|d| d.uid);
-            self.capture.issue(ctx, doc, web_time::Instant::now());
+        let doc = self.session.active().map(|d| d.uid);
+        if self.window_viewport.is_some() && self.capture.is_for(doc) && self.capture.pending() > 0 {
+            // eframe 0.37 takes screenshots of the root window only (its immediate viewports are
+            // painted without them), so one of another window would only time out.
+            self.capture.fail_all("ui.screenshot captures the first window only; use ui.render for this presentation");
+        } else if !self.native_windows || self.capture.is_for(doc) {
+            self.capture.observe_ui(ctx);
+            if !ctx.will_discard() {
+                self.capture.issue(ctx, doc, web_time::Instant::now());
+            }
         }
         if self.fonts_ready && !ctx.will_discard() {
             self.synthetic_pending = false;

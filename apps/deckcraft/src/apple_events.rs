@@ -47,7 +47,7 @@ pub fn poll(inbox: &Inbox, app: &mut SlideApp, ctx: &egui::Context) {
                     }
                 }
             }
-            Event::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Event::Quit => app.request_quit(ctx),
         }
     }
 }

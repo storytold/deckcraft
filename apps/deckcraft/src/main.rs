@@ -25,12 +25,17 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+#[cfg(target_os = "macos")]
+mod save_sheet;
 
 use deckcraft_engine::Session;
+use deckcraft_ui_egui::doc_windows::DocWindows;
 use deckcraft_ui_egui::{Services, SlideApp};
 
 struct App(
     SlideApp,
+    /// A native window per open presentation.
+    DocWindows,
     /// Files opened from Finder and quit requests (see `apple_events`).
     #[cfg(target_os = "macos")]
     fmv_macos_events::Inbox,
@@ -39,7 +44,7 @@ struct App(
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
-        apple_events::poll(&self.1, &mut self.0, ctx);
+        apple_events::poll(&self.2, &mut self.0, ctx);
         self.0.logic(ctx);
     }
     /// Forward native raw input to the wrapped application once per pass.
@@ -47,7 +52,7 @@ impl eframe::App for App {
         self.0.raw_input_hook(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.0.ui(ui);
+        self.1.show(&mut self.0, ui);
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
@@ -239,21 +244,13 @@ fn main() -> eframe::Result {
             }
         }
     }
-    let mut options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("DeckCraft")
-            .with_inner_size([1440.0, 900.0])
-            .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false),
-        ..Default::default()
-    };
+    let mut options = eframe::NativeOptions { viewport: window_builder(), ..Default::default() };
     options.viewport = options.viewport.with_app_id(APP_ID);
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
     }
+    // Each presentation's window opens like the first one.
+    let base = options.viewport.clone();
     #[cfg(all(unix, not(target_os = "macos")))]
     let x11 = match display::choose_from_env() {
         display::Choice::X11 => true,
@@ -297,6 +294,10 @@ fn main() -> eframe::Result {
             if let Some(window) = cc.winit_window().cloned() {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
             }
+            #[cfg(target_os = "macos")]
+            {
+                app.services.save_prompt = Some(save_sheet::hook(&cc.egui_ctx));
+            }
             load_prefs(&mut app);
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
@@ -323,13 +324,27 @@ fn main() -> eframe::Result {
             if show {
                 app.start_show(0, false);
             }
+            let windows = DocWindows::new(&mut app, base);
             Ok(Box::new(App(
                 app,
+                windows,
                 #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
             )))
         }),
     )
+}
+
+/// The options every presentation window opens with.
+fn window_builder() -> egui::ViewportBuilder {
+    egui::ViewportBuilder::default()
+        .with_title("DeckCraft")
+        .with_inner_size([1440.0, 900.0])
+        .with_min_inner_size([900.0, 560.0])
+        .with_drag_and_drop(true)
+        .with_fullsize_content_view(true)
+        .with_titlebar_shown(false)
+        .with_title_shown(false)
 }
 
 #[cfg(test)]
@@ -341,8 +356,11 @@ mod tests {
     #[test]
     fn on_exit_ends_the_process_on_macos() {
         if std::env::var_os("DECKCRAFT_TEST_ON_EXIT").is_some() {
+            let mut slides = SlideApp::new(Session::new(), Services::default());
+            let windows = DocWindows::new(&mut slides, window_builder());
             let mut app = App(
-                SlideApp::new(Session::new(), Services::default()),
+                slides,
+                windows,
                 #[cfg(target_os = "macos")]
                 fmv_macos_events::Inbox::default(),
             );
