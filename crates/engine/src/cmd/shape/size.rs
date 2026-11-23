@@ -181,7 +181,8 @@ pub(super) fn rotate(s: &mut Session, p: &Value) -> Result<Value> {
     let (abs, by) = (f64_param(p, "deg"), f64_param(p, "by"));
     edit_geometry(s, p, "shape.rotate", |sh| {
         if let Some(x) = sh.xfrm.as_mut() {
-            let r = abs.unwrap_or(x.rot) + by.unwrap_or(0.0);
+            // Reduce each finite angle before adding so their sum cannot overflow to infinity.
+            let r = (abs.unwrap_or(x.rot) % 360.0) + (by.unwrap_or(0.0) % 360.0);
             x.rot = ((r % 360.0) + 360.0) % 360.0;
         }
         Ok(())
@@ -232,6 +233,32 @@ mod size_position_tests {
 
     fn undos(s: &Session) -> usize {
         s.doc().unwrap().history.undo.len()
+    }
+
+    #[test]
+    fn huge_rotation_angles_stay_finite_and_undo() {
+        let (mut s, id) = deck();
+        let rotation = |s: &Session| s.doc().unwrap().shape(deckcraft_model::ShapeId(id)).unwrap().xfrm.unwrap().rot;
+        for (deg, by, expected) in [
+            (f64::MAX, f64::MAX, 256.0),
+            (-f64::MAX, -f64::MAX, 104.0),
+            (f64::MAX, -f64::MAX, 0.0),
+            (1e308, 1e308, 232.0),
+            (1e308, 1.0, 297.0),
+            (-1e308, -1e308, 128.0),
+            (350.0, 20.0, 10.0),
+            (10.0, -20.0, 350.0),
+        ] {
+            let n = undos(&s);
+            s.execute("shape.rotate", &json!({"deg": deg, "by": by})).unwrap();
+            assert_eq!(rotation(&s), expected);
+            assert_eq!(undos(&s), n + 1);
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(rotation(&s), 0.0);
+            s.execute("edit.redo", &json!({})).unwrap();
+            assert_eq!(rotation(&s), expected);
+            s.execute("edit.undo", &json!({})).unwrap();
+        }
     }
 
     #[test]
