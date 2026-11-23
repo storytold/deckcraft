@@ -141,22 +141,24 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let mut x = rect.min.x + 12.0;
         let y = rect.min.y + 2.0;
         {
-            let w = ui.fonts_mut(|f| f.layout_no_wrap("File".to_string(), theme::font(13.0), t.text).size().x) + 18.0;
+            let file = tl!("File");
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(file.to_string(), theme::font(13.0), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.scope_id().with("tab_file"), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "File"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, file));
             if resp.hovered() {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
             }
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, "File", theme::font(13.0), t.text);
-            if resp.on_hover_text("File (Alt+F)").clicked() {
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, file, theme::font(13.0), t.text);
+            if resp.on_hover_text(tl!("File (Alt+F)")).clicked() {
                 app.open_backstage(crate::backstage::Page::Home);
             }
             x += w + 2.0;
         }
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
-            let label = tab_label(name);
+            // The tab id stays English (`app.ui.tab`); only what is painted is translated.
+            let label = tl!(tab_label(name));
             let font = theme::font(13.0);
             let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
@@ -309,7 +311,7 @@ fn big(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, p: Va
     let en = enabled(app, id);
     let r = big_button(ui, icon, label, en);
     if id == "insert.dateTime" {
-        let name = label.replace('\n', " ");
+        let name = crate::i18n::t(label).replace('\n', " ");
         r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, &name));
     }
     let r = r.on_hover_text(tip(id, label));
@@ -329,6 +331,7 @@ fn small(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, p: 
 }
 
 fn toggle(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, on: bool) {
+    let label = crate::i18n::t(label);
     let en = enabled(app, id);
     if icon_toggle(ui, icon, &tip(id, label), en, on).clicked() {
         run(app, id, json!({}));

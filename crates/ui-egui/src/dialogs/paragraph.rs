@@ -42,13 +42,13 @@ fn paragraph_return_params(d: &mut Dialog) -> Value {
 
 fn line_preset_label(kind: &str, value: &str) -> &'static str {
     if kind == "exactly" {
-        "Exactly"
+        tl!("Exactly")
     } else {
         match value {
-            "1" => "Single",
-            "1.5" => "1.5 lines",
-            "2" => "Double",
-            _ => "Multiple",
+            "1" => tl!("Single"),
+            "1.5" => tl!("1.5 lines"),
+            "2" => tl!("Double"),
+            _ => tl!("Multiple"),
         }
     }
 }
@@ -58,7 +58,7 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
     ui.set_min_width(460.0);
     seed_paragraph_fields(d);
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(110.0, 20.0), egui::Label::new("Alignment"));
+        ui.add_sized(vec2(110.0, 20.0), egui::Label::new(tl!("Alignment")));
         choice(
             ui,
             d,
@@ -75,32 +75,32 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
             ],
         );
     });
-    ui.label(egui::RichText::new("Indentation").strong());
+    ui.label(egui::RichText::new(tl!("Indentation")).strong());
     ui.horizontal(|ui| {
         let _ = labeled_text(ui, d, "Before text", "before", 64.0);
-        ui.label("in");
+        ui.label(tl!("in"));
         ui.add_space(12.0);
         let _ = labeled_text(ui, d, "After text", "after", 64.0);
-        ui.label("in");
+        ui.label(tl!("in"));
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(110.0, 20.0), egui::Label::new("Special"));
-        choice(ui, d, "paragraph_special", "Special", "special", &[("none", "None"), ("first", "First line"), ("hanging", "Hanging")]);
+        ui.add_sized(vec2(110.0, 20.0), egui::Label::new(tl!("Special")));
+        choice(ui, d, "paragraph_special", tl!("Special"), "special", &[("none", "None"), ("first", "First line"), ("hanging", "Hanging")]);
         ui.add_space(8.0);
         let _ = labeled_text(ui, d, "By", "by", 64.0);
-        ui.label("in");
+        ui.label(tl!("in"));
     });
-    ui.label(egui::RichText::new("Spacing").strong());
+    ui.label(egui::RichText::new(tl!("Spacing")).strong());
     ui.horizontal(|ui| {
         let _ = labeled_text(ui, d, "Spacing before", "spaceBefore", 64.0);
-        ui.label("pt");
+        ui.label(tl!("pt"));
         ui.add_space(12.0);
         let _ = labeled_text(ui, d, "Spacing after", "spaceAfter", 64.0);
-        ui.label("pt");
+        ui.label(tl!("pt"));
     });
     let mut picked: Option<(&'static str, Option<&'static str>)> = None;
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(110.0, 20.0), egui::Label::new("Line spacing"));
+        let field = ui.add_sized(vec2(110.0, 20.0), egui::Label::new(tl!("Line spacing")));
         let kind = d.get("lineKind", "multiple");
         let value = d.get("lineValue", "1");
         let combo =
@@ -133,7 +133,7 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
     }
     let mut open_tabs = false;
     ui.horizontal(|ui| {
-        if ui.button("Tabs…").clicked() {
+        if ui.button(tl!("Tabs…")).clicked() {
             open_tabs = true;
         }
     });
@@ -151,27 +151,27 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
     }
     if ok {
         let Some(before_in) = finite_pt(&d.get("before", "")) else {
-            app.set_status("Indent before text must be a number of inches");
+            app.set_status(tl!("Indent before text must be a number of inches"));
             return false;
         };
         let Some(after_in) = finite_pt(&d.get("after", "")) else {
-            app.set_status("Indent after text must be a number of inches");
+            app.set_status(tl!("Indent after text must be a number of inches"));
             return false;
         };
         let Some(by_in) = finite_pt(&d.get("by", "")) else {
-            app.set_status("Special indent must be a number of inches");
+            app.set_status(tl!("Special indent must be a number of inches"));
             return false;
         };
         let Some(space_before) = finite_pt(&d.get("spaceBefore", "")) else {
-            app.set_status("Spacing before must be a number");
+            app.set_status(tl!("Spacing before must be a number"));
             return false;
         };
         let Some(space_after) = finite_pt(&d.get("spaceAfter", "")) else {
-            app.set_status("Spacing after must be a number");
+            app.set_status(tl!("Spacing after must be a number"));
             return false;
         };
         let Some(line_value) = finite_pt(&d.get("lineValue", "")) else {
-            app.set_status("Line spacing must be a number");
+            app.set_status(tl!("Line spacing must be a number"));
             return false;
         };
         let mut params = json!({

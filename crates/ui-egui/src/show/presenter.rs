@@ -261,7 +261,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
+                    ui.label(egui::RichText::new(tl!("Notes")).size(13.0).color(Color32::from_gray(170)));
                     if ui.button("A-").clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }
