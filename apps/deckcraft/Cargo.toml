@@ -39,6 +39,16 @@ cpal = "0.16"
 # GridCraft, PdfCraft and PhotoCraft) registers the handler (Objective-C interop needs unsafe, which
 # our workspace forbids) behind a safe API. Pinned exactly: review the diff before bumping.
 fmv-macos-events = "=0.1.0"
+# font_panel.rs receives the system font panel's and colour panel's picks. Already in Cargo.lock
+# (winit, rfd); pinned exactly to the same versions.
+objc2 = "=0.6.5"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSButton", "NSColor", "NSColorPanel", "NSColorSpace", "NSControl", "NSFont", "NSFontManager", "NSFontPanel", "NSPanel", "NSResponder", "NSView", "NSWindow", "NSWindowRestoration"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSDictionary", "NSString", "NSValue"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+
+# tests/mac_font_panel.rs: the font panel's picks through AppKit, on the main thread.
+[[test]]
+name = "mac_font_panel"
+harness = false

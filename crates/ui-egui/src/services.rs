@@ -73,4 +73,7 @@ pub struct Services {
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
     /// How many displays are connected, when the host can tell: Presenter View needs a second.
     pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
+    /// Show the system font panel on the selection's font (family, size, bold, italic), instead of
+    /// the Font dialog. The host formats the selection with what the user picks there.
+    pub show_fonts: Option<Box<dyn Fn(&str, f64, bool, bool)>>,
 }

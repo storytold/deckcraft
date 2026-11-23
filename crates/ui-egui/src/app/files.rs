@@ -594,6 +594,11 @@ impl SlideApp {
         for r in std::mem::take(&mut self.session.ui_requests) {
             match r {
                 UiRequest::Dialog { id, params } => {
+                    if let Some(show) = self.services.show_fonts.as_ref().filter(|_| id == "font") {
+                        let size = params["size"].as_f64().unwrap_or(18.0);
+                        show(params["family"].as_str().unwrap_or_default(), size, params["bold"] == true, params["italic"] == true);
+                        continue;
+                    }
                     let mut d = dialogs::Dialog::new(&id);
                     d.params = params;
                     self.dialog = Some(d);
