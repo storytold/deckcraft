@@ -2374,6 +2374,15 @@ fn pptx_potx_ppsx_export_parity_preserves_masters_charts_themes_and_timing() {
         ..Default::default()
     });
 
+    let edited_values = vec![Some(111.5), Some(222.25), Some(333.75), Some(444.0)];
+    let chart_slide_idx = p.slides.iter().position(|sl| sl.shapes.iter().any(|s| s.name == "Chart 0")).expect("chart slide");
+    {
+        let ch_shape = Arc::make_mut(&mut p.slides[chart_slide_idx]).shapes.iter_mut().find(|s| s.name == "Chart 0").expect("Chart 0");
+        ch_shape.name = "Revenue Chart".into();
+        let ShapeKind::Chart(ch) = &mut ch_shape.kind else { panic!("expected chart") };
+        ch.series[0].values = edited_values.clone();
+    }
+
     for (ext, expected_ct) in [
         ("pptx", "presentationml.presentation.main+xml"),
         ("potx", "presentationml.template.main+xml"),
@@ -2392,5 +2401,8 @@ fn pptx_potx_ppsx_export_parity_preserves_masters_charts_themes_and_timing() {
         let cue = reopened.slides[0].shapes.iter().find(|s| s.name == "Cue").expect("cue");
         let ShapeKind::Media(clip) = &cue.kind else { panic!("expected media") };
         assert!(clip.autoplay && clip.loop_play && (clip.volume - 0.5).abs() < 1e-3);
+        let chart_shape = reopened.slides[chart_slide_idx].shapes.iter().find(|s| s.name == "Revenue Chart").expect("named chart");
+        let ShapeKind::Chart(chart) = &chart_shape.kind else { panic!("expected chart") };
+        assert_eq!(chart.series[0].values, edited_values, "{ext}");
     }
 }
