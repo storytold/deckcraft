@@ -2,6 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-20 · **Change:** trivial (progress log: WMF scale and offset mapping records place sub-pictures, #2069; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (group-move connector cleanup uses bounded tree passes and hash-set membership; attachment behavior and parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** minor (grouped handle integrity, slide-space click tolerances and Alt-drag duplication; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** trivial (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -10,7 +11,9 @@
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; empty notes slides are kept through PPTX and native saves, #2025; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-09 · **Change:** minor (progress log: PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import, #239) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-07 · **Change:** trivial (progress log: text in a group whose child coordinates scale its shapes is placed for export where the slide draws it; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (community PR wave 10: PPTX and native saves keep table cell centred anchoring, text overflow, compatible line spacing, normalised character height, Thai distributed alignment, RTL table direction, alternate run language and reflection transforms; imported effects placed by parent time-node delays; Reuse Slides fits the destination size and brings custom table styles; deleted slides leave custom shows; merged shapes drop their animations; Compress Pictures measures grouped pictures at displayed size; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -163,6 +166,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-20 | WMF pictures that draw sub-pictures through the scale and offset mapping records (charts and clip art from older Office versions) place each one in its part of the frame (#2069) |
 | 2026-11-18 | Group-move connector cleanup avoids a tree search for each descendant and uses hash-set endpoint membership; stationary and moving attachments retain their behavior (#1095) |
 | 2026-11-18 | Connector cleanup follows moved shape trees: nested connector ends detach from stationary external targets, while targets inside the moved group or selected with it stay glued (#1095) |
 | 2026-11-18 | Grouped line-end attachments persist in the shape tree and follow target sites in connector parent space. Rotation and text-selection drags skip collapsed live mappings; normal and tiny finite frames stay valid (#1095) |
@@ -184,6 +188,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | PPTX: a slide whose notes slide has empty text retains its notesSlide part and relationship on save and reopen (#2025); empty notes slides survive native round trips |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
+| 2026-11-09 | PowerPoint 97–2003 `.ppt`, `.pot` and `.pps` files open (#239): a new `crates/ppt` reads the compound file, the presentation records and the OfficeArt drawings into the model (masters, title masters as layouts, slides, styled text, shapes, pictures, notes). Saving asks for a new name; a `.pps` from the system starts the show |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
 | 2026-11-07 | Text inside a group whose child coordinates scale its shapes is laid out for export as the slide draws it, at the shape's size in points, so the PDF text layer and the boxes of its text hyperlinks lie on the drawn text. SmartArt groups, whose child space equals their frame, are unchanged |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
@@ -374,6 +379,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-20 | trivial | Progress log: WMF scale and offset mapping records (#2069); scores unchanged |
 | 2026-11-18 | minor | Group-move connector cleanup uses bounded tree passes and hash-set membership; large-group pointer coverage preserves stationary connector attachments. Scores unchanged |
 | 2026-11-18 | minor | Moving a group detaches nested connectors from stationary external targets while keeping connections to targets that move with them; pointer, undo and native-save regressions added. Scores unchanged |
 | 2026-11-18 | minor | Grouped connector endpoint glue persists through target movement and native saves; live collapsed-parent rotation/text-selection samples preserve the whole selection; scale-tolerance regression strengthened. Scores unchanged |
