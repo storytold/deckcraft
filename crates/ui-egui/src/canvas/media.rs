@@ -79,4 +79,9 @@ pub(super) fn media_bar(app: &mut SlideApp, ui: &mut Ui, xf: Xf) {
         }
         None => {}
     }
+    // A voice the bar just started is measured from this slide and selection, not from wherever
+    // the editor is by the next tick.
+    if action.is_some() {
+        app.note_editor_media(id);
+    }
 }

@@ -280,3 +280,31 @@ fn selecting_then_deselecting_a_clip_played_unselected_stops_it() {
     select(&mut h, &[]);
     assert!(h.state().media.status(id).is_none(), "deselecting it stops it");
 }
+
+/// A clip started from its bar, then a slide change before the next frame's media tick: the clip
+/// is measured from the slide it was started on, so it stops even when the new slide has a clip
+/// with the same shape id.
+#[test]
+fn a_clip_started_from_its_bar_stops_on_a_slide_change_in_the_same_frame() {
+    let (mut h, id, _) = clip_and_rect();
+    let play = play_button(&h, id);
+    h.hover_at(play);
+    h.run_steps(1);
+    h.event(egui::Event::PointerButton { pos: play, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(1);
+    h.event(egui::Event::PointerButton { pos: play, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    // This frame's ui() starts the clip; the slide changes before the next frame's media tick.
+    h.run_steps(1);
+    assert!(h.state().media.status(id).is_some(), "the bar started the clip");
+    h.state_mut().run("slide.new", json!({"layout": "blank"})).unwrap();
+    h.state_mut()
+        .session
+        .edit(|doc, sel| {
+            let same = doc.slides[sel.slide - 1].shapes.iter().find(|x| x.id == id).cloned().unwrap();
+            std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).shapes.push(same);
+            Ok(())
+        })
+        .unwrap();
+    h.run_steps(3);
+    assert!(h.state().media.status(id).is_none(), "leaving its slide stopped it");
+}

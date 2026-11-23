@@ -76,6 +76,17 @@ impl SlideApp {
         }
     }
 
+    /// Record where the editor is for the voice of `id` just started from the editor (its media
+    /// bar), so a slide or selection change before the next tick is measured from here.
+    pub(crate) fn note_editor_media(&mut self, id: deckcraft_model::ShapeId) {
+        let (Some(d), Some(play)) = (self.session.active(), self.media.play_count(id)) else { return };
+        if self.media.owner(id) != Some(media::Owner::Editor) || self.media_seen.get(&id).is_some_and(|(p, ..)| *p == play) {
+            return;
+        }
+        let (slide, selected) = editor_place(d);
+        self.media_seen.insert(id, (play, slide, selected));
+    }
+
     /// Media clocks. Voices belong to the open presentation: closing the last one, or switching
     /// decks, stops them. The editor's media also stops, as in PowerPoint, when its slide is left
     /// (#2329) or the clip is deselected (#2328); selecting it again plays it from the start. This
@@ -92,9 +103,7 @@ impl SlideApp {
         if self.show.is_none()
             && let Some(d) = self.session.active()
         {
-            // Where the editor is: its slide (none outside the slides) and the selected shapes.
-            let slide = (d.selection.target == deckcraft_engine::Target::Slides).then(|| d.doc.slides.get(d.selection.slide).map(|s| s.id)).flatten();
-            let selected = d.selection.shapes.clone();
+            let (slide, selected) = editor_place(d);
             let here: Vec<deckcraft_model::ShapeId> =
                 if slide.is_some() { media::slide_media(&d.doc, d.selection.slide).into_iter().map(|m| m.0).collect() } else { vec![] };
             let mut stop = vec![];
@@ -135,4 +144,10 @@ impl SlideApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(15));
         }
     }
+}
+
+/// Where the editor is: its slide (none outside the slides) and the selected shapes.
+fn editor_place(d: &deckcraft_engine::DocState) -> (Option<deckcraft_model::SlideId>, Vec<deckcraft_model::ShapeId>) {
+    let slide = (d.selection.target == deckcraft_engine::Target::Slides).then(|| d.doc.slides.get(d.selection.slide).map(|s| s.id)).flatten();
+    (slide, d.selection.shapes.clone())
 }
