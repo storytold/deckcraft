@@ -687,6 +687,48 @@ fn text_shape(id: u32, text: &str, x: f64, y: f64) -> Shape {
 }
 
 #[test]
+fn desaturate_grays_text_box_runs_without_recoloring_the_fill() {
+    use deckcraft_model::{AnimClass, Animation};
+
+    let mut sh = text_shape(2, "MM", 80.0, 80.0);
+    let id = sh.id;
+    let yellow = Rgba::rgb(255, 212, 32);
+    sh.fill = Some(Fill::solid(ColorRef::rgb(yellow)));
+    let runs = &mut sh.text.as_mut().unwrap().paragraphs[0].runs;
+    let mut next = runs[0].clone();
+    next.text = "M".into();
+    next.props.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 0, 220))));
+    runs[0].text = "M".into();
+    runs[0].props.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 0, 0))));
+    runs.push(next);
+    let mut p = deck_with(vec![sh]);
+    std::sync::Arc::make_mut(&mut p.slides[0]).animations.push(Animation {
+        shape: id,
+        class: AnimClass::Emphasis,
+        effect: "desaturate".into(),
+        duration_ms: 500,
+        ..Default::default()
+    });
+    let timeline = deckcraft_anim::Timeline::new(&p.slides[0], p.slide_size.width, p.slide_size.height);
+    let at_end = |id| ShapeState::from(timeline.state_at(id, None, 1.0));
+    let before = render_slide(&p, 0, &RenderOpts::default());
+    let after = render_slide(&p, 0, &RenderOpts { state: Some(&at_end), ..Default::default() });
+    assert_eq!(after.pixel(400, 140), before.pixel(400, 140), "text-box fill");
+    let gray = |ink| {
+        before
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(after.pixels.as_chunks::<4>().0)
+            .find_map(|(source, target)| (source[..3] == ink && target[0] == target[1] && target[1] == target[2]).then_some(target[0]))
+    };
+    let red = gray([220, 0, 0]).expect("the red glyph is gray");
+    let blue = gray([0, 0, 220]).expect("the blue glyph is gray");
+    assert!(red > blue, "the two glyphs keep their relative luminance");
+}
+
+#[test]
 fn morph_text_tokens_are_words_or_characters() {
     let p = Presentation::default();
     let rctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
@@ -1180,6 +1222,14 @@ fn colour_glyphs_paint_their_layers() {
     assert!((share - 0.16).abs() < 0.03, "blue share {share}");
     // The text-colour glyph is as big as the other square.
     assert!((green as f64 / (red + blue) as f64 - 1.0).abs() < 0.1, "green {green} vs {}", red + blue);
+
+    let desaturate = |_: ShapeId| ShapeState { text_desaturation: 1.0, ..Default::default() };
+    let gray = render_slide(&p, 0, &RenderOpts { state: Some(&desaturate), ..Default::default() });
+    let layers = img.pixels.as_chunks::<4>().0.iter().zip(gray.pixels.as_chunks::<4>().0);
+    for rgb in [[255, 0, 0], [0, 0, 255], [0, 160, 0]] {
+        let (before, after) = layers.clone().find(|(px, _)| px[..3] == rgb).expect("the source colour is visible");
+        assert!(after[0] == after[1] && after[1] == after[2] && after[0] < 255, "the glyph colour {before:?} becomes gray: {after:?}");
+    }
 }
 
 #[test]

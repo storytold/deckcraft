@@ -14,22 +14,35 @@ const MAX_DEPTH: usize = 64;
 /// Fills and gradient stops one colour glyph may paint; the rest of a hostile glyph is skipped.
 const MAX_WORK: usize = 100_000;
 
+pub(super) struct Colors {
+    /// Text colour (palette index 0xFFFF), already desaturated if needed.
+    pub foreground: Rgba,
+    pub opacity: f64,
+    /// Desaturate the embedded palette colours by the same amount as the text colour.
+    pub desaturation: f64,
+}
+
 /// Paint `gid` of `face` as a colour glyph, its origin mapped by `at` (y down, points) at `scale`
-/// points per font unit. `fg` is the text colour (palette index 0xFFFF) and `alpha` fades it all.
+/// points per font unit.
 /// False when the glyph has no colour version, so the caller draws the plain outline.
-pub fn paint(ctx: &mut RenderContext, face: &FontFace, gid: u32, at: Affine, scale: f64, fg: Rgba, alpha: f64) -> bool {
+pub(super) fn paint(ctx: &mut RenderContext, face: &FontFace, gid: u32, at: Affine, scale: f64, colors: Colors) -> bool {
     let Some(font) = face.skrifa() else { return false };
     let glyphs = font.color_glyphs();
     let Some(glyph) = glyphs.get(GlyphId::new(gid)) else { return false };
-    let palette: Vec<Rgba> = font
+    let mut palette: Vec<Rgba> = font
         .color_palettes()
         .get(0)
         .map(|p| p.colors().iter().map(|c| Rgba { r: c.red, g: c.green, b: c.blue, a: c.alpha }).collect())
         .unwrap_or_default();
+    if colors.desaturation > 0.0 {
+        for color in &mut palette {
+            *color = deckcraft_anim::desaturate_color(*color, colors.desaturation);
+        }
+    }
     // Font units are y up; the slide is y down.
     let base = at * Affine::scale(scale) * Affine::scale_non_uniform(1.0, -1.0);
-    let mut p = Painter { ctx, face, base, stack: vec![Affine::IDENTITY], palette, fg, opened: Vec::new(), work: 0 };
-    p.ctx.push_layer(None, None, Some(alpha.clamp(0.0, 1.0) as f32), None, None);
+    let mut p = Painter { ctx, face, base, stack: vec![Affine::IDENTITY], palette, fg: colors.foreground, opened: Vec::new(), work: 0 };
+    p.ctx.push_layer(None, None, Some(colors.opacity.clamp(0.0, 1.0) as f32), None, None);
     let ok = glyph.paint(face.location(), &mut p).is_ok();
     // A malformed glyph may leave layers open: close them all.
     while let Some(open) = p.opened.pop() {

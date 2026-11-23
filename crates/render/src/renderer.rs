@@ -5,7 +5,9 @@ use super::opts::{RenderOpts, ShapeState, SlideFields};
 use super::raster::Image;
 use super::slide::{SlidePart, needs_filters, output_size};
 use super::stroke::{arrowheads, head_trims, stroke, trim_ends};
-use super::text_draw::{draw_layout_with, draw_text, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp};
+use super::text_draw::{
+    desaturate_layout, draw_animated_layout, draw_text, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp,
+};
 use super::*;
 
 pub struct Renderer {
@@ -1092,6 +1094,7 @@ impl Renderer {
                 if editing {
                     preview_empty_bullets(&mut l);
                 }
+                desaturate_layout(&mut l, st, rctx);
                 let tm = text_transform(m, tr, l.rotation);
                 for b in l.lines.iter().filter_map(line_bounds) {
                     // Glyphs reach a little past their carets and line box (italics, swashes).
@@ -1100,7 +1103,7 @@ impl Renderer {
                 }
                 match text_warp(rctx, s, tr).filter(|_| l.rotation == 0.0) {
                     Some(w) => warp::draw(ctx, &l, tr, m, &st.paras, &w),
-                    None => draw_layout_with(ctx, &l, tr, m, &st.paras),
+                    None => draw_animated_layout(ctx, &l, tr, m, &st.paras, st.text_desaturation),
                 }
             } else if f.opts.edit && s.ph.is_some() {
                 let kind = s.ph_type().unwrap_or(PhType::Body);
