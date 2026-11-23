@@ -126,3 +126,128 @@ fn the_media_bar_never_paints_or_clicks_into_the_notes_pane() {
     assert!(h.state().media.status(id).is_none(), "Play was not hit through the notes pane");
     assert!(h.ctx.memory(|m| m.focused()).is_some(), "the notes field took the click");
 }
+
+/// A blank slide holding a 2 s audio clip (selected, as inserted) and a rectangle beside it.
+fn clip_and_rect() -> (Harness<'static, SlideApp>, ShapeId, ShapeId) {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [600.0, 60.0, 120.0, 80.0]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("insert.audio", &json!({"name": "tone.wav", "data": deckcraft_engine::cmd::base64_encode(&wav(2.0))})).unwrap();
+    let id = ShapeId(r["id"].as_u64().unwrap() as u32);
+    let app = SlideApp::new(s, Services::default());
+    let mut h = Harness::builder().with_size(vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    (h, id, ShapeId(rect as u32))
+}
+
+/// Where the clip's bar's Play button is on screen.
+fn play_button(h: &Harness<'_, SlideApp>, id: ShapeId) -> Pos2 {
+    let d = h.state().session.active().unwrap();
+    let x = d.doc.slides[d.selection.slide].shape(id).unwrap().xfrm.unwrap();
+    let (slide, k) = (h.state().slide_rect.unwrap(), h.state().canvas_scale);
+    let (left, right, bottom) = (slide.min.x + x.x as f32 * k, slide.min.x + (x.x + x.w) as f32 * k, slide.min.y + (x.y + x.h) as f32 * k);
+    let w = (right - left).max(230.0);
+    pos2((left + right) / 2.0 - w / 2.0, bottom + 6.0) + vec2(15.0, 13.0)
+}
+
+fn select(h: &mut Harness<'_, SlideApp>, ids: &[ShapeId]) {
+    let ids: Vec<u32> = ids.iter().map(|i| i.0).collect();
+    h.state_mut().run("edit.select", json!({"ids": ids})).unwrap();
+    h.run_steps(2);
+}
+
+fn bar_shown(h: &Harness<'_, SlideApp>) -> bool {
+    use egui_kittest::kittest::Queryable;
+    h.query_by_label("Play or pause media").is_some()
+}
+
+/// #2328: as in PowerPoint, clicking off a playing clip stops it and its bar goes; a clip kept
+/// in a larger selection plays on; selecting it again starts it over.
+#[test]
+fn deselecting_a_playing_clip_stops_it_and_hides_its_bar() {
+    let (mut h, id, rect) = clip_and_rect();
+    let play = play_button(&h, id);
+    click(&mut h, play);
+    assert!(h.state().media.is_playing(id), "Play starts the clip");
+    select(&mut h, &[id, rect]);
+    assert!(h.state().media.is_playing(id), "still selected along with another shape: it plays on");
+    // Away from the clip, so the bar would show only because the clip has a voice.
+    h.hover_at(pos2(5.0, 895.0));
+    select(&mut h, &[rect]);
+    assert!(h.state().media.status(id).is_none(), "deselected: stopped");
+    assert!(!bar_shown(&h), "and its bar is gone");
+    select(&mut h, &[id]);
+    assert!(h.state().media.status(id).is_none(), "selecting it again does not resume a paused position");
+}
+
+/// #2328: a clip played without selecting it (media.play from the CLI or MCP) plays on until the
+/// selection changes.
+#[test]
+fn a_clip_played_without_selecting_it_plays_until_the_selection_changes() {
+    let (mut h, id, rect) = clip_and_rect();
+    select(&mut h, &[]);
+    h.state_mut().run("media.play", json!({"id": id.0})).unwrap();
+    h.run_steps(3);
+    assert!(h.state().media.is_playing(id), "plays with nothing selected");
+    select(&mut h, &[rect]);
+    assert!(h.state().media.status(id).is_none(), "a selection change stops it");
+}
+
+/// #2328: the bar of a clip under the pointer plays it, and selects it, so clicking off it then
+/// stops it as for a clip selected first.
+#[test]
+fn the_bar_of_an_unselected_clip_selects_it() {
+    let (mut h, id, _) = clip_and_rect();
+    // Wider than its bar, so the bar's Play button is under the clip: the hover bar shows only
+    // while the pointer is within the clip's width.
+    h.state_mut()
+        .session
+        .edit(|doc, sel| {
+            let sh = deckcraft_model::find_shape_mut(&mut std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).shapes, id).unwrap();
+            sh.xfrm = Some(deckcraft_geom::Xfrm::new(100.0, 100.0, 400.0, 100.0));
+            Ok(())
+        })
+        .unwrap();
+    select(&mut h, &[]);
+    let play = play_button(&h, id);
+    // The bar shows for the clip under the pointer.
+    let d = h.state().session.active().unwrap();
+    let x = d.doc.slides[d.selection.slide].shape(id).unwrap().xfrm.unwrap();
+    let (slide, k) = (h.state().slide_rect.unwrap(), h.state().canvas_scale);
+    h.hover_at(pos2(slide.min.x + (x.x + x.w / 2.0) as f32 * k, slide.min.y + (x.y + x.h / 2.0) as f32 * k));
+    h.run_steps(2);
+    click(&mut h, play);
+    assert!(h.state().media.is_playing(id), "the bar plays the clip");
+    assert_eq!(h.state().session.active().unwrap().selection.shapes, vec![id], "and selects it");
+}
+
+/// #2329: leaving the slide stops the clip, also when the next slide has a clip with the same
+/// shape id (shape ids of a .pptx repeat from slide to slide). Played with nothing selected, so
+/// the slide change alone has to stop it: moving to another slide also clears the selection,
+/// which stops a selected clip anyway (#2328).
+#[test]
+fn changing_slides_stops_a_clip_even_with_the_same_id_on_the_next_slide() {
+    let (mut h, id, _) = clip_and_rect();
+    select(&mut h, &[]);
+    h.state_mut().run("media.play", json!({"id": id.0})).unwrap();
+    h.run_steps(3);
+    assert!(h.state().media.is_playing(id));
+    h.state_mut().run("slide.new", json!({"layout": "blank"})).unwrap();
+    h.state_mut()
+        .session
+        .edit(|doc, sel| {
+            let same = doc.slides[sel.slide - 1].shapes.iter().find(|x| x.id == id).cloned().unwrap();
+            std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).shapes.push(same);
+            Ok(())
+        })
+        .unwrap();
+    h.run_steps(3);
+    assert!(h.state().session.active().unwrap().selection.shapes.is_empty(), "the selection stayed empty");
+    assert!(h.state().media.status(id).is_none(), "the first slide's clip stopped");
+}

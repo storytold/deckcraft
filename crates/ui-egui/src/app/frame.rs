@@ -77,26 +77,40 @@ impl SlideApp {
     }
 
     /// Media clocks. Voices belong to the open presentation: closing the last one, or switching
-    /// decks, stops them. The editor's media also stops when its slide is left. This runs from
-    /// `logic` on every call so a minimized window keeps playing; texture upload stays in `ui`.
+    /// decks, stops them. The editor's media also stops, as in PowerPoint, when its slide is left
+    /// (#2329) or the clip is deselected (#2328); selecting it again plays it from the start. This
+    /// runs from `logic` on every call so a minimized window keeps playing; texture upload stays
+    /// in `ui`.
     pub(super) fn tick_media_clock(&mut self, ctx: &egui::Context) {
         let uid = self.session.active().map(|d| d.uid);
         self.media.set_document(uid);
+        // Where the editor is: its slide (none outside the slides) and the selected shapes.
+        let seen = self.session.active().map(|d| {
+            let slide = (d.selection.target == deckcraft_engine::Target::Slides).then(|| d.doc.slides.get(d.selection.slide).map(|s| s.id)).flatten();
+            (slide, d.selection.shapes.clone())
+        });
+        let before = std::mem::replace(&mut self.media_seen, seen.clone());
         if !self.media.any_active() {
             self.session.media_status.clear();
             return;
         }
         if self.show.is_none()
-            && let Some(d) = self.session.active()
+            && let (Some(d), Some((slide, selected))) = (self.session.active(), seen)
         {
-            let here: Vec<deckcraft_model::ShapeId> = if d.selection.target == deckcraft_engine::Target::Slides {
-                media::slide_media(&d.doc, d.selection.slide).into_iter().map(|m| m.0).collect()
-            } else {
-                vec![]
-            };
-            let gone: Vec<_> =
-                self.media.ids().into_iter().filter(|id| !here.contains(id) && self.media.owner(*id) == Some(media::Owner::Editor)).collect();
-            for id in gone {
+            let here: Vec<deckcraft_model::ShapeId> =
+                if slide.is_some() { media::slide_media(&d.doc, d.selection.slide).into_iter().map(|m| m.0).collect() } else { vec![] };
+            // A slide change stops all of it: another slide's clip can have the same shape id.
+            let left = before.as_ref().is_some_and(|(was, _)| *was != slide);
+            // A selection change stops the clips it deselected. One played without selecting it
+            // (media.play from the CLI or MCP) plays on until the selection changes.
+            let deselected = |id: &deckcraft_model::ShapeId| before.as_ref().is_some_and(|(_, was)| *was != selected) && !selected.contains(id);
+            let stop: Vec<_> = self
+                .media
+                .ids()
+                .into_iter()
+                .filter(|id| self.media.owner(*id) == Some(media::Owner::Editor) && (left || !here.contains(id) || deselected(id)))
+                .collect();
+            for id in stop {
                 self.media.stop(id);
             }
         }

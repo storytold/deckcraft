@@ -83,6 +83,7 @@ impl SlideApp {
             integrated_titlebar: false,
             backstage: None,
             pending_urls: vec![],
+            media_seen: None,
             print_previews: files::PrintPreviews::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
