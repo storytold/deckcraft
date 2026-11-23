@@ -1286,6 +1286,7 @@ dependencies = [
  "serde_json",
  "winit",
  "winresource",
+ "wl-clipboard-rs",
 ]
 
 [[package]]

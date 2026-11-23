@@ -42,3 +42,8 @@ fmv-macos-events = "=0.1.0"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+# Match the native Wayland clipboard rather than offering HTML only on XWayland.
+arboard = { workspace = true, features = ["image-data", "wayland-data-control"] }
+wl-clipboard-rs = "0.9"
