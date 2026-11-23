@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** trivial (reused slide contents fit the destination size; thumbnails remain; parity estimates unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-05 · **Change:** trivial (slide show monitor choice and Presenter View placement on another display (#1225); parity estimates unchanged; previous: trivial, reused slide contents fit the destination size; thumbnails remain; parity estimates unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -69,7 +69,7 @@ The weights are what those users actually depend on, written down so the total c
 | UI/UX fidelity | 15% | ~60% | 30–50 | [ui-parity.md](ui-parity.md) | All 10 ribbon tabs and the contextual tabs exist; Format Shape pane, Animation Pane, dialogs and menus are thinner than PowerPoint's; no native macOS menu bar; user reports #17, #71, #73, #76 |
 | Stability | 10% | ~60% | 10–20 | [gaps.md](gaps.md) | Never-crash rules, a panic guard round every command, PPTX fuzz/malformed tests. But startup crashes on some Windows GPUs (#40, #59) and Close discards edits without asking (#60) |
 | Performance | 5% | ~55% | 10–20 | [hardware-parity.md](hardware-parity.md) | Unmeasured against PowerPoint. Slides rasterize on the CPU (`vello_cpu`); Morph aligns outlines once per transition (#67) |
-| Hardware | 5% | ~40% | 25–45 | [hardware-parity.md](hardware-parity.md) | GPU-composited window (wgpu), but CPU slide raster, software-only video decode, presenter view not placed on the second display, no pen tilt, no pinch zoom |
+| Hardware | 5% | ~40% | 25–45 | [hardware-parity.md](hardware-parity.md) | GPU-composited window (wgpu), but CPU slide raster, software-only video decode, no projector detection (the show monitor is chosen in Set Up Slide Show), no pen tilt, no pinch zoom |
 | Platforms | 5% | ~80% | 5–10 | [ROADMAP.md](../ROADMAP.md) | Ahead in reach: macOS, Windows x64/x86/arm64, Linux (5 formats), FreeBSD and the web, all from one release workflow. Held back by the Windows GPU crashes and the Windows image-paste gap (#1414; Linux not re-checked) |
 | Localization | 5% | ~8% | 55–90 + native review | [localization-parity.md](localization-parity.md) | English only; no string catalog. PowerPoint for Mac ships 26 languages. Bidi and Arabic shaping in slide text exist |
 | Ecosystem (templates, add-ins) | 3% | ~25% | 10–20 | [gaps.md](gaps.md) | 8 original themes and 6 original starter decks; PowerPoint's large template gallery remains; no add-ins or VBA (out of scope by policy) |
@@ -106,7 +106,7 @@ PowerPoint is taken out of the areas and charged once, as a discount.
 | Tables | 5 | 78 | Styles, merge/split, grow-to-fit |
 | Charts: column, bar, line, pie with data | 6 | 58 | Chart Data dialog; elements partial |
 | Transitions and common animations | 8 | 76 | 48/48 transitions; effects cover ~85% of use; pane has no timeline |
-| Presenting: show, presenter view | 10 | 70 | Works; not auto-placed on the second display; no laser |
+| Presenting: show, presenter view | 10 | 70 | Works; show monitor chosen in Set Up Slide Show, Presenter View on another display, Swap Displays; no projector detection; no laser |
 | Audio and video on slides | 3 | 62 | Plays; slow video in the show on Linux (#91) |
 | Comments | 3 | 60 | Threads, resolve |
 | Undo and clipboard | 4 | 75 | Unlimited undo; Paste Special partial |
@@ -194,7 +194,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
 | Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects | [animation-parity.md](animation-parity.md) |
-| Slide show and presenter view | 8 | 68% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
+| Slide show and presenter view | 8 | 68% | ~60% | 10–16 | Projector detection, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
 | Review | 3 | 70% | ~45% | 8–14 | Compare depth, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
 | Draw (ink) | 2 | 50% | ~30% | 5–9 | Pen tilt, ink to math, lasso, ink to shape/text depth | [hardware-parity.md](hardware-parity.md) |
 | Undo and clipboard | 3 | 100% | ~75% | 3–5 | Image paste on Windows (#1414) | [ui-parity.md](ui-parity.md) |
@@ -288,6 +288,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | trivial | Slide show monitor choice, Swap Displays and Presenter View placement (#1225); projector detection remains; parity estimates unchanged |
 | 2026-11-02 | trivial | Reused slide content scales to the destination; picker thumbnails remain; parity estimates unchanged |
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-17 | trivial | A word no longer breaks after `?`, `!`, `}` or `+` (a URL's query wraps at the edge as in PowerPoint 2016 for Windows), as it already didn't after `/` and `\`. Headline percentages unchanged |

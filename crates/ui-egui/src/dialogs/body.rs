@@ -242,6 +242,26 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Set Up Slide Show's `showDisplay` field while the saved display is not connected: OK keeps it.
+const KEEP_SAVED_DISPLAY: &str = "saved";
+const SAVED_DISPLAY_LABEL: &str = "Saved display (not connected)";
+
+/// Display `i` of `list` in Set Up Slide Show: its name where the system gives one ("DELL U2720Q
+/// (3840 × 2160)"), numbered too when another display has the same name, else "Display 2 (1280 ×
+/// 720)"; the size in physical pixels. On macOS winit names a display "Monitor #" and a number
+/// that changes when it is re-plugged, which says less than "Display 2": that counts as no name.
+fn screen_label(list: &[crate::displays::Display], i: usize) -> Option<String> {
+    let screen = list.get(i)?;
+    let generic = |n: &str| n.strip_prefix("Monitor #").is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()));
+    let name = |d: &crate::displays::Display| d.name.as_deref().map(str::trim).filter(|n| !n.is_empty() && !generic(n)).map(str::to_owned);
+    let (w, h) = (screen.w, screen.h);
+    Some(match name(screen) {
+        Some(n) if list.iter().filter(|d| name(d).as_deref() == Some(n.as_str())).count() > 1 => format!("Display {}: {n} ({w} × {h})", i + 1),
+        Some(n) => format!("{n} ({w} × {h})"),
+        None => format!("Display {} ({w} × {h})", i + 1),
+    })
+}
+
 fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let sh = app.session.active().map(|s| s.doc.show.clone()).unwrap_or_default();
     let ty = d.get("type", &sh.show_type);
@@ -275,8 +295,58 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let _ = combo.response.labelled_by(field.id);
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new("Multiple monitors").font(theme::bold(13.0)));
+    // Keep the machine-local choice pending until OK; Cancel, Esc and closing discard it. The
+    // displays are read as the dialog opens, and the saved one found among them again.
+    if !d.fields.contains_key("showDisplay") {
+        app.refresh_displays();
+    }
+    let saved = app.ui.show_display.is_some() || app.ui.show_display_id.is_some();
+    let found = app.displays.find(app.ui.show_display, app.ui.show_display_id.as_ref());
+    let initial = match found {
+        Some(i) => i.to_string(),
+        None if saved => KEEP_SAVED_DISPLAY.into(),
+        None => String::new(),
+    };
+    let field = d.get("showDisplay", &initial);
+    // `Err`: the saved display, which is not connected now; OK keeps it.
+    let mut display = if field == KEEP_SAVED_DISPLAY { Err(()) } else { Ok(field.parse::<usize>().ok()) };
+    let enabled = d.get("type", &sh.show_type) != "browsed";
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.horizontal(|ui| {
+            let label = ui.label("Slide show monitor:");
+            let display_label = |i: usize| screen_label(&app.displays.list, i);
+            let selected = match display {
+                Err(()) => SAVED_DISPLAY_LABEL.into(),
+                Ok(i) => i.and_then(display_label).unwrap_or_else(|| "Automatic".into()),
+            };
+            craft_ui::ComboBox::from_id_salt("setup-show-monitor")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if saved && found.is_none() {
+                        ui.selectable_value(&mut display, Err(()), SAVED_DISPLAY_LABEL);
+                    }
+                    ui.selectable_value(&mut display, Ok(None), "Automatic");
+                    for i in 0..app.displays.list.len() {
+                        ui.selectable_value(&mut display, Ok(Some(i)), screen_label(&app.displays.list, i).unwrap_or_default());
+                    }
+                })
+                .response
+                .labelled_by(label.id)
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, "Slide show monitor"));
+        });
+    });
+    let field = match display {
+        Err(()) => KEEP_SAVED_DISPLAY.into(),
+        Ok(i) => i.map_or_else(String::new, |i| i.to_string()),
+    };
+    d.fields.insert("showDisplay".into(), field);
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
+        if let Ok(display) = display {
+            app.ui.set_show_display(display, &app.displays);
+        }
         let ty = d.get("type", "speaker");
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
         run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
@@ -1406,4 +1476,29 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         restore_preferences(app, d);
     }
     ok || cancel
+}
+
+#[cfg(test)]
+mod screen_label_tests {
+    use super::screen_label;
+    use crate::displays::Display;
+
+    fn named(name: Option<&str>, x: i32) -> Display {
+        Display { name: name.map(Into::into), x, y: 0, w: 1920, h: 1080 }
+    }
+
+    #[test]
+    fn displays_are_listed_by_name_where_it_says_something() {
+        let list = [named(Some("DELL U2720Q"), 0), named(None, 1920), named(Some("Monitor #41031"), 3840), named(Some("  "), 5760)];
+        assert_eq!(screen_label(&list, 0).as_deref(), Some("DELL U2720Q (1920 × 1080)"));
+        assert_eq!(screen_label(&list, 1).as_deref(), Some("Display 2 (1920 × 1080)"));
+        // winit's macOS name is a changing number: numbered like a display without a name.
+        assert_eq!(screen_label(&list, 2).as_deref(), Some("Display 3 (1920 × 1080)"));
+        assert_eq!(screen_label(&list, 3).as_deref(), Some("Display 4 (1920 × 1080)"));
+        assert_eq!(screen_label(&list, 4), None);
+        // Two with the same name are told apart by number.
+        let twins = [named(Some("DELL U2720Q"), 0), named(Some("DELL U2720Q"), 1920)];
+        assert_eq!(screen_label(&twins, 1).as_deref(), Some("Display 2: DELL U2720Q (1920 × 1080)"));
+        assert_eq!(screen_label(&[named(Some("Monitor #"), 0)], 0).as_deref(), Some("Monitor # (1920 × 1080)"));
+    }
 }
