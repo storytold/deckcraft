@@ -251,3 +251,18 @@ fn changing_slides_stops_a_clip_even_with_the_same_id_on_the_next_slide() {
     assert!(h.state().session.active().unwrap().selection.shapes.is_empty(), "the selection stayed empty");
     assert!(h.state().media.status(id).is_none(), "the first slide's clip stopped");
 }
+
+/// A script or MCP client that changes the slide and starts a clip before the next frame keeps
+/// that playback: a clip is judged against the slide and selection it started with.
+#[test]
+fn a_clip_played_in_the_same_batch_as_a_slide_change_keeps_playing() {
+    let (mut h, id, _) = clip_and_rect();
+    h.state_mut().run("slide.new", json!({"layout": "blank"})).unwrap();
+    h.run_steps(2);
+    // Back to the clip's slide and play it, with no frame in between.
+    let back = h.state().session.active().unwrap().selection.slide - 1;
+    h.state_mut().run("slide.go", json!({"index": back})).unwrap();
+    h.state_mut().run("media.play", json!({"id": id.0})).unwrap();
+    h.run_steps(3);
+    assert!(h.state().media.is_playing(id), "the clip plays");
+}

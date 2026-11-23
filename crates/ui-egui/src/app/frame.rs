@@ -84,35 +84,46 @@ impl SlideApp {
     pub(super) fn tick_media_clock(&mut self, ctx: &egui::Context) {
         let uid = self.session.active().map(|d| d.uid);
         self.media.set_document(uid);
-        // Where the editor is: its slide (none outside the slides) and the selected shapes.
-        let seen = self.session.active().map(|d| {
-            let slide = (d.selection.target == deckcraft_engine::Target::Slides).then(|| d.doc.slides.get(d.selection.slide).map(|s| s.id)).flatten();
-            (slide, d.selection.shapes.clone())
-        });
-        let before = std::mem::replace(&mut self.media_seen, seen.clone());
         if !self.media.any_active() {
+            self.media_seen.clear();
             self.session.media_status.clear();
             return;
         }
         if self.show.is_none()
-            && let (Some(d), Some((slide, selected))) = (self.session.active(), seen)
+            && let Some(d) = self.session.active()
         {
+            // Where the editor is: its slide (none outside the slides) and the selected shapes.
+            let slide = (d.selection.target == deckcraft_engine::Target::Slides).then(|| d.doc.slides.get(d.selection.slide).map(|s| s.id)).flatten();
+            let selected = d.selection.shapes.clone();
             let here: Vec<deckcraft_model::ShapeId> =
                 if slide.is_some() { media::slide_media(&d.doc, d.selection.slide).into_iter().map(|m| m.0).collect() } else { vec![] };
-            // A slide change stops all of it: another slide's clip can have the same shape id.
-            let left = before.as_ref().is_some_and(|(was, _)| *was != slide);
-            // A selection change stops the clips it deselected. One played without selecting it
-            // (media.play from the CLI or MCP) plays on until the selection changes.
-            let deselected = |id: &deckcraft_model::ShapeId| before.as_ref().is_some_and(|(_, was)| *was != selected) && !selected.contains(id);
-            let stop: Vec<_> = self
-                .media
-                .ids()
-                .into_iter()
-                .filter(|id| self.media.owner(*id) == Some(media::Owner::Editor) && (left || !here.contains(id) || deselected(id)))
-                .collect();
+            let mut stop = vec![];
+            let editor: Vec<_> = self.media.ids().into_iter().filter(|id| self.media.owner(*id) == Some(media::Owner::Editor)).collect();
+            for id in &editor {
+                let play = self.media.play_count(*id).unwrap_or(0);
+                // A clip is judged against where the editor was when it started, so a script that
+                // changes slide or selection and plays in one batch keeps its playback.
+                match self.media_seen.get(id) {
+                    Some((p, was_slide, was_selected)) if *p == play => {
+                        // Another slide's clip can have the same shape id: a slide change stops it.
+                        let left = *was_slide != slide;
+                        // A selection change stops the clips it deselected. One played without
+                        // selecting it (media.play from the CLI or MCP) plays on until then.
+                        let deselected = *was_selected != selected && !selected.contains(id);
+                        if left || deselected || !here.contains(id) {
+                            stop.push(*id);
+                        }
+                    }
+                    _ if !here.contains(id) => stop.push(*id),
+                    _ => {
+                        self.media_seen.insert(*id, (play, slide, selected.clone()));
+                    }
+                }
+            }
             for id in stop {
                 self.media.stop(id);
             }
+            self.media_seen.retain(|id, _| editor.contains(id) && self.media.status(*id).is_some());
         }
         let playing = self.media.tick_clock(monotonic_secs(), &mut self.session);
         if playing {

@@ -35,6 +35,8 @@ struct Owned {
     clip: MediaClip,
     /// Address of the source bytes this voice was started with.
     source: usize,
+    /// Which play started this voice (see [`MediaHost::play_count`]).
+    play: u64,
 }
 
 /// A probed duration. `source` keeps that allocation alive so a later buffer cannot reuse the
@@ -55,6 +57,8 @@ pub struct MediaHost {
     durations: HashMap<usize, Probed>,
     /// Animated GIF clocks for `doc`: when each started and, while paused, the time it holds.
     gifs: HashMap<ShapeId, (f64, Option<f64>)>,
+    /// Plays started so far: each voice knows which one started it.
+    plays: u64,
 }
 
 /// An animated GIF picture on a slide: its box, play time, frame and seconds to the next frame.
@@ -106,6 +110,7 @@ impl MediaHost {
             videos: HashMap::new(),
             durations: HashMap::new(),
             gifs: HashMap::new(),
+            plays: 0,
         }
     }
 
@@ -202,6 +207,12 @@ impl MediaHost {
         self.owners.get(&id).map(|o| o.owner)
     }
 
+    /// Which play started the voice of `id`: a different number means it was started (or
+    /// resumed) again since.
+    pub fn play_count(&self, id: ShapeId) -> Option<u64> {
+        self.owners.get(&id).map(|o| o.play)
+    }
+
     /// The clip voice `id` was started with.
     pub fn clip(&self, id: ShapeId) -> Option<&MediaClip> {
         self.owners.get(&id).map(|o| &o.clip)
@@ -239,7 +250,8 @@ impl MediaHost {
             self.videos.remove(&id);
         }
         self.player.play(key(id), media_key as u64, &bytes, spec, from);
-        self.owners.insert(id, Owned { owner, clip: clip.clone(), source: media_key });
+        self.plays += 1;
+        self.owners.insert(id, Owned { owner, clip: clip.clone(), source: media_key, play: self.plays });
     }
 
     /// A decoder for the video of shape `id`, within the cap on live decoders; `None` past it or
