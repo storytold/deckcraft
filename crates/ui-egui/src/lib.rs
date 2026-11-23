@@ -156,7 +156,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.pasteSpecial", "Paste Special…", Some("Cmd+Alt+V"), "{}"),
     ("app.qat", "Quick Access Toolbar", None, "{add: command id, params?, label?, icon?} | {remove: id, params?} | {reset: true} → [buttons]"),
     ("app.find", "Find…", Some("Cmd+F"), "{}"),
-    ("app.replace", "Replace…", Some("Cmd+H"), "{}"),
+    ("app.replace", "Replace…", Some("Ctrl+H"), "{}"),
     ("app.links", "Community Links", None, "{}"),
 ];
 
