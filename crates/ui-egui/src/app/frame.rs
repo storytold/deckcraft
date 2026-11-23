@@ -103,7 +103,7 @@ impl SlideApp {
                 let play = self.media.play_count(*id).unwrap_or(0);
                 // A clip is judged against where the editor was when it started, so a script that
                 // changes slide or selection and plays in one batch keeps its playback.
-                match self.media_seen.get(id) {
+                match self.media_seen.get_mut(id) {
                     Some((p, was_slide, was_selected)) if *p == play => {
                         // Another slide's clip can have the same shape id: a slide change stops it.
                         let left = *was_slide != slide;
@@ -112,6 +112,11 @@ impl SlideApp {
                         let deselected = *was_selected != selected && !selected.contains(id);
                         if left || deselected || !here.contains(id) {
                             stop.push(*id);
+                        } else {
+                            // Playing on: later changes are measured from here, so selecting the
+                            // clip and then deselecting it stops it even if the selection is back
+                            // where it started.
+                            *was_selected = selected.clone();
                         }
                     }
                     _ if !here.contains(id) => stop.push(*id),

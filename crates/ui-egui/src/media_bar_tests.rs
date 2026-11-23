@@ -266,3 +266,17 @@ fn a_clip_played_in_the_same_batch_as_a_slide_change_keeps_playing() {
     h.run_steps(3);
     assert!(h.state().media.is_playing(id), "the clip plays");
 }
+
+/// A clip played with nothing selected, then selected and deselected, stops at the deselection,
+/// although the selection is back where it was when the clip started.
+#[test]
+fn selecting_then_deselecting_a_clip_played_unselected_stops_it() {
+    let (mut h, id, _) = clip_and_rect();
+    select(&mut h, &[]);
+    h.state_mut().run("media.play", json!({"id": id.0})).unwrap();
+    h.run_steps(3);
+    select(&mut h, &[id]);
+    assert!(h.state().media.is_playing(id), "selecting it keeps it playing");
+    select(&mut h, &[]);
+    assert!(h.state().media.status(id).is_none(), "deselecting it stops it");
+}
