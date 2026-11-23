@@ -161,10 +161,27 @@ fn find(s: &mut Session, p: &Value) -> Result<Value> {
 fn replace(s: &mut Session, p: &Value) -> Result<Value> {
     let o = Opts::from(p, "text.replace")?;
     let with = str_param(p, "with").unwrap_or("").to_string();
-    let at = p.get("at").filter(|v| v.is_object()).map(|v| -> Result<(usize, Loc, usize, usize)> {
-        let n = |k: &str| v.get(k).and_then(Value::as_u64).map(|x| x as usize).ok_or_else(|| bad("text.replace", format!("`at` needs `{k}`")));
-        let cell = v.get("cell").and_then(Value::as_array).and_then(|c| Some((c.first()?.as_u64()? as usize, c.get(1)?.as_u64()? as usize)));
-        Ok((n("slide")?, Loc { shape: v.get("shape").and_then(Value::as_u64), cell }, n("para")?, n("start")?))
+    // A malformed match must never fall back to replacing every occurrence or another text body.
+    let at = match p.get("at") {
+        None | Some(Value::Null) => None,
+        Some(v) if v.is_object() => Some(v),
+        _ => return Err(bad("text.replace", "`at` must be a text.find match object")),
+    };
+    let at = at.map(|v| -> Result<(usize, Loc, usize, usize)> {
+        let index = |x: &Value| x.as_u64().and_then(|x| usize::try_from(x).ok());
+        let n = |k: &str| v.get(k).and_then(index).ok_or_else(|| bad("text.replace", format!("`at` needs `{k}`")));
+        let shape = match v.get("shape") {
+            None | Some(Value::Null) => None,
+            Some(shape) => Some(shape.as_u64().ok_or_else(|| bad("text.replace", "`at.shape` must be an unsigned shape id or null"))?),
+        };
+        let cell = match v.get("cell") {
+            None | Some(Value::Null) => None,
+            Some(cell) => match cell.as_array().map(Vec::as_slice) {
+                Some([r, c]) if let (Some(r), Some(c)) = (index(r), index(c)) => Some((r, c)),
+                _ => return Err(bad("text.replace", "`at.cell` must be [row, col] indices or null")),
+            },
+        };
+        Ok((n("slide")?, Loc { shape, cell }, n("para")?, n("start")?))
     });
     let at = at.transpose()?;
     let count = s.edit(|doc, _| {
@@ -264,5 +281,71 @@ mod tests {
         assert_eq!(para_chars(&p).iter().collect::<String>(), "Hola world");
         assert_eq!(p.runs[0].text, "Hola");
         assert_eq!(p.runs[0].props, bold);
+    }
+
+    #[test]
+    fn malformed_replacement_targets_never_change_the_document_or_history() {
+        let mut s = Session::with_new();
+        let id = s.execute("insert.textBox", &json!({"text": "needle needle"})).unwrap()["id"].clone();
+        s.execute("insert.table", &json!({"rows": 1, "cols": 2, "data": [["needle", "needle"]]})).unwrap();
+        s.edit(|doc, _| {
+            Arc::make_mut(&mut doc.slides[0]).notes = TextBody::from_text("needle");
+            Ok(())
+        })
+        .unwrap();
+        let before = s.doc().unwrap().doc.clone();
+        let undo = s.doc().unwrap().history.undo.len();
+        let mut targets = vec![json!(false), json!(7), json!("all"), json!([])];
+        let target = json!({"slide": 0, "shape": id, "cell": null, "para": 0, "start": 0});
+        for key in ["shape", "cell", "slide", "para", "start"] {
+            let invalid = if key == "cell" {
+                vec![json!(false), json!(0), json!("0,0"), json!({}), json!([]), json!([0]), json!([0, 0, 0]), json!([-1, 0]), json!([0, 1.5])]
+            } else {
+                vec![json!(false), json!(-1), json!(1.5), json!("0"), json!([]), json!({})]
+            };
+            for value in invalid {
+                let mut at = target.clone();
+                at[key] = value;
+                targets.push(at);
+            }
+        }
+        for at in targets {
+            let error = s.execute("text.replace", &json!({"text": "needle", "with": "changed", "at": at})).unwrap_err().to_string();
+            assert!(error.contains("text.replace") && error.contains("`at"), "{at}: {error}");
+            assert_eq!(s.doc().unwrap().doc, before, "{at}");
+            assert_eq!(s.doc().unwrap().history.undo.len(), undo, "{at}");
+        }
+    }
+
+    #[test]
+    fn valid_replacement_targets_and_replace_all_defaults_are_preserved() {
+        for at in [None, Some(Value::Null)] {
+            let mut s = Session::with_new();
+            s.execute("insert.textBox", &json!({"text": "needle needle"})).unwrap();
+            let mut params = json!({"text": "needle", "with": "changed"});
+            if let Some(at) = at {
+                params["at"] = at;
+            }
+            assert_eq!(s.execute("text.replace", &params).unwrap()["replaced"], 2);
+        }
+        let mut s = Session::with_new();
+        let id = s.execute("insert.textBox", &json!({"text": "needle needle"})).unwrap()["id"].clone();
+        s.execute("insert.table", &json!({"rows": 1, "cols": 2, "data": [["needle", "needle"]]})).unwrap();
+        s.edit(|doc, _| {
+            Arc::make_mut(&mut doc.slides[0]).notes = TextBody::from_text("needle");
+            Ok(())
+        })
+        .unwrap();
+        let found = s.execute("text.find", &json!({"text": "needle"})).unwrap();
+        for at in found.as_array().unwrap() {
+            assert_eq!(s.execute("text.replace", &json!({"text": "needle", "with": "change", "at": at})).unwrap()["replaced"], 1);
+        }
+        let text = s.execute("text.get", &json!({"id": id})).unwrap();
+        assert_eq!(text["text"], "change change");
+        assert_eq!(s.doc().unwrap().doc.slides[0].notes.text(), "change");
+        assert!(s.execute("text.find", &json!({"text": "needle"})).unwrap().as_array().unwrap().is_empty());
+        let params = json!({"text": "change", "with": "notes", "at": {"slide": 0, "para": 0, "start": 0}});
+        assert_eq!(s.execute("text.replace", &params).unwrap()["replaced"], 1);
+        assert_eq!(s.doc().unwrap().doc.slides[0].notes.text(), "notes");
     }
 }
