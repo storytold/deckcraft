@@ -19,6 +19,7 @@ pub mod icons;
 pub mod inkshape;
 pub mod io;
 pub mod keys;
+pub mod library;
 pub mod links;
 pub mod media_refs;
 pub mod recovery;
@@ -361,6 +362,9 @@ pub struct Prefs {
     /// The unit the rulers, the Format pane and the size dialogs show (Preferences); the deck
     /// itself always stores points.
     pub units: deckcraft_geom::Unit,
+    /// The folders of presentations the Library pane browses (`library.addFolder`), absolute,
+    /// at most [`library::MAX_FOLDERS`].
+    pub library_folders: Vec<String>,
 }
 
 impl Default for Prefs {
@@ -385,6 +389,7 @@ impl Default for Prefs {
             undo_limit: 500,
             recovery_minutes: 1.0,
             units: deckcraft_geom::Unit::Inches,
+            library_folders: Vec::new(),
         }
     }
 }
@@ -405,7 +410,27 @@ impl Prefs {
         if self.author.chars().count() > 256 {
             self.author = self.author.chars().take(256).collect();
         }
+        self.library_folders = library::sanitized_folders(std::mem::take(&mut self.library_folders));
         self
+    }
+}
+
+/// The preferences file ([`Prefs`]) in [`settings_dir`].
+pub const PREFS_FILE: &str = "prefs.json";
+
+/// The per-user settings folder the desktop app keeps `prefs.json`, `ui.json` and its logs in; the
+/// CLI reads the Library folders from there too. Only the path: nothing is read here.
+pub fn settings_dir() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support/DeckCraft"))
+    } else if cfg!(windows) {
+        std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("DeckCraft"))
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .map(|c| c.join("deckcraft"))
     }
 }
 
@@ -517,6 +542,8 @@ pub struct Session {
     next_loaded: u64,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
+    /// What the Library pane has read from its folders (indexes, decks, thumbnails), bounded.
+    pub(crate) library: library::Cache,
 }
 
 impl Default for Session {
@@ -551,6 +578,7 @@ impl Session {
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+            library: library::Cache::default(),
         }
     }
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);

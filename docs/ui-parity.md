@@ -1,5 +1,6 @@
 # UI parity with PowerPoint
 
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-15 · **Change:** trivial (Library pane, first step of #958: Insert ▸ Library with a Slides tab over the user's folders; parity scores unchanged; previous: trivial, File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-10 · **Change:** trivial (File › Export › Change File Type and Save As export every slide as PNG or JPEG, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -73,6 +74,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Slide Master | Insert Layout, Rename, Delete, Preserve, Insert Placeholder, Title and Footers | Insert Layout, Rename, Delete, Insert Placeholder, and Preserve, Title and Footers checkboxes (`master.preserve`, `master.placeholders`). A master thumbnail selects the master |
 | Format Background pane | yes | yes: solid transparency; picture transparency, tile, offset, scale, alignment and mirror; Apply to All copies a picture. Stretch insets and rotate-with-shape are command parameters |
 | Selection Pane | front-most first, groups fold, drag to restack, Bring Forward / Send Backward arrows, Show All / Hide All, eye, padlock (Lock), rename in place | same: drag restacks among siblings (a child stays in its group), Ctrl+click toggles, Shift+click selects a run, arrows / Home / End / F2 / Esc in the list, right-click menu |
+| Library pane (Insert ▸ Library, #958) | none built in; Reuse Slides browses one file at a time | Slides tab: thumbnails of the slides in your own folders of .pptx, .potx and .deckcraft files, grouped by file; a folder drop-down with Add Folder… and Remove; search over slide titles, slide text and file names; click a slide to insert it, or right-click to put its shapes, or one named element (Insert element), on the current slide. Other tabs (#958) and the deck's own objects (#909) are to come; the browser build has no folders to read |
 | Comments pane (threads) | yes | yes: every slide, with Previous and Next on the Review tab |
 | Animation Pane | list + advanced timeline | list, reorder, timing, an advanced timeline with draggable bars, play the current slide on the canvas, and Play From starts at the selected effect |
 | Design Ideas (Designer) | yes (cloud) | no |
@@ -173,6 +175,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | trivial | Library pane (Insert ▸ Library, #958): Slides tab over the user's own folders of presentations, with Insert element; scores unchanged |
 | 2026-11-10 | trivial | Change File Type and Save As export every slide as PNG or JPEG (#2019); scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |

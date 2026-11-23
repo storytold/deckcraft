@@ -42,7 +42,8 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<InboxEvent>>>;
 pub struct Services {
     /// Browser-owned presenter popup; absent on native hosts.
     pub presenter: Option<Box<dyn crate::presenter::Host>>,
-    /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) → path.
+    /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`; `folder` picks a
+    /// folder) → path.
     pub pick_open: Option<PickFn>,
     /// Save dialog with a suggested name → path.
     pub pick_save: Option<PickFn>,
