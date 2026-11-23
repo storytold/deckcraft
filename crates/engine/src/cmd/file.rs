@@ -257,6 +257,7 @@ pub struct LoadedFile {
     pub path: String,
     pub doc: Presentation,
     pub file_fingerprint: u64,
+    pub file_resolved_path: Option<String>,
     /// A native or PPTX file (saving goes back to it); an outline import has no file to save to.
     pub native: bool,
     /// What the file had lost or damaged.
@@ -267,7 +268,9 @@ pub struct LoadedFile {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_presentation_file(path: &str) -> Result<LoadedFile> {
     let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
-    loaded_file(path, &bytes)
+    let mut loaded = loaded_file(path, &bytes)?;
+    loaded.file_resolved_path = crate::io::resolved_path(path);
+    Ok(loaded)
 }
 
 /// Parse `bytes` as the presentation file `path`, as [`read_presentation_file`] does after
@@ -276,25 +279,20 @@ pub fn read_presentation_file(path: &str) -> Result<LoadedFile> {
 pub fn loaded_file(path: &str, bytes: &[u8]) -> Result<LoadedFile> {
     let (doc, damaged) = open_checked(path, bytes)?;
     let native = deckcraft_format::sniff(bytes) || deckcraft_pptx::sniff(bytes);
-    Ok(LoadedFile { path: path.to_string(), doc, file_fingerprint: fingerprint(bytes), native, damaged })
-}
-
-fn fingerprint(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
+    Ok(LoadedFile { path: path.to_string(), doc, file_fingerprint: crate::io::fingerprint(bytes), file_resolved_path: None, native, damaged })
 }
 
 /// Add a loaded presentation as the active document: the shared end of `file.open` and
 /// `file.adopt`. A damaged file opens as an untitled repaired copy, so Save can't overwrite the
 /// original with the empty media.
 fn adopt_loaded(s: &mut Session, f: LoadedFile) -> Result<Value> {
-    let LoadedFile { path, doc, file_fingerprint, native, damaged } = f;
+    let LoadedFile { path, doc, file_fingerprint, file_resolved_path, native, damaged } = f;
     let keep_path = native && damaged.is_empty();
     let i = add_opened(s, &path, keep_path.then(|| path.clone()), doc);
     if keep_path {
-        s.doc_mut()?.file_fingerprint = Some(file_fingerprint);
+        let st = s.doc_mut()?;
+        st.file_fingerprint = Some(file_fingerprint);
+        st.file_resolved_path = file_resolved_path;
     }
     report_damage(s, &damaged)?;
     let st = s.doc()?;
@@ -528,6 +526,32 @@ fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
     crate::io::write_file(path, bytes).map_err(EngineError::Other)
 }
 
+/// Write a presentation over its own file only when its opened version is still on disk. Export
+/// uses this too: it changes the file baseline, but does not mark the document itself saved.
+fn write_checked(s: &mut Session, path: &str, bytes: &[u8]) -> Result<()> {
+    let same_open_file = s
+        .active()
+        .is_some_and(|st| st.path.as_deref().is_some_and(|open_path| crate::io::same_file_path(open_path, st.file_resolved_path.as_deref(), path)));
+    if same_open_file {
+        let expected = s
+            .active()
+            .and_then(|st| st.file_fingerprint)
+            .ok_or_else(|| EngineError::Other(format!("{path}: the opened file has no saved baseline; use Save As to keep both versions")))?;
+        let current = crate::io::read_file(path).map_err(EngineError::Other)?;
+        if crate::io::fingerprint(&current) != expected {
+            return Err(EngineError::Other(format!("{path}: file changed on disk since it was opened or saved; use Save As to keep both versions")));
+        }
+    }
+    let expected = same_open_file.then(|| s.active().and_then(|st| st.file_fingerprint)).flatten();
+    crate::io::write_file_if_unchanged(path, bytes, expected).map_err(EngineError::Other)?;
+    if same_open_file {
+        let st = s.doc_mut()?;
+        st.file_fingerprint = Some(crate::io::fingerprint(bytes));
+        st.file_resolved_path = crate::io::resolved_path(path);
+    }
+    Ok(())
+}
+
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").map(String::from).or_else(|| s.active().and_then(|d| d.path.clone()));
     let Some(path) = path else {
@@ -536,18 +560,11 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let format = str_param(p, "format").unwrap_or(format_for_path(&path));
     let bytes = save_bytes(&s.doc()?.doc, format)?;
-    if let Some(st) = s.active()
-        && st.path.as_deref().is_some_and(|open_path| crate::io::same_file_path(open_path, &path))
-        && let Some(expected) = st.file_fingerprint
-    {
-        let current = crate::io::read_file(&path).map_err(EngineError::Other)?;
-        if fingerprint(&current) != expected {
-            return Err(EngineError::Other(format!("{path}: file changed on disk since it was opened or saved; use Save As to keep both versions")));
-        }
-    }
-    write_file(&path, &bytes)?;
+    write_checked(s, &path, &bytes)?;
     mark_saved(s, Some(path.clone()))?;
-    s.doc_mut()?.file_fingerprint = Some(fingerprint(&bytes));
+    let st = s.doc_mut()?;
+    st.file_fingerprint = Some(crate::io::fingerprint(&bytes));
+    st.file_resolved_path = crate::io::resolved_path(&path);
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
 
@@ -697,7 +714,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "pptx" | "potx" | "ppsx" | "deckcraft" | "outline" | "txt" | "rtf" => {
             let bytes = save_bytes(&st.doc, &format)?;
-            write_file(&path, &bytes)?;
+            write_checked(s, &path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
         other => Err(bad("file.export", format!("unknown format `{other}`"))),

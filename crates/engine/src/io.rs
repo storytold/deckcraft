@@ -4,20 +4,33 @@
 //! roots ([`crate::file_access`]) are checked in one place. A command module that called
 //! `std::fs` itself would bypass them; a test in `file_access` keeps that from happening.
 
-/// Whether two path spellings refer to the same existing file. Save uses this to prevent an
-/// alternate spelling of an open path from bypassing its external-change check.
-pub fn same_file_path(open_path: &str, save_path: &str) -> bool {
-    if open_path == save_path {
-        return true;
-    }
+/// The destination behind an existing file path, recorded while the file is still open.
+pub fn resolved_path(path: &str) -> Option<String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::canonicalize(open_path).ok().zip(std::fs::canonicalize(save_path).ok()).is_some_and(|(a, b)| a == b)
+        std::fs::canonicalize(path).ok().map(|p| p.to_string_lossy().into_owned())
     }
     #[cfg(target_arch = "wasm32")]
     {
-        false
+        let _ = path;
+        None
     }
+}
+
+/// Whether the save destination is the opened file, including an alias that was removed later.
+pub fn same_file_path(open_path: &str, opened_resolved: Option<&str>, save_path: &str) -> bool {
+    if open_path == save_path {
+        return true;
+    }
+    opened_resolved.zip(resolved_path(save_path)).is_some_and(|(opened, target)| opened == target)
+}
+
+/// Fingerprint used only to compare a file with the bytes this process previously opened.
+pub fn fingerprint(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// The bytes of the file at `path`, inside the automation read root when there is one.
@@ -47,6 +60,14 @@ pub fn read_file(path: &str) -> Result<Vec<u8>, String> {
 /// `path` is.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
+    write_file_if_unchanged(path, bytes, None)
+}
+
+/// Recheck the expected bytes immediately before replacing a file. This closes the time spent
+/// writing the temporary file, though an external writer can still race the final rename: std
+/// has no portable conditional rename and this crate forbids unsafe platform calls.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_file_if_unchanged(path: &str, bytes: &[u8], expected: Option<u64>) -> Result<(), String> {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -77,6 +98,21 @@ pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
     }
     let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);
+    if let Some(expected) = expected
+        && written.is_ok()
+    {
+        match read_file(path) {
+            Ok(current) if fingerprint(&current) == expected => {}
+            Ok(_) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("{path}: file changed on disk since it was opened or saved; use Save As to keep both versions"));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+        }
+    }
     let result = written.and_then(|()| std::fs::rename(&tmp, &target_path));
     if let Err(e) = result {
         let _ = std::fs::remove_file(&tmp);
@@ -87,6 +123,11 @@ pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
 
 #[cfg(target_arch = "wasm32")]
 pub fn write_file(path: &str, _bytes: &[u8]) -> Result<(), String> {
+    Err(format!("{path}: saving to a path is not available in the browser"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn write_file_if_unchanged(path: &str, _bytes: &[u8], _expected: Option<u64>) -> Result<(), String> {
     Err(format!("{path}: saving to a path is not available in the browser"))
 }
 

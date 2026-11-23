@@ -222,6 +222,8 @@ pub struct DocState {
     /// Fingerprint of the file at `path` when it was opened or last saved. A changed file must
     /// not be overwritten by Save, even if the in-memory presentation is unchanged.
     pub file_fingerprint: Option<u64>,
+    /// Resolved file destination captured while `path` existed, including symlink targets.
+    pub file_resolved_path: Option<String>,
     pub revision: u64,
     pub saved_doc: Arc<Presentation>,
     pub interaction: Option<Interaction>,
@@ -261,6 +263,7 @@ impl DocState {
             history: History { limit: 500, ..Default::default() },
             path,
             file_fingerprint: None,
+            file_resolved_path: None,
             revision: 1,
             interaction: None,
             uid: next_uid(),
