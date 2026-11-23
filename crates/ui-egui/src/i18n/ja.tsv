@@ -1,0 +1,558 @@
+# Japanese (ja) interface catalog. Same format and clean-room rules as the sibling Crafting
+# Apps' catalogs: `English source<TAB>translation`, `#` comments, escapes `\n`, `\t`, `\\`.
+# The English text is the key the UI looks up; a string without a row shows in English.
+# Translations are our own wording (clean-room: never copied from another product's UI).
+(not checked)	(未チェック)
+About DeckCraft	DeckCraft について
+Accept Revision	変更を承諾
+Accept\nAll	すべて\n承諾
+Accessibility Checker	アクセシビリティチェッカー
+Account	アカウント
+Action	動作
+Action Buttons	動作ボタン
+Action Settings	動作設定
+Add Animation	アニメーションの追加
+Add Guide	ガイドの追加
+Add Point	頂点の追加
+Add Section	セクションの追加
+Add Shape	図形の追加
+Add to Quick Access Toolbar	クイックアクセスツールバーに追加
+Add\nAnimation	アニメーション\nの追加
+Adjust Shape	図形の調整
+Align	配置
+Align Cell Text	セル内の文字配置
+Align Left	左揃え
+Align Right	右揃え
+Align Text	文字の配置
+Alt Text	代替テキスト
+Alt\nText	代替\nテキスト
+Animation Styles	アニメーションスタイル
+Animation\nPainter	アニメーション\nの複製
+Animation\nPane	アニメーション\nウィンドウ
+Animations	アニメーション
+Apply	適用
+Apply Animation	アニメーションを適用
+Apply Design Idea	デザインアイデアを適用
+Apply\nTo All	すべてに\n適用
+Arrange	整列
+Artistic Effects	芸術効果
+Artistic\nEffects	芸術\n効果
+Audio	音声
+Audio from File…	ファイルから音声…
+AutoCorrect	オートコレクト
+AutoCorrect Options…	オートコレクトのオプション…
+AutoCorrect as you type	入力時にオートコレクト
+Autofit	自動調整
+Automatic	自動
+Automatic ({language})	自動 ({language})
+Back	戻る
+Background\nStyles	背景\nスタイル
+Bold	太字
+Borders	罫線
+Bring Forward	前面へ移動
+Bring to Front	最前面へ移動
+Bring\nForward	前面へ\n移動
+Browse for Themes…	テーマを参照…
+Bullets	箇条書き
+Bullets and Numbering	箇条書きと段落番号
+Cameo	カメオ
+Cancel	キャンセル
+Caps	大文字
+Cell Margins	セルの余白
+Center	中央揃え
+Change Case	大文字と小文字の変更
+Change Chart Type	グラフの種類の変更
+Change Colors	色の変更
+Change Layout	レイアウトの変更
+Change Picture	図の変更
+Change Picture…	図の変更…
+Change Shape	図形の変更
+Change Spelling	スペルの修正
+Change\nChart Type	グラフの\n種類の変更
+Character Spacing	文字間隔
+Chart	グラフ
+Chart Data	グラフデータ
+Chart Design	グラフデザイン
+Chart Elements	グラフ要素
+Chart…	グラフ…
+Check\nAccessibility	アクセシビリティ\nチェック
+Choose a SmartArt Graphic	SmartArt グラフィックの選択
+Clear All Formatting	すべての書式をクリア
+Click to add notes	クリックしてノートを入力
+Close	閉じる
+Close\nMaster View	マスター\nビューを閉じる
+Collapse the Ribbon	リボンを折りたたむ
+Color	色
+Colors	色
+Columns	列
+Command Palette	コマンドパレット
+Comment	コメント
+Community Links	コミュニティリンク
+Compare	比較
+Compare…	比較…
+Compress Pictures	図の圧縮
+Connect Shapes	図形の接続
+Convert	変換
+Convert to Shapes	図形に変換
+Convert to SmartArt	SmartArt に変換
+Convert to Text	テキストに変換
+Copy	コピー
+Corrections	修正
+Create New Theme Colors	新しいテーマの色を作成
+Create New Theme Fonts	新しいテーマのフォントを作成
+Crop	トリミング
+Custom Shows	ユーザー設定のスライドショー
+Custom Slide Show	ユーザー設定のスライドショー
+Custom\nShow	ユーザー設定の\nスライドショー
+Cut	切り取り
+Dark Mode	ダークモード
+Dark appearance	ダーク表示
+Dark\nMode	ダーク\nモード
+Date & Time	日付と時刻
+Date &\nTime	日付と\n時刻
+Date and Time	日付と時刻
+Decrease Font Size	フォントサイズの縮小
+Decrease List Level	リストレベルの上げ
+Delete	削除
+Delete Columns	列の削除
+Delete Comment	コメントの削除
+Delete Guide	ガイドの削除
+Delete Layout	レイアウトの削除
+Delete Point	頂点の削除
+Delete Rows	行の削除
+Delete Slide	スライドの削除
+Delete Table	表の削除
+Delete Text	テキストの削除
+Demote	レベル下げ
+Design	デザイン
+Design\nIdeas	デザイン\nアイデア
+Distribute	分布
+Distribute Columns	列の分布
+Distribute Horizontally	左右に分布
+Distribute Rows	行の分布
+Distribute Vertically	上下に分布
+Done	完了
+Draw	描画
+Draw Table	表の作成
+Duplicate	複製
+Duplicate Slide	スライドの複製
+Edit	編集
+Edit Data	データの編集
+Edit Photo Album…	フォトアルバムの編集…
+Edit Points	頂点の編集
+Edit SmartArt Text	SmartArt テキストの編集
+Edit\nData	データの\n編集
+Edit\nShape	図形の\n編集
+Editing	編集
+Effect Options	効果のオプション
+Effect\nOptions	効果の\nオプション
+Effects	効果
+End Show	スライドショーの終了
+End\nReview	校閲の\n終了
+English	英語
+Equation	数式
+Eraser	消しゴム
+Export	エクスポート
+Export…	エクスポート…
+File	ファイル
+File (Alt+F)	ファイル (Alt+F)
+Find	検索
+Find and Replace	検索と置換
+Find…	検索…
+Fit slide to current window	スライドをウィンドウに合わせる
+Fit to Window	ウィンドウに合わせる
+Fit to\nWindow	ウィンドウに\n合わせる
+Flip	反転
+Flip Horizontal	左右反転
+Flip Vertical	上下反転
+Font	フォント
+Font Color	フォントの色
+Font Size	フォントサイズ
+Fonts	フォント
+Font…	フォント…
+Format	書式
+Format Background	背景の書式設定
+Format\nBackground	背景の\n書式設定
+Format\nPane	書式設定\nウィンドウ
+Freeform	フリーフォーム
+From\nBeginning	最初から\n再生
+From\nCurrent Slide	現在のスライド\nから再生
+General	一般
+Grayscale	グレースケール
+Grid Options	グリッドオプション
+Grid Options…	グリッドオプション…
+Grid\nOptions	グリッド\nオプション
+Gridlines	グリッド線
+Group	グループ化
+Guides	ガイド
+Handout Master	配布資料マスター
+Handout Placeholders	配布資料のプレースホルダー
+Handout\nMaster	配布資料\nマスター
+Header &\nFooter	ヘッダーと\nフッター
+Header and Footer	ヘッダーとフッター
+Header and Footer…	ヘッダーとフッター…
+Height	高さ
+Help	ヘルプ
+Hide All	すべて非表示
+Hide Background Graphics	背景のグラフィックを非表示
+Hide Slide	スライドを非表示
+Hide\nSlide	スライドを\n非表示
+Home	ホーム
+Icons	アイコン
+Increase Font Size	フォントサイズの拡大
+Increase List Level	リストレベルの下げ
+Info	情報
+Ink to Shape	インクを図形に変換
+Ink to\nMath	インクを\n数式に変換
+Ink to\nShape	インクを\n図形に変換
+Ink to\nText	インクを\nテキストに変換
+Insert	挿入
+Insert Above	上に挿入
+Insert Below	下に挿入
+Insert Hyperlink	ハイパーリンクの挿入
+Insert Layout	レイアウトの挿入
+Insert Left	左に挿入
+Insert Picture	図の挿入
+Insert Picture in SmartArt	SmartArt に図を挿入
+Insert Picture in SmartArt…	SmartArt に図を挿入…
+Insert Placeholder	プレースホルダーの挿入
+Insert Right	右に挿入
+Insert Synonym	類語の挿入
+Insert Table	表の挿入
+Insert\nAbove	上に\n挿入
+Insert\nBelow	下に\n挿入
+Insert\nLayout	レイアウトの\n挿入
+Insert\nLeft	左に\n挿入
+Insert\nPlaceholder	プレース\nホルダーの挿入
+Insert\nRight	右に\n挿入
+Interface language:	表示言語:
+Interface size	表示サイズ
+Italic	斜体
+Japanese	日本語
+Justify	両端揃え
+Language	言語
+Layout	レイアウト
+Layout Placeholders	レイアウトのプレースホルダー
+Layouts	レイアウト
+Learn\nMore	詳細\n情報
+Line Spacing	行間
+Link	リンク
+Lock	ロック
+Menus, commands and the status bar change. Your presentation and file names don't.	メニュー・コマンド・ステータスバーが変わります。プレゼンテーションとファイル名は変わりません。
+Merge Cells	セルの結合
+Merge Shapes	図形の結合
+Merge\nCells	セルの\n結合
+Merge\nShapes	図形の\n結合
+Move	移動
+Move Guide	ガイドの移動
+Move Handle	移動ハンドル
+Move Point	頂点の移動
+Move Section	セクションの移動
+Move Slide	スライドの移動
+New	新規作成
+New Comment	新しいコメント
+New Photo Album…	新しいフォトアルバム…
+New Presentation	新しいプレゼンテーション
+New Slide	新しいスライド
+New Window	新しいウィンドウ
+New\nComment	新しい\nコメント
+New\nSlide	新しい\nスライド
+New\nWindow	新しい\nウィンドウ
+Normal	標準
+Notes	ノート
+Notes Master	ノートマスター
+Notes Page	ノートページ
+Notes Placeholders	ノートのプレースホルダー
+Notes\nMaster	ノート\nマスター
+Nudge	ナッジ
+Numbering	段落番号
+OK	OK
+Open	開く
+Open Dialog	ダイアログを開く
+Open…	開く…
+Options	オプション
+Outline View	アウトラインビュー
+Paragraph	段落
+Paragraph…	段落…
+Paste	貼り付け
+Paste Formatting	書式を貼り付け
+Paste Special	形式を選択して貼り付け
+Paste Special…	形式を選択して貼り付け…
+Paste and Match Formatting	書式を合わせて貼り付け
+Photo Album	フォトアルバム
+Photo Album…	フォトアルバム…
+Photo\nAlbum	フォト\nアルバム
+Picture	図
+Picture Border	図の枠線
+Picture Format	図の書式設定
+Picture Styles	図のスタイル
+Picture from File…	ファイルから図…
+Pictures	図
+Play from Current Slide	現在のスライドから再生
+Play from Start	最初から再生
+Play from\nCurrent Slide	現在のスライド\nから再生
+Play from\nStart	最初から\n再生
+Playback	再生
+Point Type	頂点の種類
+Position and Size	位置とサイズ
+Poster Frame	ポスターフレーム
+Preferences	環境設定
+Preferences…	環境設定…
+Presenter View	発表者ビュー
+Presenter\nView	発表者\nビュー
+Preserve	保持
+Preview	プレビュー
+Preview Animations	アニメーションのプレビュー
+Print	印刷
+Print…	印刷…
+Promote	レベル上げ
+Properties	プロパティ
+Quick Access Toolbar	クイックアクセスツールバー
+Quick Styles	クイックスタイル
+Quick\nStyles	クイック\nスタイル
+Reading View	閲覧ビュー
+Recolor	色の変更
+Record	記録
+Redo	やり直し
+Regroup	再グループ化
+Rehearse\nTimings	タイミングの\nリハーサル
+Remove All Animations	すべてのアニメーションを削除
+Remove All Sections	すべてのセクションを削除
+Remove Animation	アニメーションの削除
+Remove Background	背景の削除
+Remove Section	セクションの削除
+Remove Shape	図形の削除
+Remove from Quick Access Toolbar	クイックアクセスツールバーから削除
+Remove\nBackground	背景の\n削除
+Rename	名前の変更
+Rename Layout	レイアウト名の変更
+Rename Section	セクション名の変更
+Rename Slide	スライド名の変更
+Reorder Animation	アニメーションの並べ替え
+Reorder Objects	オブジェクトの並べ替え
+Replace	置換
+Replace Font	フォントの置換
+Replace Fonts	フォントの置換
+Replace Fonts…	フォントの置換…
+Replace straight quotes with smart quotes	直線引用符をスマート引用符に置換
+Replace…	置換…
+Reply	返信
+Reset	リセット
+Reset Picture	図のリセット
+Resolve Thread	スレッドを解決
+Reuse Slides…	スライドの再利用…
+Review	校閲
+Ribbon Tab	リボンタブ
+Right-to-Left Text Direction	テキストを右から左に
+Rotate	回転
+Rotate Left 90°	左に 90° 回転
+Rotate Right 90°	右に 90° 回転
+Rotation	回転角度
+Ruler	ルーラー
+Save	保存
+Save As	名前を付けて保存
+Save As…	名前を付けて保存…
+Screenshot	スクリーンショット
+Search commands…	コマンドを検索…
+Section	セクション
+Select	選択
+Select All	すべて選択
+Selection\nPane	選択\nウィンドウ
+Send Backward	背面へ移動
+Send to Back	最背面へ移動
+Send\nBackward	背面へ\n移動
+Set Text	テキストの設定
+Set Transparent Color	透明色の設定
+Set Up Show…	スライドショーの設定…
+Set Up Slide Show	スライドショーの設定
+Set Up Slide Show…	スライドショーの設定…
+Set Up\nSlide Show	スライドショーの\n設定
+Set Zoom	ズームの設定
+Set as Default Shape	既定の図形に設定
+Shading	網掛け
+Shape Effects	図形の効果
+Shape Fill	図形の塗りつぶし
+Shape Format	図形の書式
+Shape Outline	図形の輪郭
+Shape\nStyles	図形\nスタイル
+Shapes	図形
+Show All	すべて表示
+Show smart guides	スマートガイドを表示
+Show/Hide	表示/非表示
+Show\nComments	コメントを\n表示
+Size	サイズ
+Size and Position	サイズと位置
+Size and Position…	サイズと位置…
+Slide Master	スライドマスター
+Slide Number	スライド番号
+Slide Show	スライドショー
+Slide Size	スライドサイズ
+Slide Sorter	スライド一覧
+Slide {current} of {total}	スライド {current} / {total}
+Slide\nMaster	スライド\nマスター
+Slide\nNumber	スライド\n番号
+Slide\nSize	スライド\nサイズ
+Slides from Outline	アウトラインからのスライド
+Slides from Outline…	アウトラインからのスライド…
+SmartArt	SmartArt
+SmartArt Design	SmartArt デザイン
+SmartArt Styles	SmartArt スタイル
+Smooth Corners	角を丸める
+Snap objects to grid	図形をグリッドに合わせる
+Sound	サウンド
+Spelling	スペルチェック
+Split Cells	セルの分割
+Split\nCells	セルの\n分割
+Strikethrough	取り消し線
+Subscript	下付き
+Superscript	上付き
+Symbol	記号
+Table	表
+Table Design	表デザイン
+Table Eraser	表の消しゴム
+Table Style Options	表スタイルのオプション
+Table Styles	表のスタイル
+Table…	表…
+Tabs	タブ
+Tabs…	タブ…
+Task Pane	作業ウィンドウ
+Text Box	テキストボックス
+Text Box Margins	テキストボックスの余白
+Text Direction	テキストの方向
+Text Effects	テキスト効果
+Text Fill	テキストの塗りつぶし
+Text Highlight Color	テキストの強調表示色
+Text Outline	テキストの輪郭
+Text Shadow	テキストの影
+Text Transform	テキストの変形
+Text Transparency	テキストの透過
+Text\nBox	テキスト\nボックス
+Text\nPane	テキスト\nウィンドウ
+Themes	テーマ
+Thesaurus	類語辞典
+Timing	タイミング
+Transition	画面切り替え
+Transitions	画面切り替え
+Translate	翻訳
+Transparency	透過
+Trigger	トリガー
+Trim	トリミング
+Trim Media	メディアのトリム
+Type Text	テキストを入力
+Underline	下線
+Undo	元に戻す
+Ungroup	グループ解除
+Variants	バリエーション
+Video	ビデオ
+Video from File…	ファイルからビデオ…
+View	表示
+Volume	音量
+Width	幅
+WordArt	ワードアート
+Wrap Text in Shape	図形内でテキストを折り返す
+Your name (comments):	名前 (コメント用):
+Zoom	ズーム
+Zoom In	拡大
+Zoom Out	縮小
+Zoom…	ズーム…
+“{dialog}” is not available yet.	「{dialog}」はまだ利用できません。
+ (not checked)	 (未チェック)
+Appearance	外観
+Customize Quick Access Toolbar	クイックアクセスツールバーのカスタマイズ
+Interface Language	表示言語
+Photo Album options	フォトアルバムのオプション
+Presentations	プレゼンテーション
+Product Information	製品情報
+Reset to Defaults	既定値に戻す
+Right-click any ribbon button to add it.	リボンの任意のボタンを右クリックして追加できます。
+Settings	設定
+Start from Beginning	最初から再生
+Templates	テンプレート
+User Information	ユーザー情報
+  Present  	  プレゼン  
+3-D	3-D
+Action Settings…	動作設定…
+After:	後:
+Animation Painter (double-click to keep it on)	アニメーションの複製 (ダブルクリックで固定)
+Apply only to this picture	この図にのみ適用
+Arrows	矢印
+Banded Columns	縞模様 (列)
+Banded Rows	縞模様 (行)
+Bevel	面取り
+Bullets and Numbering…	箇条書きと段落番号…
+Camera capture is not available yet	カメラ入力はまだ利用できません
+Comments	コメント
+Compress	圧縮
+Crop to Shape	図形に合わせてトリミング
+Customize Colors…	色のカスタマイズ…
+Customize Fonts…	フォントのカスタマイズ…
+Dashes	破線
+Delay:	遅延:
+Delete cropped areas of pictures	トリミングした部分を削除
+Duplicate Selected Slides	選択したスライドの複製
+Duration:	継続時間:
+First Column	最初の列
+Fit	合わせる
+Follow Path	パスに沿う
+Footers	フッター
+Format Painter (double-click to keep it on)	書式のコピー (ダブルクリックで固定)
+Format Shape…	図形の書式設定…
+Glow	光彩
+Gradient…	グラデーション…
+Header Row	見出し行
+Height:	高さ:
+Hide During Show	スライドショー中は非表示
+Ink to Math (coming soon)	インクを数式に変換 (近日対応)
+Ink to Shape: turn drawn lines, rectangles, ovals and triangles into shapes	インクを図形に変換: 描いた線・四角形・楕円・三角形を図形にします
+Ink to Text (coming soon)	インクをテキストに変換 (近日対応)
+Insert Table…	表の挿入…
+Last Column	最後の列
+Line Spacing Options…	行間のオプション…
+Loop until Stopped	停止するまで繰り返す
+New Slide (⇧⌘N)	新しいスライド (⇧⌘N)
+No Glow	光彩なし
+No icons match.	一致するアイコンがありません。
+None	なし
+On Click of… (none)	クリック時… (なし)
+On Mouse Click	マウスクリック時
+Open another window on this presentation	このプレゼンテーションを新しいウィンドウで開く
+Other Sound…	その他のサウンド…
+Page Setup…	ページ設定…
+Paste (⌘V)	貼り付け (⌘V)
+Pen Color	ペンの色
+Pen Style	ペンのスタイル
+Pen Weight	ペンの太さ
+Pixels of this colour become transparent:	この色のピクセルを透明にします:
+Play Across Slides	複数のスライドで再生
+Play Full Screen	全画面で再生
+Play Narrations	ナレーションを再生
+Play this slide's animations on the canvas	このスライドのアニメーションをキャンバスで再生
+Put a picture in the selected node's picture placeholder	選択したノードの図のプレースホルダーに図を配置します
+Recording narration needs audio capture (coming soon)	ナレーションの録音には音声入力が必要です (近日対応)
+Reflection	反射
+Remove the picture style	図のスタイルを解除
+Rescan Installed Fonts	インストール済みフォントを再読み込み
+Reset Slide Background	スライドの背景をリセット
+Rewind after Playing	再生後に巻き戻す
+Screenshot (not available yet)	スクリーンショット (未対応)
+Selection Pane…	選択ウィンドウ…
+Shadow	影
+Show Media Controls	メディアコントロールを表示
+Soft Edges	ぼかし
+Sound:	サウンド:
+Standard (4:3)	標準 (4:3)
+Start Automatically	自動的に開始
+Start:	開始:
+Title	タイトル
+Total Row	集計行
+Translation needs a language model (not bundled)	翻訳には言語モデルが必要です (同梱されていません)
+Type and organise the diagram's text	図のテキストを入力・整理します
+Use Timings	タイミングを使用
+Warp	ワープ
+Weight	太さ
+Widescreen (16:9)	ワイド画面 (16:9)
+Width:	幅:
+Width: 	幅: 
+[No Sound]	[サウンドなし]
+[Stop Previous Sound]	[前のサウンドを停止]
+Reset Style	スタイルをリセット
