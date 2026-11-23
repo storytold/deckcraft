@@ -3458,11 +3458,9 @@ fn a_picture_glow_follows_alpha_instead_of_its_rectangle() {
                 && scale == 1.0
                 && let Ok(dir) = std::env::var("DECKCRAFT_GLOW_QA")
             {
+                // Overwrite, so a QA directory can be reused across runs.
                 std::fs::create_dir_all(&dir).unwrap();
-                use std::io::Write as _;
-                let mut file =
-                    std::fs::OpenOptions::new().write(true).create_new(true).open(std::path::Path::new(&dir).join("picture-glow.png")).unwrap();
-                file.write_all(&image.to_png()).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join("picture-glow.png"), image.to_png()).unwrap();
             }
             assert_eq!(glow_sample(&image, Point::new(108.0, 108.0), scale)[..3], [40, 110, 60], "clear picture bounds ({as_fill}, scale {scale})");
             assert_eq!(glow_sample(&image, Point::new(164.0, 164.0), scale)[..3], [40, 110, 60], "clear alpha hole ({as_fill}, scale {scale})");
