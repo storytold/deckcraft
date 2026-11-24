@@ -1298,6 +1298,9 @@ fn chart_to(c: &dm_chart::Chart) -> cd_chart::Chart {
         gridlines: c.gridlines,
         minor_gridlines: c.minor_gridlines,
         axis_titles: c.axis_titles.clone(),
+        // DeckCraft's chart model keeps the raw category labels and the 1900 date system.
+        category_format: None,
+        date_1904: false,
         style: c.style,
         palette: c.palette.clone(),
         plot_fill: c.plot_fill.as_ref().map(fill_to),
