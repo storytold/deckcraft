@@ -49,7 +49,10 @@ impl SlideApp {
 
     /// Keyboard and clipboard for the slide (when no text field has focus).
     pub(super) fn keyboard(&mut self, ctx: &egui::Context) {
-        let events = ctx.input(|i| i.events.clone());
+        let mut events = ctx.input(|i| i.events.clone());
+        if crate::framework::window_escape(ctx) {
+            events.push(crate::framework::ESCAPE_PRESS);
+        }
         // Ctrl+V with only an image on the clipboard: egui-winit sends no Paste event and swallows the
         // key press, so the release of a V press never seen is the paste. Tracked even while a text
         // field has focus, so that a V typed there is not taken for one.

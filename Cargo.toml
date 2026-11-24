@@ -77,6 +77,12 @@ craft-pdf = { git = "https://github.com/aiongg/craft-libs", rev = "22e82c930ec70
 # craft-update: app-specific pretend versions apply to startup and manual checks.
 craft-update = { git = "https://github.com/aiongg/craft-libs", version = "=0.1.0", rev = "22e82c930ec7062fba45757a8cac8ba5e3cb94bc", features = ["ui"] }
 craft-ui = { git = "https://github.com/aiongg/craft-libs", rev = "22e82c930ec7062fba45757a8cac8ba5e3cb94bc", version = "=0.1.0" }
+# The framework runtime's host: the app's identity, its window services, its key overrides and the theme mode
+# the framework's components draw in.
+craft-host = { git = "https://github.com/aiongg/craft-libs", rev = "22e82c930ec7062fba45757a8cac8ba5e3cb94bc", version = "=0.1.0" }
+craft-keymap = { git = "https://github.com/aiongg/craft-libs", rev = "22e82c930ec7062fba45757a8cac8ba5e3cb94bc", version = "=0.1.0" }
+craft-theme = { git = "https://github.com/aiongg/craft-libs", rev = "22e82c930ec7062fba45757a8cac8ba5e3cb94bc", version = "=0.1.0" }
+craft-window = { git = "https://github.com/aiongg/craft-libs", rev = "22e82c930ec7062fba45757a8cac8ba5e3cb94bc", version = "=0.1.0" }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }

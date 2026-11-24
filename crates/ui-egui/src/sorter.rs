@@ -110,7 +110,7 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
             }
             app.sorter.rename_started = true;
         }
-        let (enter, esc) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+        let (enter, esc) = (ui.input(|i| i.key_pressed(egui::Key::Enter)), crate::framework::escape_pressed(ui.ctx()));
         // The frame that asks for focus has not had it yet; committing then would cancel the rename.
         if already && (out.lost_focus() || enter || esc) {
             app.sorter.renaming = None;

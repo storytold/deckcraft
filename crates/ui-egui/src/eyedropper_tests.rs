@@ -15,7 +15,7 @@ fn harness() -> Harness<'static, SlideApp> {
     session.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     session.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
     session.execute("shape.fill", &json!({"color": "#ff0000"})).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -125,7 +125,7 @@ fn set_transparent_color_takes_the_colour_clicked_in_the_picture() {
     session.execute("insert.picture", &json!({"data": data, "name": "a.png", "rect": [100, 100, 400, 200]})).unwrap();
     let mut app = SlideApp::new(session, Services::default());
     app.ui.tab = "Picture Format".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1600.0, 1200.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

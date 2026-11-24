@@ -85,13 +85,17 @@ mod about_credits_tests {
     fn about_dialog_tabs_keep_responding() {
         let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), Services::default());
         app.dialog = Some(Dialog::new("about"));
-        let mut h = Harness::builder().with_size(egui::vec2(1440.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-            |ui, app: &mut SlideApp| {
-                app.logic(ui.ctx());
-                app.ui(ui);
-            },
-            app,
-        );
+        let mut h = Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .with_size(egui::vec2(1440.0, 900.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                app,
+            );
         h.run_steps(4);
         assert_eq!(tab_of(&h), "about");
         for label in ["Contributors", "Models", "About", "Models", "Contributors"] {

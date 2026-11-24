@@ -22,6 +22,7 @@ pub mod control;
 pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
+pub mod framework;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -298,6 +299,11 @@ pub struct SlideApp {
     print_previews: app::files::PrintPreviews,
     #[cfg(not(target_arch = "wasm32"))]
     updates_rt: updates_ui::Runtime,
+    /// The framework dialogs (the update prompt and check result), run once per pass after the
+    /// app's own UI.
+    pub framework_dialogs: craft_ui::dialog::DialogHost,
+    /// Who DeckCraft is to the framework's dialogs.
+    framework_host: std::sync::Arc<craft_host::Host>,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
     /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).

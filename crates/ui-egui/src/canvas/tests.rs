@@ -95,7 +95,7 @@ fn a_placeholder_that_inherits_its_box_has_a_resize_cursor() {
 }
 
 fn harness() -> Harness<'static, SlideApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -315,13 +315,14 @@ fn app_with_table() -> (egui_kittest::Harness<'static, SlideApp>, deckcraft_mode
     let r = s.execute("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100.0, 100.0, 400.0, 80.0], "data": data})).unwrap();
     let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
     s.execute("edit.deselect", &json!({})).unwrap();
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(s, Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(s, Services::default()),
+        );
     // The app keeps requesting repaints, so step frames instead of run().
     harness.run_steps(2);
     (harness, id)

@@ -126,7 +126,7 @@ fn hex(c: [u8; 4]) -> String {
 /// beside it, a click takes it. Returns true when it used the pointer (the tools get none).
 pub fn canvas(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) -> bool {
     let Some(state) = app.eyedropper.as_ref() else { return false };
-    let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let escape = crate::framework::escape_pressed(ui.ctx());
     if escape || resp.secondary_clicked() {
         app.eyedropper = None;
         return true;

@@ -109,7 +109,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
         }
         close = body(app, ui, &mut d);
     });
-    let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    let escape = crate::framework::escape_pressed(ctx);
     if open && !close && !escape {
         app.dialog = Some(d);
     } else if !close && d.id == "preferences" {
