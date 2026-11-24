@@ -26,7 +26,7 @@ fn empty_notes_deck() -> Vec<u8> {
     let mut found = false;
     for i in 0..src.len() {
         let mut f = src.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().expect("ZIP member name").to_string();
         let mut data = vec![];
         f.read_to_end(&mut data).expect("read");
         if name == NOTES {
@@ -50,7 +50,7 @@ fn deck() -> Vec<u8> {
     let mut found = false;
     for i in 0..src.len() {
         let mut f = src.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().expect("ZIP member name").to_string();
         let mut data = vec![];
         f.read_to_end(&mut data).expect("read");
         if name == NOTES {

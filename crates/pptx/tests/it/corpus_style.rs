@@ -327,7 +327,7 @@ fn rewrite_zip_entry(bytes: &[u8], entry_name: &str, f: impl Fn(&str) -> String)
         let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         for i in 0..r.len() {
             let mut file = r.by_index(i).unwrap();
-            let name = file.name().to_string();
+            let name = file.name().expect("ZIP member name").to_string();
             let mut buf = Vec::new();
             file.read_to_end(&mut buf).unwrap();
             w.start_file(&name, opts).unwrap();

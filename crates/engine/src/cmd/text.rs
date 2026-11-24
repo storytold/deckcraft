@@ -232,7 +232,7 @@ mod font_script_tests {
         let mut xml = String::new();
         for i in 0..zip.len() {
             let mut f = zip.by_index(i).unwrap();
-            if f.name().starts_with("ppt/slides/slide") && f.name().ends_with(".xml") {
+            if f.name().expect("ZIP member name").starts_with("ppt/slides/slide") && f.name().expect("ZIP member name").ends_with(".xml") {
                 std::io::Read::read_to_string(&mut f, &mut xml).unwrap();
             }
         }
@@ -311,7 +311,7 @@ mod font_script_tests {
         let mut xml = String::new();
         for i in 0..zip.len() {
             let mut f = zip.by_index(i).unwrap();
-            if f.name().starts_with("ppt/slides/slide") && f.name().ends_with(".xml") {
+            if f.name().expect("ZIP member name").starts_with("ppt/slides/slide") && f.name().expect("ZIP member name").ends_with(".xml") {
                 std::io::Read::read_to_string(&mut f, &mut xml).unwrap();
             }
         }
