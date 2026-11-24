@@ -64,6 +64,10 @@ if [[ "$FLATPAK_ID" != "$APP_ID" ]]; then
     || { echo "error: the nightly $TARBALL has no bin/deckcraft-bin and bin/deckcraft-nightly" >&2; exit 1; }
   NIGHTLY_ICON="$ROOT/assets/app-icon/deckcraft-nightly.png"
   [[ -f "$NIGHTLY_ICON" ]] || NIGHTLY_ICON="$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png"
+  # Two ids meet here on purpose. The bundle id is the Flatpak app id (`$APP_ID.nightly`), so the
+  # exported desktop entry, its basename and the icon carry it. The window keeps the flavor id
+  # (`$APP_ID.nightly-v1`) that every other Linux format's desktop entry is renamed to, so
+  # StartupWMClass names the window id: that is what ties this launcher to the running window.
   sed -e "s|^Icon=$APP_ID$|Icon=$FLATPAK_ID|" \
       -e "s|^Name=DeckCraft$|Name=DeckCraft Nightly|" \
       -e "s#^Exec=deckcraft\\([[:space:]]\\|$\\)#Exec=deckcraft-nightly\\1#" \

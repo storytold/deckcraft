@@ -87,6 +87,10 @@ chmod 755 "$work/nodata/deckcraft"
 status=0
 env -u XDG_DATA_HOME -u HOME "$work/nodata/deckcraft" book.pptx >/dev/null 2>&1 || status=$?
 [[ "$status" -eq 2 ]] || { printf 'a launcher with no data folder must exit 2, got %s\n' "$status" >&2; exit 1; }
+# A query is not a launch: it answers without a data folder instead of becoming that error.
+actual=$(env -u XDG_DATA_HOME -u HOME "$work/nodata/deckcraft" --version) \
+  || { printf 'a no-data-folder --version must still answer\n' >&2; exit 1; }
+[[ "$actual" == '<--version>' ]] || { printf 'a no-data-folder --version printed:\n%s\n' "$actual" >&2; exit 1; }
 
 # ---- the /usr/bin rule: the fixed /usr/lib copy is named, and no parent path is ever used ----
 # The launcher's text is searched literally, so `$here` must not expand here.

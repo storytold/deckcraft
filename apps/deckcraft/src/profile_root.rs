@@ -164,6 +164,9 @@ fn entries_stay_inside(root: &Path) -> Result<(), String> {
         let entry = entry.map_err(|e| format!("cannot inspect the nightly profile: {e}"))?;
         private_subdirectory(root, entry.file_name(), "profile entry")?;
     }
+    // The one nested file Nightly writes itself: a link at Dictionaries/user.dic would append
+    // "add to dictionary" words to the stable app's file instead of this profile's.
+    private_subdirectory(root, std::path::Path::new("Dictionaries").join("user.dic"), "user dictionary")?;
     Ok(())
 }
 

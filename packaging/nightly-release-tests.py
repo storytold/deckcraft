@@ -155,6 +155,15 @@ class TrustedSourcePreparation(unittest.TestCase):
     def test_signer_serialization_contract_is_enforced(self):
         assert_nightly_serialization((ROOT / ".github/workflows/nightly-sign.yml").read_text())
 
+    def test_the_producer_declares_no_serialization_of_its_own(self):
+        # Only the signer serializes, because one protected release at a time is what the policy
+        # needs. The producer is a manual, stateless dispatch, so a concurrency block there would
+        # be a second, unreviewed gate; this keeps one from slipping in unnoticed.
+        source = (ROOT / ".github/workflows/nightly.yml").read_text()
+        executable = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotRegex(executable, r"(?m)^\s*concurrency:")
+        self.assertNotIn("cancel-in-progress", executable)
+
     def test_weakened_or_malformed_serialization_is_rejected(self):
         source = (ROOT / ".github/workflows/nightly-sign.yml").read_text()
         for old, new in (

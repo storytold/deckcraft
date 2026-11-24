@@ -533,23 +533,33 @@ mod tests {
     }
 
     /// The exit hook (the Nightly session record) runs once, on the one exit path macOS has.
-    /// Not on macOS itself: there `on_exit` ends this test process (after writing the real stable
-    /// settings), which is the behaviour the child-process test above checks.
+    /// The check runs in a child with `DECKCRAFT_NO_PREFS=1`: `on_exit` saves the preferences
+    /// otherwise, and this test never loads the ones already on the machine. Not on macOS
+    /// itself: there `on_exit` ends the process, which is the behaviour the test above checks.
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn leaving_runs_the_exit_hook_once() {
-        let runs = std::rc::Rc::new(std::cell::Cell::new(0));
-        let counted = runs.clone();
-        let services = Services { at_exit: Some(Box::new(move || counted.set(counted.get() + 1))), ..Default::default() };
-        let mut app = App(
-            SlideApp::new(Session::new(), services),
-            #[cfg(target_os = "macos")]
-            fmv_macos_events::Inbox::default(),
-        );
-        eframe::App::on_exit(&mut app);
-        assert_eq!(runs.get(), 1);
-        eframe::App::on_exit(&mut app);
-        assert_eq!(runs.get(), 1, "a second exit must not run the hook again");
+        if std::env::var_os("DECKCRAFT_TEST_EXIT_HOOK").is_some() {
+            let runs = std::rc::Rc::new(std::cell::Cell::new(0));
+            let counted = runs.clone();
+            let services = Services { at_exit: Some(Box::new(move || counted.set(counted.get() + 1))), ..Default::default() };
+            let mut app = App(SlideApp::new(Session::new(), services));
+            eframe::App::on_exit(&mut app);
+            assert_eq!(runs.get(), 1);
+            eframe::App::on_exit(&mut app);
+            assert_eq!(runs.get(), 1, "a second exit must not run the hook again");
+            println!("exit hook ran once");
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::leaving_runs_the_exit_hook_once", "--nocapture"])
+            .env("DECKCRAFT_TEST_EXIT_HOOK", "1")
+            .env("DECKCRAFT_NO_PREFS", "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{stdout}");
+        assert!(stdout.contains("exit hook ran once"), "the child didn't run the test: {stdout}");
     }
 
     #[test]

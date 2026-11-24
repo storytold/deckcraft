@@ -98,13 +98,21 @@ pub fn user_dictionary() -> Option<PathBuf> {
 /// The app's exclusive write probe: a new file created in `dir` and removed again. It never falls
 /// back to another directory, so the Nightly validator can refuse a root it cannot write.
 pub fn ensure_writable(dir: &Path) -> std::io::Result<()> {
-    let probe = dir.join(".deckcraft-write-probe");
-    let file = std::fs::OpenOptions::new().write(true).create_new(true).open(&probe)?;
-    drop(file);
-    match std::fs::remove_file(probe) {
-        Ok(()) => Ok(()),
-        Err(error) => Err(error),
+    // A probe left behind by an interrupted launch must not make a writable profile look
+    // unwritable, so each attempt uses a fresh name and a collision tries the next one.
+    // `create_new` still guarantees a create rather than a truncation.
+    for attempt in 0..8u32 {
+        let probe = dir.join(format!(".deckcraft-write-probe-{}-{attempt}", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+            Ok(file) => {
+                drop(file);
+                return std::fs::remove_file(probe);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
     }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "no free write-probe name in the profile"))
 }
 
 #[cfg(test)]

@@ -40,6 +40,14 @@ if [ -z "$real" ]; then
   exit 2
 fi
 
+# A bare version/help query and the Launcher's own protocol pass straight through: they are not
+# file names, need no data folder, and a profile the caller already supplied is never wrapped
+# twice. This runs before the data-folder check, so `deckcraft-nightly --version` still answers
+# where HOME and XDG_DATA_HOME are both unset.
+case "${1-}" in
+  --launch-profile | --profile-root | --version | -V | --help | -h) exec "$real" "$@" ;;
+esac
+
 if [ -z "${XDG_DATA_HOME:-}" ] && [ -z "${HOME:-}" ]; then
   echo "deckcraft-nightly: XDG_DATA_HOME and HOME are both unset, so there is no Nightly data folder" >&2
   exit 2
@@ -47,12 +55,6 @@ fi
 # The same root as every other format's launcher: beside the fenced stable `deckcraft` folder,
 # never inside it.
 profile="${XDG_DATA_HOME:-$HOME/.local/share}/deckcraft-nightly/launcher/profiles/deckcraft"
-
-# A bare version/help query and the Launcher's own protocol pass straight through: they are not
-# file names, and a profile the caller already supplied is never wrapped twice.
-case "${1-}" in
-  --launch-profile | --profile-root | --version | -V | --help | -h) exec "$real" "$@" ;;
-esac
 # A caller-written `--` is the separator this launcher adds below. Drop it, so it can never reach
 # the app as a file name.
 if [ "${1-}" = "--" ]; then

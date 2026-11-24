@@ -84,7 +84,9 @@ try {
   $env:DECKCRAFT_BUILD_CHANNEL = 'nightly-v1'
   $env:DECKCRAFT_REQUIRE_WINRES = '1'
   $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = '-C target-feature=+crt-static'
-  cargo build --release --locked -p deckcraft --target $Target
+  # The same directory the packaging steps below read from, so a custom -TargetDir cannot leave
+  # Cargo writing somewhere else and the steps reading a stale executable.
+  cargo build --release --locked -p deckcraft --target $Target --target-dir $TargetDir
   if ($LASTEXITCODE -ne 0) { throw "nightly cargo build failed: $LASTEXITCODE" }
 } finally {
   $env:DECKCRAFT_BUILD_CHANNEL = $oldChannel
