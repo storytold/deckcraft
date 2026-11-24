@@ -1,7 +1,7 @@
 //! Transitions and the animation timing tree.
 
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
-use deckcraft_model::{Shape, ShapeId, ShapeKind, find_shape};
+use deckcraft_model::{Shape, ShapeId, ShapeKind};
 
 use super::shapes::IdMap;
 use super::{Exp, Out};
@@ -16,7 +16,7 @@ pub fn transition(w: &mut W, x: &mut Exp, o: &mut Out, t: &Transition) {
         601..=900 => "med",
         _ => "slow",
     };
-    let sound = t.sound.and_then(|m| x.media_rel(o, m, "audio").map(|r| (r, x.p.media(m).map(|i| i.name.clone()).unwrap_or_default())));
+    let sound = t.sound.and_then(|m| x.media_rel(o, m, "audio").map(|r| (r, x.media(m).map(|i| i.name.clone()).unwrap_or_default())));
     let snd = |w: &mut W| {
         if let Some((r, name)) = &sound {
             w.open0("p:sndAc");
@@ -577,6 +577,21 @@ fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactiv
     }
 }
 
+/// Most effects one slide's timing writes; animations past it are left out.
+const MAX_EFFECTS: usize = 100_000;
+
+/// The shapes of the tree by id, the first in document order for a repeated id (as `find_shape`
+/// finds it), so each animation resolves its shape without a tree walk.
+fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections::HashMap<ShapeId, &'a Shape>) {
+    if depth > 64 {
+        return;
+    }
+    for s in shapes {
+        out.entry(s.id).or_insert(s);
+        shape_index(s.children(), depth + 1, out);
+    }
+}
+
 /// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
@@ -585,16 +600,31 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     let mut bld: Vec<(u32, u32, bool)> = vec![];
     // The last paragraph effect written: (shape, class, trigger, grpId).
     let mut prev_para: Option<(ShapeId, AnimClass, Option<ShapeId>, u32)> = None;
+    let mut by_id = std::collections::HashMap::new();
+    shape_index(shapes, 0, &mut by_id);
+    let mut roles_of: std::collections::HashMap<ShapeId, Vec<BuildRole>> = Default::default();
+    let mut effect_count = 0usize;
+    let mut warned = false;
     for a in anims.iter().take(10_000) {
+        if effect_count >= MAX_EFFECTS {
+            if !warned {
+                log::warn!("pptx: more than {MAX_EFFECTS} animation effects; the rest are left out");
+            }
+            break;
+        }
         let Some(spid) = idmap.get(a.shape) else {
             log::warn!("pptx: animation on missing shape {} skipped", a.shape);
             continue;
         };
-        let Some(shape) = find_shape(shapes, a.shape) else { continue };
+        let Some(&shape) = by_id.get(&a.shape) else { continue };
         let text_sp = matches!(shape.kind, ShapeKind::Shape) && shape.text.is_some();
         let is_text_sp = matches!(shape.kind, ShapeKind::Shape) && shape.text.as_ref().is_some_and(|t| !t.is_empty());
         let text = shape.text.as_ref().filter(|_| a.text_build == TextBuild::ByParagraph && is_text_sp);
-        let roles = text.map(paragraph_build_roles).unwrap_or_default();
+        let no_roles = Vec::new();
+        let roles = match text {
+            Some(t) => roles_of.entry(a.shape).or_insert_with(|| paragraph_build_roles(t)),
+            None => &no_roles,
+        };
         let by_para = roles.contains(&BuildRole::Top);
         // PowerPoint keeps a shape's consecutive paragraph effects in one build (`grpId`) marked
         // `build="p"`; the reader turns them back into a by-paragraph build only if that plays them
@@ -632,11 +662,19 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
                     _ => continue,
                 };
                 let Ok(pi) = u32::try_from(i) else { break };
+                if effect_count + effs.len() >= MAX_EFFECTS {
+                    if !warned {
+                        log::warn!("pptx: more than {MAX_EFFECTS} animation effects; the rest are left out");
+                        warned = true;
+                    }
+                    break;
+                }
                 effs.push(Eff { a, spid, start, paragraph: Some(pi), grp });
             }
         } else {
             effs.push(Eff { a, spid, start: a.start, paragraph: a.paragraph, grp });
         }
+        effect_count += effs.len();
         if text_sp && !joins {
             bld.push((spid, grp, by_para || para_effect));
         }

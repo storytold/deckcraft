@@ -44,7 +44,9 @@ fn scene(shape: &str, effect: Effect) -> Presentation {
             })
         }
         Effect::Glow => effects.glow = Some(Glow { color: ColorRef::rgb(Rgba::rgb(255, 0, 0)), radius: 8.0 }),
-        Effect::Reflection => effects.reflection = Some(Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 1.0, dist: 10.0 }),
+        Effect::Reflection => {
+            effects.reflection = Some(Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 1.0, dist: 10.0, ..Default::default() })
+        }
     }
     let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
     slide.background = Some(deckcraft_model::Background::Fill { fill: Fill::solid(ColorRef::rgb(Rgba::WHITE)) });
