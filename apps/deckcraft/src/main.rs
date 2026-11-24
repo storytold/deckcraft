@@ -277,7 +277,7 @@ fn main() -> eframe::Result {
     let Some(arguments) = prepare_launch() else { return Ok(()) };
     let nightly = launch_profile::current().is_nightly();
     // Nightly session health: the record names this window's owner and survives an abnormal end.
-    let (watch, session_unavailable) = nightly_session::begin_with_health(
+    let (watch, session_unavailable) = nightly_session::Session::begin_with_health(
         launch_profile::current().root(),
         deckcraft_ui_egui::flavor::version(),
         option_env!("DECKCRAFT_BUILD_SHA"),

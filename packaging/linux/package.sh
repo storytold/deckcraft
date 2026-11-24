@@ -149,12 +149,18 @@ if has deb || has rpm; then
     install -Dm755 "$NFPM_STAGE/usr/bin/deckcraft" "$NFPM_STAGE/usr/lib/deckcraft-nightly/deckcraft"
     cat >"$NFPM_STAGE/usr/bin/$NFPM_BIN" <<'WRAPPER'
 #!/bin/sh
+# DeckCraft Nightly launcher. The launch profile, not the environment, is the data root: it is
+# the only way in, and the app refuses a profile that overlaps stable's folders.
 set -eu
 : "${XDG_CONFIG_HOME:=${HOME:?HOME must be set}/.config}"
 : "${XDG_DATA_HOME:=$HOME/.local/share}"
 export XDG_CONFIG_HOME="$XDG_CONFIG_HOME/deckcraft-nightly"
 export XDG_DATA_HOME="$XDG_DATA_HOME/deckcraft-nightly"
-exec /usr/lib/deckcraft-nightly/deckcraft "$@"
+case "${1-}" in
+  --version | -V) exec /usr/lib/deckcraft-nightly/deckcraft "$@" ;;
+esac
+exec /usr/lib/deckcraft-nightly/deckcraft --launch-profile nightly-v1 \
+  --profile-root "$XDG_DATA_HOME/launcher/profiles/deckcraft" -- "$@"
 WRAPPER
     chmod 755 "$NFPM_STAGE/usr/bin/$NFPM_BIN"
     rm -f "$NFPM_STAGE/usr/bin/deckcraft"
@@ -172,6 +178,7 @@ WRAPPER
         -e "s|<launchable type=\"desktop-id\">$APP_ID.desktop</launchable>|<launchable type=\"desktop-id\">$NIGHTLY_DESK_ID.desktop</launchable>|g" \
         -e "s|<icon type=\"stock\">$APP_ID</icon>|<icon type=\"stock\">$NIGHTLY_DESK_ID</icon>|g" \
         -e "s|<binary>deckcraft</binary>|<binary>$NFPM_BIN</binary>|g" \
+        -e '/<mediatype>/d' \
         "$NFPM_STAGE/usr/share/metainfo/$APP_ID.metainfo.xml" >"$NFPM_STAGE/usr/share/metainfo/$NIGHTLY_DESK_ID.metainfo.xml"
     rm -f "$NFPM_STAGE/usr/share/metainfo/$APP_ID.metainfo.xml"
     rm -rf "$NFPM_STAGE/usr/share/mime"
@@ -211,7 +218,27 @@ if has appimage; then
   fi
   APPDIR="$WORK/DeckCraft.AppDir"
   cp -R "$STAGE" "$APPDIR"
-  ln -s usr/bin/deckcraft "$APPDIR/AppRun"
+  if [[ "$IS_NIGHTLY" = 1 ]]; then
+    # Not a symlink: the nightly AppImage starts the app with its launch profile, so an AppImage
+    # run is isolated like the deb/rpm wrapper even without the ArtCraft Launcher.
+    cat >"$APPDIR/AppRun" <<'APPRUN'
+#!/bin/sh
+set -eu
+APPDIR="$(dirname "$(readlink -f "$0")")"
+: "${XDG_CONFIG_HOME:=${HOME:?HOME must be set}/.config}"
+: "${XDG_DATA_HOME:=$HOME/.local/share}"
+export XDG_CONFIG_HOME="$XDG_CONFIG_HOME/deckcraft-nightly"
+export XDG_DATA_HOME="$XDG_DATA_HOME/deckcraft-nightly"
+case "${1-}" in
+  --version | -V) exec "$APPDIR/usr/bin/deckcraft" "$@" ;;
+esac
+exec "$APPDIR/usr/bin/deckcraft" --launch-profile nightly-v1 \
+  --profile-root "$XDG_DATA_HOME/launcher/profiles/deckcraft" -- "$@"
+APPRUN
+    chmod 755 "$APPDIR/AppRun"
+  else
+    ln -s usr/bin/deckcraft "$APPDIR/AppRun"
+  fi
   if [[ "$IS_NIGHTLY" = 1 ]]; then
     APPIMAGE_ID="$APP_ID.nightly-v1"
     NIGHTLY_ICON="$ROOT/assets/app-icon/deckcraft-nightly.png"

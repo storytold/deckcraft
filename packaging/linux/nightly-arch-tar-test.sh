@@ -31,6 +31,9 @@ mv "$bin/deckcraft-cli" "$bin/deckcraft-nightly-cli"
 [[ ! -e "$stage/bin/.deckcraft-nightly" ]]
 cmp "$stage/bin/deckcraft" "$bin/.deckcraft-nightly/deckcraft"
 cmp "$stage/bin/deckcraft-cli" "$bin/deckcraft-nightly-cli"
+export HOME="$work/home"
+mkdir -p "$HOME"
+export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share"
 expect() {
   expected="$1"
   shift
@@ -40,8 +43,11 @@ expect() {
     exit 1
   fi
 }
-expect "$(printf '<%s>\n' 'deck with spaces.pptx' '--other-name.deckcraft')" \
+# The launcher appends deckcraft-nightly to XDG_DATA_HOME before choosing the profile.
+profile="$XDG_DATA_HOME/deckcraft-nightly/launcher/profiles/deckcraft"
+expect "$(printf '<%s>\n' --launch-profile nightly-v1 --profile-root "$profile" -- 'deck with spaces.pptx' '--other-name.deckcraft')" \
   'deck with spaces.pptx' '--other-name.deckcraft'
+# A bare version query stays a version query, not a file name.
 expect '<--version>' --version
 expect '<-V>' -V
 

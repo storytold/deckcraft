@@ -61,8 +61,26 @@ tar -xzf "$TARBALL" -C "$WORK/stage" --strip-components=1
 if [[ "$FLATPAK_ID" != "$APP_ID" ]]; then
   NIGHTLY_ICON="$ROOT/assets/app-icon/deckcraft-nightly.png"
   [[ -f "$NIGHTLY_ICON" ]] || NIGHTLY_ICON="$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png"
+  # Flatpak starts the desktop entry, so the nightly entry runs a launcher that passes the
+  # launch profile: the sandbox's own XDG tree alone is not the app's data root.
+  cat >"$WORK/stage/bin/deckcraft-nightly" <<'LAUNCHER'
+#!/bin/sh
+set -eu
+: "${XDG_CONFIG_HOME:=${HOME:?HOME must be set}/.config}"
+: "${XDG_DATA_HOME:=$HOME/.local/share}"
+export XDG_CONFIG_HOME="$XDG_CONFIG_HOME/deckcraft-nightly"
+export XDG_DATA_HOME="$XDG_DATA_HOME/deckcraft-nightly"
+case "${1-}" in
+  --version | -V) exec /app/bin/deckcraft "$@" ;;
+esac
+exec /app/bin/deckcraft --launch-profile nightly-v1 \
+  --profile-root "$XDG_DATA_HOME/launcher/profiles/deckcraft" -- "$@"
+LAUNCHER
+  chmod 755 "$WORK/stage/bin/deckcraft-nightly"
   sed -e "s|^Icon=$APP_ID$|Icon=$FLATPAK_ID|" \
       -e "s|^Name=DeckCraft$|Name=DeckCraft Nightly|" \
+      -e "s#^Exec=deckcraft\\([[:space:]]\\|$\\)#Exec=deckcraft-nightly\\1#" \
+      -e "s|^TryExec=deckcraft$|TryExec=deckcraft-nightly|" \
       -e 's|^StartupWMClass=.*|StartupWMClass=ai.storyteller.deckcraft.nightly-v1|' \
       -e '/^MimeType=/d' \
       "$WORK/stage/share/applications/$APP_ID.desktop" >"$WORK/stage/share/applications/$FLATPAK_ID.desktop"
@@ -71,6 +89,7 @@ if [[ "$FLATPAK_ID" != "$APP_ID" ]]; then
       -e "s|<name>DeckCraft</name>|<name>DeckCraft Nightly</name>|g" \
       -e "s|<launchable type=\"desktop-id\">$APP_ID.desktop</launchable>|<launchable type=\"desktop-id\">$FLATPAK_ID.desktop</launchable>|g" \
       -e "s|<icon type=\"stock\">$APP_ID</icon>|<icon type=\"stock\">$FLATPAK_ID</icon>|g" \
+      -e '/<mediatype>/d' \
       "$WORK/stage/share/metainfo/$APP_ID.metainfo.xml" >"$WORK/stage/share/metainfo/$FLATPAK_ID.metainfo.xml"
   rm -f "$WORK/stage/share/metainfo/$APP_ID.metainfo.xml"
   mv "$WORK/stage/share/mime/packages/$APP_ID.xml" "$WORK/stage/share/mime/packages/$FLATPAK_ID.xml"
