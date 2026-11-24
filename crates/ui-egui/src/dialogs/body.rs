@@ -276,7 +276,12 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     });
     let _ = combo.response.labelled_by(field.id);
     // Where the slides go with Presenter View on; kept until OK, so Cancel discards it.
-    let screens = app.services.screens.as_mut().and_then(|f| f()).map(|s| s.list).unwrap_or_default();
+    // Listed once per dialog, not every frame.
+    if !d.fields.contains_key("screenList") {
+        let list = app.services.screens.as_mut().and_then(|f| f()).map(|s| s.list).unwrap_or_default();
+        d.fields.insert("screenList".into(), list.iter().map(usize::to_string).collect::<Vec<_>>().join(","));
+    }
+    let screens: Vec<usize> = d.fields.get("screenList").map(|v| v.split(',').filter_map(|n| n.parse().ok()).collect()).unwrap_or_default();
     let mut display = match d.fields.get("showDisplay") {
         Some(v) => v.parse::<usize>().ok(),
         None => app.ui.show_display,
