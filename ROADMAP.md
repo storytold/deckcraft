@@ -2,7 +2,10 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-21 · **Change:** trivial (motion review fixes and compatibility with current main; progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-21 · **Change:** trivial (motion review fixes; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-20 · **Change:** trivial (progress log: WMF scale and offset mapping records place sub-pictures, #2069; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-15 · **Change:** trivial (DeckCraft v0.19.0 version preparation (#2134); the SmartArt and WordArt display names become Diagram and Decorative Text (#1981) in DeckCraft's own feature labels — commands, contextual tab labels and messages — with the neutral labels guarded by tests (the PowerPoint-matching empty-diagram placeholder prompt still reads "Click icon to add SmartArt graphic", and saved control-channel identifiers such as the tab id "SmartArt Design" keep their keys); the wasm32 build no longer refers to the native-only opening generation (#1954); the control-protocol method reference is corrected (#2132); parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; empty notes slides are kept through PPTX and native saves, #2025; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-09 · **Change:** minor (progress log: PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import, #239) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-07 · **Change:** trivial (progress log: text in a group whose child coordinates scale its shapes is placed for export where the slide draws it; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -159,7 +162,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | What landed |
 |---|---|
 | 2026-11-21 | UI motion review: preserve double-click ribbon collapse, reuse unchanged cached paint, bound nested paint groups, preserve sidebar fills, and portable screenshot output. |
+| 2026-11-20 | WMF pictures that draw sub-pictures through the scale and offset mapping records (charts and clip art from older Office versions) place each one in its part of the frame (#2069) |
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
+| 2026-11-15 | DeckCraft v0.19.0 version preparation (#2134); the SmartArt and WordArt display names become Diagram and Decorative Text in DeckCraft's own feature labels — commands, contextual tab labels and messages — with the neutral labels guarded by tests; the wasm32 build no longer refers to the native-only opening generation (#1954); the control-protocol method reference is corrected (#2132) |
 | 2026-11-14 | UI: single-click ribbon collapse and reopen slide vertically over 200 ms, with continuous reversal; synthetic coordinates wait for ribbon motion and both themes recover their own animation duration. |
 | 2026-11-14 | UI: ribbon tab content fades/slides over 160 ms with a 200 ms sliding underline; File/editor crossfade, File page fade/lift, fading sidebar feedback and subtle ribbon group glow, adapted from WordCraft #6643; reduced-motion support. |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
@@ -355,7 +360,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-11-21 | trivial | Resolve current-main conflicts and motion review findings; readiness unchanged. |
+| 2026-11-20 | trivial | Progress log: WMF scale and offset mapping records (#2069); scores unchanged |
 | 2026-11-16 | trivial | Progress log: export all slides as PNG or JPEG from the File tab (#2019); scores unchanged |
+| 2026-11-15 | trivial | v0.19.0 version preparation; Diagram and Decorative Text naming (#1981) scoped to DeckCraft's own labels — the PowerPoint-matching empty-placeholder prompt still reads "Click icon to add SmartArt graphic" and saved control-channel identifiers keep their keys; wasm32 fix (#1954); control-protocol reference fix (#2132); parity scores unchanged |
 | 2026-11-14 | trivial | Animated single-click ribbon collapse/reopen; queued-click guard during ribbon motion; theme-specific animation restoration; scores unchanged. |
 | 2026-11-14 | trivial | File/editor crossfade, page fade/lift, sliding ribbon tab content and underline, animated side-menu feedback and feathered ribbon hover; system reduced motion; parity scores unchanged. |
 | 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
