@@ -324,6 +324,17 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
             ui.close();
         }
     }
+    // Slides copied from another presentation: PowerPoint's paste options.
+    if app.session.clipboard.slides.is_empty() {
+        // nothing to offer
+    } else {
+        for (l, how) in [("Paste, Keep Source Formatting", "keepSource"), ("Paste, Use Destination Theme", "destinationTheme")] {
+            if ui.button(l).clicked() {
+                let _ = app.run("edit.pasteSpecial", json!({"as": how}));
+                ui.close();
+            }
+        }
+    }
     ui.separator();
     if ui.button("New Slide").clicked() {
         let _ = app.run("slide.new", json!({}));
