@@ -89,6 +89,8 @@ env -u XDG_DATA_HOME -u HOME "$work/nodata/deckcraft" book.pptx >/dev/null 2>&1 
 [[ "$status" -eq 2 ]] || { printf 'a launcher with no data folder must exit 2, got %s\n' "$status" >&2; exit 1; }
 
 # ---- the /usr/bin rule: the fixed /usr/lib copy is named, and no parent path is ever used ----
+# The launcher's text is searched literally, so `$here` must not expand here.
+# shellcheck disable=SC2016
 grep -Fq '[ "$here" = /usr/bin ]' "$launcher"
 grep -Fq '/usr/lib/deckcraft-nightly/deckcraft' "$launcher"
 if grep -q '\.\.' "$launcher"; then
