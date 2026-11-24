@@ -57,26 +57,13 @@ WORK="$CARGO_TARGET_DIR/flatpak-bundle"
 rm -rf "$WORK"
 mkdir -p "$WORK/stage"
 tar -xzf "$TARBALL" -C "$WORK/stage" --strip-components=1
-[[ -x "$WORK/stage/bin/deckcraft" ]] || { echo "error: $TARBALL has no bin/deckcraft" >&2; exit 1; }
 if [[ "$FLATPAK_ID" != "$APP_ID" ]]; then
+  # The nightly tarball already carries its launcher and a GUI named for it, so the bundle
+  # installs both rather than generating a sixth wrapper.
+  [[ -x "$WORK/stage/bin/deckcraft-bin" && -x "$WORK/stage/bin/deckcraft-nightly" ]] \
+    || { echo "error: the nightly $TARBALL has no bin/deckcraft-bin and bin/deckcraft-nightly" >&2; exit 1; }
   NIGHTLY_ICON="$ROOT/assets/app-icon/deckcraft-nightly.png"
   [[ -f "$NIGHTLY_ICON" ]] || NIGHTLY_ICON="$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png"
-  # Flatpak starts the desktop entry, so the nightly entry runs a launcher that passes the
-  # launch profile: the sandbox's own XDG tree alone is not the app's data root.
-  cat >"$WORK/stage/bin/deckcraft-nightly" <<'LAUNCHER'
-#!/bin/sh
-set -eu
-: "${XDG_CONFIG_HOME:=${HOME:?HOME must be set}/.config}"
-: "${XDG_DATA_HOME:=$HOME/.local/share}"
-export XDG_CONFIG_HOME="$XDG_CONFIG_HOME/deckcraft-nightly"
-export XDG_DATA_HOME="$XDG_DATA_HOME/deckcraft-nightly"
-case "${1-}" in
-  --version | -V) exec /app/bin/deckcraft "$@" ;;
-esac
-exec /app/bin/deckcraft --launch-profile nightly-v1 \
-  --profile-root "$XDG_DATA_HOME/launcher/profiles/deckcraft" -- "$@"
-LAUNCHER
-  chmod 755 "$WORK/stage/bin/deckcraft-nightly"
   sed -e "s|^Icon=$APP_ID$|Icon=$FLATPAK_ID|" \
       -e "s|^Name=DeckCraft$|Name=DeckCraft Nightly|" \
       -e "s#^Exec=deckcraft\\([[:space:]]\\|$\\)#Exec=deckcraft-nightly\\1#" \
@@ -96,9 +83,24 @@ LAUNCHER
   rm -rf "$WORK/stage/share/icons/hicolor"
   install -Dm644 "$NIGHTLY_ICON" \
     "$WORK/stage/share/icons/hicolor/256x256/apps/$FLATPAK_ID.png"
+  # Flatpak starts `command`, and the desktop entry's Exec names the same launcher; the GUI sits
+  # beside it in /app/bin, where the launcher looks first.
   sed -e "s|ai\.storyteller\.deckcraft|$FLATPAK_ID|g" \
+      -e 's|^command: deckcraft$|command: deckcraft-nightly|' \
+      -e 's|^      - install -Dm755 bin/deckcraft /app/bin/deckcraft$|      - install -Dm755 bin/deckcraft-bin /app/bin/deckcraft-bin\n      - install -Dm755 bin/deckcraft-nightly /app/bin/deckcraft-nightly|' \
+      -e 's|<binary>deckcraft</binary>|<binary>deckcraft-nightly</binary>|' \
       "$HERE/flatpak/$APP_ID.bundle.yml" >"$WORK/$FLATPAK_ID.yml"
+  # A template change must fail here, not as a bundle whose menu entry cannot find a program.
+  for expected in 'command: deckcraft-nightly' \
+    '      - install -Dm755 bin/deckcraft-bin /app/bin/deckcraft-bin' \
+    '      - install -Dm755 bin/deckcraft-nightly /app/bin/deckcraft-nightly'; do
+    grep -qxF "$expected" "$WORK/$FLATPAK_ID.yml" || {
+      echo "error: the nightly Flatpak manifest lost \"$expected\"" >&2
+      exit 1
+    }
+  done
 else
+  [[ -x "$WORK/stage/bin/deckcraft" ]] || { echo "error: $TARBALL has no bin/deckcraft" >&2; exit 1; }
   cp "$HERE/flatpak/$APP_ID.bundle.yml" "$WORK/$FLATPAK_ID.yml"
 fi
 

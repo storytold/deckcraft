@@ -33,7 +33,9 @@ def checked_entries(root, stage):
     total = 0
     for entry in entries:
         name = entry.name
-        if name not in {"deckcraft", "deckcraft-nightly", "deckcraft-nightly.png"} and not notice(name):
+        # `deckcraft` is the launcher and `deckcraft-bin` the GUI it starts (nightly.sh); the icon
+        # and the notices are the rest of the flat archive.
+        if name not in {"deckcraft", "deckcraft-bin", "deckcraft-nightly.png"} and not notice(name):
             raise ValueError(f"unexpected nightly member: {name}")
         if len(name.encode("utf-8")) > 100:
             raise ValueError(f"nightly member must be a short regular file: {name}")
@@ -44,7 +46,7 @@ def checked_entries(root, stage):
         if name.casefold() in folded:
             raise ValueError(f"case-colliding nightly member: {name}")
         folded.add(name.casefold())
-    required = {"deckcraft", "deckcraft-nightly", "deckcraft-nightly.png", "README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "ATTRIBUTION.md"}
+    required = {"deckcraft", "deckcraft-bin", "deckcraft-nightly.png", "README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "ATTRIBUTION.md"}
     if not required.issubset({item.name for item in entries}):
         raise ValueError("required GUI/icon/notices missing")
     return entries

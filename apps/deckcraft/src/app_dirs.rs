@@ -56,11 +56,6 @@ pub fn config_dir() -> Option<PathBuf> {
     current().dir.clone()
 }
 
-/// Whether this launch writes into a Launcher-selected Nightly profile.
-pub fn is_override() -> bool {
-    current().mode == Mode::Override
-}
-
 /// The platform's settings directory. Read from the environment every call, so tests can vary it.
 pub fn platform_dir(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
@@ -74,20 +69,30 @@ pub fn platform_dir(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
 
 /// The crash-recovery folder: inside the profile for Nightly, the platform's own folder for stable
 /// (`deckcraft_engine::recovery::default_dir`, which keeps autosaves out of the synced config).
-pub fn recovery_dir() -> Option<PathBuf> {
-    match current() {
+fn recovery_dir_for(current: &DataDir) -> Option<PathBuf> {
+    match current {
         DataDir { dir: Some(root), mode: Mode::Override } => Some(root.join("Recovery")),
         _ => deckcraft_engine::recovery::default_dir(),
     }
 }
 
+/// [`recovery_dir_for`] for this process.
+pub fn recovery_dir() -> Option<PathBuf> {
+    recovery_dir_for(current())
+}
+
 /// The user dictionary (`user.dic`, the words "Add to dictionary" keeps): inside the profile for
 /// Nightly, the platform's dictionary folder for stable.
-pub fn user_dictionary() -> Option<PathBuf> {
-    match current() {
+fn user_dictionary_for(current: &DataDir) -> Option<PathBuf> {
+    match current {
         DataDir { dir: Some(root), mode: Mode::Override } => Some(root.join("Dictionaries").join("user.dic")),
         _ => None,
     }
+}
+
+/// [`user_dictionary_for`] for this process.
+pub fn user_dictionary() -> Option<PathBuf> {
+    user_dictionary_for(current())
 }
 
 /// The app's exclusive write probe: a new file created in `dir` and removed again. It never falls
@@ -123,6 +128,27 @@ mod tests {
         } else {
             assert_eq!(dir, PathBuf::from("/xdg/config").join("deckcraft"));
         }
+    }
+
+    /// Recovery and the dictionary follow the profile; stable keeps the engine's own folders and
+    /// writes no per-profile dictionary.
+    #[test]
+    fn the_nightly_profile_owns_recovery_and_the_dictionary() {
+        let root = PathBuf::from("/nightly-data/profiles/deckcraft");
+        let profile = DataDir { dir: Some(root.clone()), mode: Mode::Override };
+        assert_eq!(recovery_dir_for(&profile), Some(root.join("Recovery")));
+        assert_eq!(user_dictionary_for(&profile), Some(root.join("Dictionaries").join("user.dic")));
+        let stable = DataDir { dir: None, mode: Mode::Platform };
+        assert_eq!(user_dictionary_for(&stable), None);
+        assert_eq!(recovery_dir_for(&stable), deckcraft_engine::recovery::default_dir());
+    }
+
+    /// The process resolves its data directory once; every caller must get that same decision.
+    #[test]
+    fn the_data_directory_is_resolved_once() {
+        let resolved = current();
+        assert!(std::ptr::eq(resolved, current()));
+        assert_eq!(resolved.dir, config_dir());
     }
 
     #[test]

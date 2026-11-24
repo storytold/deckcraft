@@ -18,6 +18,8 @@ mod app_dirs;
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod audio;
+#[cfg(test)]
+mod build_channel;
 mod build_flavor;
 mod control_server;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -531,6 +533,9 @@ mod tests {
     }
 
     /// The exit hook (the Nightly session record) runs once, on the one exit path macOS has.
+    /// Not on macOS itself: there `on_exit` ends this test process (after writing the real stable
+    /// settings), which is the behaviour the child-process test above checks.
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn leaving_runs_the_exit_hook_once() {
         let runs = std::rc::Rc::new(std::cell::Cell::new(0));

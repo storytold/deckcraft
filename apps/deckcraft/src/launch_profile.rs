@@ -130,6 +130,15 @@ mod tests {
         args(&["--launch-profile", VERSION, "--profile-root", absolute(), "--"])
     }
 
+    /// The process installs one profile; later answers are read-only and a second install fails.
+    #[test]
+    fn the_process_installs_its_profile_once() {
+        assert_eq!(current(), &Profile::Stable, "an unselected process is a stable launch");
+        assert!(install(Profile::Stable).is_ok());
+        assert_eq!(current(), &Profile::Stable);
+        assert!(install(Profile::Stable).is_err());
+    }
+
     #[test]
     fn stable_arguments_and_directory_policy_are_unchanged() {
         for argv in [args(&[]), args(&["--sample", "a.pptx"]), args(&["--", "--launch-profile", "file.pptx"])] {

@@ -206,7 +206,7 @@ fn validate_for(
         // runtime could point another profile at the stable app's data. DeckCraft Nightly's own
         // Flatpak (packaging/linux/flatpak-bundle.sh) is the one allowed instance, matched by its
         // exact id; the stable id and any other app are refused.
-        if platform == Platform::Windows || id != OsString::from(NIGHTLY_FLATPAK_ID) {
+        if platform == Platform::Windows || id != NIGHTLY_FLATPAK_ID {
             return Err("nightly-v1 accepts only the DeckCraft Nightly Flatpak instance; launch through the native Launcher".into());
         }
     }
@@ -383,6 +383,30 @@ mod tests {
         std::os::unix::fs::symlink(&recovery, private.join("Recovery")).unwrap();
         assert!(fixture.check(Platform::Linux, &private).is_ok());
         assert_eq!(std::fs::canonicalize(private.join("Recovery")).unwrap(), recovery);
+    }
+
+    /// The public entry point reads the host platform and refuses a relative root before probing.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_public_validator_uses_the_host_platform_and_creates_only_the_profile() {
+        let fixture = Fixture::new();
+        let root = fixture.home().join("nightly/profiles/deckcraft");
+        let created = validate(&root, |key| fixture.get(key), Some(&fixture.exe), crate::app_dirs::ensure_writable)
+            .expect("a private profile under HOME is valid on Linux");
+        assert_eq!(created, root);
+        assert!(created.is_dir());
+        let probed = std::cell::Cell::new(false);
+        let refused = validate(
+            Path::new("relative/profile"),
+            |key| fixture.get(key),
+            Some(&fixture.exe),
+            |_| {
+                probed.set(true);
+                Ok(())
+            },
+        );
+        assert!(refused.is_err());
+        assert!(!probed.get(), "a relative root is refused before the write probe");
     }
 
     #[test]

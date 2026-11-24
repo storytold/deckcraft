@@ -112,12 +112,27 @@ has() {
 if has tar; then
   mkdir -p "$WORK/tar"
   cp -R "$STAGE/usr" "$WORK/tar/$BASENAME"
+  if [[ "$IS_NIGHTLY" = 1 ]]; then
+    # An unpacked nightly tree is isolated too: bin/deckcraft-nightly starts the GUI (here
+    # bin/deckcraft-bin), because the binary alone refuses to run without a launch profile.
+    install -Dm755 "$WORK/tar/$BASENAME/bin/deckcraft" "$WORK/tar/$BASENAME/bin/deckcraft-bin"
+    rm -f "$WORK/tar/$BASENAME/bin/deckcraft"
+    install -Dm755 "$HERE/nightly-launch.sh" "$WORK/tar/$BASENAME/bin/deckcraft-nightly"
+    TAR_DESK="$WORK/tar/$BASENAME/share/applications/$APP_ID.desktop"
+    sed -e "s#^Exec=deckcraft\([[:space:]]\|$\)#Exec=deckcraft-nightly\1#" \
+        -e "s|^TryExec=deckcraft$|TryExec=deckcraft-nightly|" \
+        -e "s|^Name=DeckCraft$|Name=DeckCraft Nightly|" \
+        -e '/^MimeType=/d' \
+        "$TAR_DESK" >"$TAR_DESK.tmp"
+    mv "$TAR_DESK.tmp" "$TAR_DESK"
+  fi
   tar -C "$WORK/tar" -czf "$DIST/$BASENAME.tar.gz" "$BASENAME"
   echo "wrote $DIST/$BASENAME.tar.gz"
 fi
 
-# The Arch handoff keeps the same basename as the plain tarball in a separate directory.
-# Flatpak, OCI and direct tar consumers still get the original binary, not this launcher.
+# The Arch handoff keeps the same basename as the plain tarball in a separate directory. It is
+# built from the staged tree, not from the nightly tar beside it (whose bin/deckcraft is already
+# the launcher and whose bin/deckcraft-bin is the GUI).
 if [[ -n "$ARCH_TAR_DIR" ]]; then
   mkdir -p "$ARCH_TAR_DIR"
   if [[ "$(cd "$ARCH_TAR_DIR" && pwd -P)" == "$(cd "$DIST" && pwd -P)" ]]; then
@@ -146,23 +161,10 @@ if has deb || has rpm; then
     NFPM_STAGE="$WORK/nfpm-root"
     rm -rf "$NFPM_STAGE"
     cp -R "$STAGE" "$NFPM_STAGE"
+    # The GUI keeps its name under /usr/lib; /usr/bin/deckcraft-nightly is the launcher, whose
+    # /usr/bin gate is what reaches that fixed path (the same file as the tar and AppImage use).
     install -Dm755 "$NFPM_STAGE/usr/bin/deckcraft" "$NFPM_STAGE/usr/lib/deckcraft-nightly/deckcraft"
-    cat >"$NFPM_STAGE/usr/bin/$NFPM_BIN" <<'WRAPPER'
-#!/bin/sh
-# DeckCraft Nightly launcher. The launch profile, not the environment, is the data root: it is
-# the only way in, and the app refuses a profile that overlaps stable's folders.
-set -eu
-: "${XDG_CONFIG_HOME:=${HOME:?HOME must be set}/.config}"
-: "${XDG_DATA_HOME:=$HOME/.local/share}"
-export XDG_CONFIG_HOME="$XDG_CONFIG_HOME/deckcraft-nightly"
-export XDG_DATA_HOME="$XDG_DATA_HOME/deckcraft-nightly"
-case "${1-}" in
-  --version | -V) exec /usr/lib/deckcraft-nightly/deckcraft "$@" ;;
-esac
-exec /usr/lib/deckcraft-nightly/deckcraft --launch-profile nightly-v1 \
-  --profile-root "$XDG_DATA_HOME/launcher/profiles/deckcraft" -- "$@"
-WRAPPER
-    chmod 755 "$NFPM_STAGE/usr/bin/$NFPM_BIN"
+    install -Dm755 "$HERE/nightly-launch.sh" "$NFPM_STAGE/usr/bin/$NFPM_BIN"
     rm -f "$NFPM_STAGE/usr/bin/deckcraft"
     mv "$NFPM_STAGE/usr/bin/deckcraft-cli" "$NFPM_STAGE/usr/bin/$NFPM_CLI"
     mv "$NFPM_STAGE/usr/share/doc/deckcraft" "$NFPM_STAGE/usr/share/doc/$NFPM_NAME"
@@ -220,22 +222,13 @@ if has appimage; then
   cp -R "$STAGE" "$APPDIR"
   if [[ "$IS_NIGHTLY" = 1 ]]; then
     # Not a symlink: the nightly AppImage starts the app with its launch profile, so an AppImage
-    # run is isolated like the deb/rpm wrapper even without the ArtCraft Launcher.
-    cat >"$APPDIR/AppRun" <<'APPRUN'
-#!/bin/sh
-set -eu
-APPDIR="$(dirname "$(readlink -f "$0")")"
-: "${XDG_CONFIG_HOME:=${HOME:?HOME must be set}/.config}"
-: "${XDG_DATA_HOME:=$HOME/.local/share}"
-export XDG_CONFIG_HOME="$XDG_CONFIG_HOME/deckcraft-nightly"
-export XDG_DATA_HOME="$XDG_DATA_HOME/deckcraft-nightly"
-case "${1-}" in
-  --version | -V) exec "$APPDIR/usr/bin/deckcraft" "$@" ;;
-esac
-exec "$APPDIR/usr/bin/deckcraft" --launch-profile nightly-v1 \
-  --profile-root "$XDG_DATA_HOME/launcher/profiles/deckcraft" -- "$@"
-APPRUN
-    chmod 755 "$APPDIR/AppRun"
+    # run is isolated like the distro package even without the ArtCraft Launcher. The GUI takes
+    # the name the launcher looks for, and the entry names the launcher for integrations that
+    # read it.
+    install -Dm755 "$APPDIR/usr/bin/deckcraft" "$APPDIR/usr/bin/deckcraft-bin"
+    rm -f "$APPDIR/usr/bin/deckcraft"
+    install -Dm755 "$HERE/nightly-launch.sh" "$APPDIR/AppRun"
+    install -Dm755 "$HERE/nightly-launch.sh" "$APPDIR/usr/bin/deckcraft-nightly"
   else
     ln -s usr/bin/deckcraft "$APPDIR/AppRun"
   fi
@@ -243,7 +236,9 @@ APPRUN
     APPIMAGE_ID="$APP_ID.nightly-v1"
     NIGHTLY_ICON="$ROOT/assets/app-icon/deckcraft-nightly.png"
     [[ -f "$NIGHTLY_ICON" ]] || NIGHTLY_ICON="$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png"
-    sed -e "s|^Icon=$APP_ID$|Icon=$APPIMAGE_ID|" \
+    sed -e "s#^Exec=deckcraft\([[:space:]]\|$\)#Exec=deckcraft-nightly\1#" \
+        -e "s|^TryExec=deckcraft$|TryExec=deckcraft-nightly|" \
+        -e "s|^Icon=$APP_ID$|Icon=$APPIMAGE_ID|" \
         -e "s|^Name=DeckCraft$|Name=DeckCraft Nightly|" \
         -e '/^MimeType=/d' \
         "$APPDIR/usr/share/applications/$APP_ID.desktop" >"$APPDIR/usr/share/applications/$APPIMAGE_ID.desktop"

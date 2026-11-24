@@ -17,17 +17,17 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod backstage;
 pub mod canvas;
-pub mod flavor;
-pub mod os_window;
 pub mod capture;
 pub mod control;
 pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
+pub mod flavor;
 pub mod icons;
 pub mod media;
 pub mod menus;
 pub mod opening;
+pub mod os_window;
 pub mod presenter;
 pub mod ribbon;
 pub mod settings;

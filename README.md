@@ -183,6 +183,11 @@ dictionary or single window state. The Nightly app is started only by ArtCraft L
 fenced against every stable data and install folder, so a Nightly window cannot fall back to
 stable state. Nightly is managed by the Launcher and does not self-update.
 
+On Linux, every Nightly format starts through the same launcher
+(`packaging/linux/nightly-launch.sh`): the `.tar.gz` and AppImage, the deb/rpm package, the Flatpak
+and the Arch handoff all pass `--launch-profile nightly-v1 --profile-root <dir> -- <files>` to the
+GUI, so an unpacked or distro-installed copy is isolated without the Launcher.
+
 The channel's packaging lives in `packaging/nightly-common.sh`, `packaging/{linux,macos,windows}/nightly*`
 and `.github/workflows/nightly*.yml`. The producer and signer workflows are registered and can be
 dispatched by the reviewed release managers only; there is no schedule or automatic dispatch yet.

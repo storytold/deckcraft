@@ -18,26 +18,12 @@ OUTPUT="$DIST/deckcraft-$VERSION-linux-x86_64-nightly.tar.gz"
 nightly_build_gui
 STAGE="$NIGHTLY_WORK/stage"
 mkdir -p "$STAGE"
-cp "$NIGHTLY_GUI" "$STAGE/deckcraft"
+# The kit's flat tar layout: `deckcraft` is the launcher people run and `deckcraft-bin` the GUI it
+# starts with this channel's own launch profile, so an unpacked copy never writes stable's data.
+cp "$NIGHTLY_GUI" "$STAGE/deckcraft-bin"
+chmod 755 "$STAGE/deckcraft-bin"
+cp "$ROOT/packaging/linux/nightly-launch.sh" "$STAGE/deckcraft"
 chmod 755 "$STAGE/deckcraft"
-# The archive's entry point: an unpacked tar is isolated too, because the launcher passes the
-# launch profile the app requires (the bare binary refuses to start without one).
-cat >"$STAGE/deckcraft-nightly" <<'LAUNCHER'
-#!/bin/sh
-# DeckCraft Nightly launcher for the plain tar (no install, no Launcher required).
-set -eu
-here="$(dirname "$(readlink -f "$0")")"
-: "${XDG_CONFIG_HOME:=${HOME:?HOME must be set}/.config}"
-: "${XDG_DATA_HOME:=$HOME/.local/share}"
-export XDG_CONFIG_HOME="$XDG_CONFIG_HOME/deckcraft-nightly"
-export XDG_DATA_HOME="$XDG_DATA_HOME/deckcraft-nightly"
-case "${1-}" in
-  --version | -V) exec "$here/deckcraft" "$@" ;;
-esac
-exec "$here/deckcraft" --launch-profile nightly-v1 \
-  --profile-root "$XDG_DATA_HOME/launcher/profiles/deckcraft" -- "$@"
-LAUNCHER
-chmod 755 "$STAGE/deckcraft-nightly"
 ICON_SRC="$ROOT/assets/app-icon/deckcraft-nightly.png"
 [[ -f "$ICON_SRC" ]] || ICON_SRC="$ROOT/assets/app-icon/deckcraft-1024.png"
 cp "$ICON_SRC" "$STAGE/deckcraft-nightly.png"
