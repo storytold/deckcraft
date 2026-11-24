@@ -44,7 +44,9 @@ nightly_build_gui() {
   nightly_compile_gui
   local actual
   actual="$("$NIGHTLY_GUI" --version)" || nightly_die 'side-effect-free nightly version verification failed'
-  [[ "$actual" == "deckcraft "* ]] || nightly_die 'the built version/flavor is not the prepared identity'
+  # The desktop's version query answers `DeckCraft <version> (nightly-v1)`; the exact line, not a
+  # prefix, so a stable or mismatched build cannot pass.
+  [[ "$actual" == "DeckCraft $VERSION (nightly-v1)" ]] || nightly_die 'the built version/flavor is not the prepared identity'
   [[ "$(git -C "$ROOT" rev-parse HEAD)" == "$DECKCRAFT_BUILD_SHA" && -z "$(git -C "$ROOT" status --porcelain)" ]] || nightly_die 'source changed during the version query'
 }
 
