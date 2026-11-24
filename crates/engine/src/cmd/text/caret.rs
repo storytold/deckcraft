@@ -323,54 +323,62 @@ pub(crate) fn apply_leading_tabs(para: &mut deckcraft_model::text::Paragraph) ->
     true
 }
 
-/// The Outline editor sends all paragraphs, with tabs recording their levels. Reserve matches
-/// with unchanged text and level first, then match reindented lines by text alone.
+/// The Outline editor sends all paragraphs, with tabs recording their levels. Preserve the
+/// order of identical lines when they all survive an edit; use levels to distinguish deletions.
 fn replace_outline(body: &mut TextBody, mut next: TextBody, mut adjust: impl FnMut(&mut deckcraft_model::text::Paragraph)) {
     use std::collections::{HashMap, VecDeque};
-    type LinesByText<'a> = HashMap<&'a str, VecDeque<usize>>;
     let old_text: Vec<_> = body.paragraphs.iter().map(|para| para.text()).collect();
-    let mut exact: HashMap<u8, LinesByText<'_>> = HashMap::new();
-    for (i, (text, para)) in old_text.iter().zip(&body.paragraphs).enumerate() {
-        exact.entry(para.level).or_default().entry(text).or_default().push_back(i);
-    }
-    let mut kept = vec![false; old_text.len()];
-    let mut matches: Vec<_> = next
+    let new_text: Vec<_> = next
         .paragraphs
         .iter_mut()
         .map(|para| {
             apply_leading_tabs(para);
-            let text = para.text();
-            let previous = exact.get_mut(&para.level).and_then(|lines| lines.get_mut(text.as_str())).and_then(VecDeque::pop_front);
-            if let Some(i) = previous {
-                kept[i] = true;
-            }
-            (text, previous)
+            para.text()
         })
         .collect();
-    let mut by_text = LinesByText::new();
-    for (i, text) in old_text.iter().enumerate().filter(|(i, _)| !kept[*i]) {
-        by_text.entry(text).or_default().push_back(i);
+    let mut by_text = HashMap::<&str, (Vec<usize>, Vec<usize>)>::new();
+    for (i, text) in old_text.iter().enumerate() {
+        by_text.entry(text).or_default().0.push(i);
     }
-    for (text, previous) in &mut matches {
-        if previous.is_none() {
-            *previous = by_text.get_mut(text.as_str()).and_then(VecDeque::pop_front);
-            if let Some(i) = *previous {
-                kept[i] = true;
+    for (i, text) in new_text.iter().enumerate() {
+        by_text.entry(text).or_default().1.push(i);
+    }
+    let mut used = vec![false; old_text.len()];
+    let mut originals = vec![None; new_text.len()];
+    for (old, new) in by_text.into_values() {
+        if old.len() != new.len() {
+            let mut levels = HashMap::<u8, VecDeque<usize>>::new();
+            for &i in &old {
+                levels.entry(body.paragraphs[i].level).or_default().push_back(i);
+            }
+            for &i in &new {
+                originals[i] = levels.get_mut(&next.paragraphs[i].level).and_then(VecDeque::pop_front);
+                if let Some(source) = originals[i] {
+                    used[source] = true;
+                }
+            }
+        }
+        let mut unused = old.into_iter().filter(|&i| !used[i]);
+        for i in new {
+            if originals[i].is_none() {
+                originals[i] = unused.next();
             }
         }
     }
-    let mut changed = kept.into_iter().enumerate().filter_map(|(i, used)| (!used).then_some(i));
-    for (i, (para, (text, previous))) in next.paragraphs.iter_mut().zip(matches).enumerate() {
-        let base = previous
-            .or_else(|| changed.next())
-            .and_then(|i| body.paragraphs.get(i))
-            .or_else(|| body.paragraphs.get(i.min(body.paragraphs.len().saturating_sub(1))));
+    match_outline_edits(&old_text, &new_text, &mut originals);
+    let mut following = originals.iter().flatten().copied().peekable();
+    let mut preceding = None;
+    for ((para, text), source) in next.paragraphs.iter_mut().zip(&new_text).zip(originals.iter().copied()) {
+        if source.is_some() {
+            preceding = following.next();
+        }
+        let base = source.or(preceding).or_else(|| following.peek().copied()).and_then(|i| body.paragraphs.get(i));
         if let Some(base) = base {
             let level = para.level;
-            if previous.is_some() {
+            if source.is_some_and(|i| old_text[i] == *text) {
                 *para = base.clone();
             } else {
-                preserve_outline_run_style(para, base, &text);
+                preserve_outline_run_style(para, base, text);
                 adjust(para);
             }
             para.level = level;
@@ -379,6 +387,38 @@ fn replace_outline(body: &mut TextBody, mut next: TextBody, mut adjust: impl FnM
         }
     }
     body.paragraphs = next.paragraphs;
+}
+
+/// Match edited lines in their original order. When there are excess lines, a shared edge
+/// distinguishes an edit from a nearby insertion or deletion.
+fn match_outline_edits(old: &[String], new: &[String], originals: &mut [Option<usize>]) {
+    let mut used = vec![false; old.len()];
+    for &source in originals.iter().flatten() {
+        used[source] = true;
+    }
+    let candidates: Vec<_> = (0..old.len()).filter(|&i| !used[i]).collect();
+    let unmatched: Vec<_> = (0..new.len()).filter(|&i| originals[i].is_none()).collect();
+    let (mut old_at, mut new_at) = (0, 0);
+    while old_at < candidates.len() && new_at < unmatched.len() {
+        let (source, target) = (candidates[old_at], unmatched[new_at]);
+        let (old_left, new_left) = (candidates.len() - old_at, unmatched.len() - new_at);
+        let score = outline_overlap(&old[source], &new[target]);
+        if new_left > old_left && outline_overlap(&old[source], &new[unmatched[new_at + 1]]) > score {
+            new_at += 1;
+        } else if old_left > new_left && outline_overlap(&old[candidates[old_at + 1]], &new[target]) > score {
+            old_at += 1;
+        } else {
+            originals[target] = Some(source);
+            old_at += 1;
+            new_at += 1;
+        }
+    }
+}
+
+fn outline_overlap(old: &str, new: &str) -> usize {
+    let prefix = old.chars().zip(new.chars()).take_while(|(a, b)| a == b).count();
+    let suffix = old.chars().rev().zip(new.chars().rev()).take_while(|(a, b)| a == b).count();
+    prefix.max(suffix)
 }
 
 /// Reuse the ordinary text edit for a changed line that still shares a prefix or suffix. A new
@@ -512,21 +552,47 @@ mod outline_tests {
 
     #[test]
     fn editing_outline_matches_identically_named_lines_at_their_own_levels() {
-        let mut s = Session::with_new();
-        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": "Task\nTask"})).unwrap();
-        let id = s.doc().unwrap().selection.shapes[0];
-        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
-            let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
-            paragraphs[0].runs[0].props.bold = Some(true);
-            paragraphs[1].level = 1;
-            paragraphs[1].runs[0].props.italic = Some(true);
-            Ok(())
-        })
-        .unwrap();
+        let (mut s, id) = outline_with_two_styles("Task\nTask", 1);
         let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs[1].clone();
 
         s.execute("text.set", &json!({"id": id, "text": "\tTask", "outline": true})).unwrap();
         let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
         assert_eq!(after, &[before]);
+    }
+
+    fn outline_with_two_styles(text: &str, second_level: u8) -> (Session, deckcraft_model::ShapeId) {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": text})).unwrap();
+        let id = s.doc().unwrap().selection.shapes[0];
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
+            paragraphs[0].runs[0].props.bold = Some(true);
+            paragraphs[1].level = second_level;
+            paragraphs[1].runs[0].props.italic = Some(true);
+            Ok(())
+        })
+        .unwrap();
+        (s, id)
+    }
+
+    #[test]
+    fn an_inserted_outline_line_does_not_consume_the_edited_paragraph() {
+        let (mut s, id) = outline_with_two_styles("First\nSecond", 0);
+        s.execute("text.set", &json!({"id": id, "text": "New\nFirst!\nSecond", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after[1].text(), "First!");
+        assert!(after[1].runs.iter().all(|run| run.props.bold == Some(true) && run.props.italic.is_none()));
+        assert_eq!(after[2].text(), "Second");
+        assert_eq!(after[2].runs[0].props.italic, Some(true));
+    }
+
+    #[test]
+    fn reindenting_one_duplicate_outline_line_does_not_swap_its_style() {
+        let (mut s, id) = outline_with_two_styles("Task\nTask", 1);
+        let mut expected = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+        expected[0].level = 1;
+        s.execute("text.set", &json!({"id": id, "text": "\tTask\n\tTask", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &expected);
     }
 }
