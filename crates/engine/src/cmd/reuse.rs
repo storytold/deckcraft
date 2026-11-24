@@ -399,80 +399,95 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let keep = bool_or(p, "keepFormatting", false);
     let at = usize_param(p, "at");
+    s.edit(|doc, sel| insert_slides_from("slide.reuse", doc, sel, &src, &picked, keep, at, &name))
+}
+
+/// Put copies of `src`'s slides `picked` (indices) into `doc` after slide `at` (default: after the current
+/// one), bringing their media, table styles and, with `keep`, their masters. Shared by Reuse Slides and by
+/// pasting slides copied from another presentation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_slides_from(
+    cmd: &str,
+    doc: &mut Presentation,
+    sel: &mut crate::Selection,
+    src: &Presentation,
+    picked: &[usize],
+    keep: bool,
+    at: Option<usize>,
+    name: &str,
+) -> Result<Value> {
     let source_size = src.slide_size;
-    s.edit(|doc, sel| {
-        let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
-        let mut used_table_styles = Vec::new();
-        let mut seen_table_styles = HashSet::new();
-        for &i in &picked {
-            if let Some(slide) = src.slides.get(i) {
-                collect_table_styles(&slide.shapes, &mut used_table_styles, &mut seen_table_styles, 0);
-            }
+    let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
+    let mut used_table_styles = Vec::new();
+    let mut seen_table_styles = HashSet::new();
+    for &i in picked {
+        if let Some(slide) = src.slides.get(i) {
+            collect_table_styles(&slide.shapes, &mut used_table_styles, &mut seen_table_styles, 0);
         }
-        let table_style_map = import_table_styles("slide.reuse", doc, &src, &used_table_styles)?;
-        let scale = |source: f64, destination: f64| {
-            let ratio = destination / source;
-            if source > 0.0 && destination > 0.0 && ratio.is_finite() && ratio > 0.0 { ratio } else { 1.0 }
+    }
+    let table_style_map = import_table_styles(cmd, doc, src, &used_table_styles)?;
+    let scale = |source: f64, destination: f64| {
+        let ratio = destination / source;
+        if source > 0.0 && destination > 0.0 && ratio.is_finite() && ratio > 0.0 { ratio } else { 1.0 }
+    };
+    let sx = scale(source_size.width, doc.slide_size.width);
+    let sy = scale(source_size.height, doc.slide_size.height);
+    // Media: what the slides use is copied under fresh ids.
+    let mut media_map: HashMap<MediaId, MediaId> = HashMap::new();
+    // Keep Source Formatting: bring each source master used, once, with fresh ids.
+    let mut layout_map: HashMap<LayoutId, LayoutId> = HashMap::new();
+    if keep {
+        let mut masters_done: Vec<MasterId> = vec![];
+        for &i in picked {
+            let Some((m, _)) = src.slides.get(i).and_then(|sl| src.master_for(sl)) else { continue };
+            if masters_done.contains(&m.id) {
+                continue;
+            }
+            masters_done.push(m.id);
+            let mut m = import_master(cmd, doc, src, m, &mut media_map, &mut layout_map)?;
+            scale_master(&mut m, sx, sy);
+            doc.masters.push(Arc::new(m));
+        }
+    }
+    let mut copies: Vec<Slide> = vec![];
+    // Source slide → its copy, so links between reused slides follow (forward ones too).
+    let mut slide_map: HashMap<SlideId, SlideId> = HashMap::new();
+    for &i in picked {
+        let Some(from) = src.slides.get(i) else { continue };
+        copy_media(cmd, doc, src, &media_refs::slide_media(from), &mut media_map)?;
+        let mut sl: Slide = from.as_ref().clone();
+        remap_table_styles(&mut sl.shapes, &table_style_map, 0);
+        scale_shapes(&mut sl.shapes, sx, sy, 0);
+        media_refs::visit_mut::slide(&mut sl, &mut remap(&media_map));
+        sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+        let map = renumber(cmd, doc, &mut sl.shapes)?;
+        for a in &mut sl.animations {
+            a.shape = map.get(&a.shape).copied().unwrap_or(a.shape);
+            a.trigger = a.trigger.map(|t| map.get(&t).copied().unwrap_or(t));
+        }
+        sl.layout = match layout_map.get(&sl.layout) {
+            Some(l) => *l,
+            None => {
+                let (lname, kind) =
+                    src.layout(from.layout).map(|(_, l)| (l.name.clone(), l.kind)).unwrap_or_else(|| (String::new(), Default::default()));
+                matching_layout(doc, &lname, kind)
+            }
         };
-        let sx = scale(source_size.width, doc.slide_size.width);
-        let sy = scale(source_size.height, doc.slide_size.height);
-        // Media: what the slides use is copied under fresh ids.
-        let mut media_map: HashMap<MediaId, MediaId> = HashMap::new();
-        // Keep Source Formatting: bring each source master used, once, with fresh ids.
-        let mut layout_map: HashMap<LayoutId, LayoutId> = HashMap::new();
-        if keep {
-            let mut masters_done: Vec<MasterId> = vec![];
-            for &i in &picked {
-                let Some((m, _)) = src.slides.get(i).and_then(|sl| src.master_for(sl)) else { continue };
-                if masters_done.contains(&m.id) {
-                    continue;
-                }
-                masters_done.push(m.id);
-                let mut m = import_master("slide.reuse", doc, &src, m, &mut media_map, &mut layout_map)?;
-                scale_master(&mut m, sx, sy);
-                doc.masters.push(Arc::new(m));
-            }
-        }
-        let mut copies: Vec<Slide> = vec![];
-        // Source slide → its copy, so links between reused slides follow (forward ones too).
-        let mut slide_map: HashMap<SlideId, SlideId> = HashMap::new();
-        for &i in &picked {
-            let Some(from) = src.slides.get(i) else { continue };
-            copy_media("slide.reuse", doc, &src, &media_refs::slide_media(from), &mut media_map)?;
-            let mut sl: Slide = from.as_ref().clone();
-            remap_table_styles(&mut sl.shapes, &table_style_map, 0);
-            scale_shapes(&mut sl.shapes, sx, sy, 0);
-            media_refs::visit_mut::slide(&mut sl, &mut remap(&media_map));
-            sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
-            let map = renumber("slide.reuse", doc, &mut sl.shapes)?;
-            for a in &mut sl.animations {
-                a.shape = map.get(&a.shape).copied().unwrap_or(a.shape);
-                a.trigger = a.trigger.map(|t| map.get(&t).copied().unwrap_or(t));
-            }
-            sl.layout = match layout_map.get(&sl.layout) {
-                Some(l) => *l,
-                None => {
-                    let (lname, kind) =
-                        src.layout(from.layout).map(|(_, l)| (l.name.clone(), l.kind)).unwrap_or_else(|| (String::new(), Default::default()));
-                    matching_layout(doc, &lname, kind)
-                }
-            };
-            slide_map.insert(from.id, sl.id);
-            copies.push(sl);
-        }
-        let mut new_ids = vec![];
-        for (k, mut sl) in copies.into_iter().enumerate() {
-            relink_shapes(&mut sl.shapes, &slide_map, 0);
-            relink_text(&mut sl.notes, &slide_map);
-            new_ids.push(sl.id);
-            doc.slides.insert((at + k).min(doc.slides.len()), Arc::new(sl));
-        }
-        sel.slide = (at + new_ids.len()).saturating_sub(1).min(doc.slides.len().saturating_sub(1));
-        sel.slides = new_ids.clone();
-        sel.shapes.clear();
-        sel.text = None;
-        Ok(json!({"slides": new_ids.len(), "ids": new_ids, "from": name, "keepFormatting": keep}))
-    })
+        slide_map.insert(from.id, sl.id);
+        copies.push(sl);
+    }
+    let mut new_ids = vec![];
+    for (k, mut sl) in copies.into_iter().enumerate() {
+        relink_shapes(&mut sl.shapes, &slide_map, 0);
+        relink_text(&mut sl.notes, &slide_map);
+        new_ids.push(sl.id);
+        doc.slides.insert((at + k).min(doc.slides.len()), Arc::new(sl));
+    }
+    sel.slide = (at + new_ids.len()).saturating_sub(1).min(doc.slides.len().saturating_sub(1));
+    sel.slides = new_ids.clone();
+    sel.shapes.clear();
+    sel.text = None;
+    Ok(json!({"slides": new_ids.len(), "ids": new_ids, "from": name, "keepFormatting": keep}))
 }
 
 /// A copy of `src`'s master `m` ready to join `doc`: its media copied in, fresh master, layout and

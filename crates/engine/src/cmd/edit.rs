@@ -99,7 +99,8 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         }
         let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
         let plain = slides.iter().map(|x| x.title()).collect::<Vec<_>>().join("\n");
-        s.clipboard = crate::Clipboard { slides, media, plain: plain.clone(), ..Default::default() };
+        let slide_source = Some(st.doc.clone());
+        s.clipboard = crate::Clipboard { slides, media, slide_source, plain: plain.clone(), ..Default::default() };
         return Ok(plain);
     }
     // Selected table cells copy as their text: a tab between cells and a paragraph per row.
@@ -346,6 +347,15 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     let clip = s.clipboard.clone();
     if !clip.slides.is_empty() {
         let at = s.doc()?.selection.slide + 1;
+        // Slides from another presentation bring their own master and layouts (as PowerPoint does)
+        // unless the paste asked for the destination theme.
+        if let Some(src) = clip.slide_source.as_deref()
+            && !slides_belong_here(&s.doc()?.doc, src, &clip.slides)
+        {
+            let picked: Vec<usize> = clip.slides.iter().filter_map(|c| src.slides.iter().position(|x| x.id == c.id)).collect();
+            let keep = str_param(p, "slideFormat") != Some("destination");
+            return s.edit(|doc, sel| super::reuse::insert_slides_from("edit.paste", doc, sel, src, &picked, keep, Some(at), "clipboard"));
+        }
         return s.edit(|doc, sel| {
             let media = bring_media("edit.paste", doc, &clip.media)?;
             let mut new_ids = vec![];
@@ -464,9 +474,18 @@ fn paste_plain(s: &mut Session, text: &str) -> Result<Value> {
     s.execute("insert.textBox", &json!({"rect": rect, "text": text}))
 }
 
+/// Whether the copied `slides` came from the open presentation, or one whose layouts are the
+/// same ones: every slide's layout exists here under the same id, name and master.
+fn slides_belong_here(doc: &deckcraft_model::Presentation, src: &deckcraft_model::Presentation, slides: &[Slide]) -> bool {
+    slides.iter().all(|sl| match (src.layout(sl.layout), doc.layout(sl.layout)) {
+        (Some((sm, sl)), Some((dm, dl))) => sm.id == dm.id && sl.name == dl.name && sl.kind == dl.kind,
+        _ => false,
+    })
+}
+
 fn paste_special(s: &mut Session, p: &Value) -> Result<Value> {
     match str_param(p, "as").unwrap_or("destinationTheme") {
-        "destinationTheme" | "useDestinationTheme" => paste(s, &json!({})),
+        "destinationTheme" | "useDestinationTheme" => paste(s, &json!({"slideFormat": "destination"})),
         "text" | "keepTextOnly" => paste_text(s, &json!({})),
         "keepSource" | "keepSourceFormatting" => {
             let saved = s.clipboard.clone();

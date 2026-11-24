@@ -479,6 +479,10 @@ pub struct Clipboard {
     /// regular shapes; a paste in Slide Master view takes these, which stay placeholders.
     pub placeholders: Vec<Shape>,
     pub slides: Vec<Slide>,
+    /// The presentation the slides were copied from, as it was then (a cheap shared snapshot). A
+    /// paste into another presentation brings their masters and layouts from it (Keep Source
+    /// Formatting) or matches them to the destination's layouts (Use Destination Theme).
+    pub slide_source: Option<std::sync::Arc<Presentation>>,
     /// Media the copied shapes/slides reference.
     pub media: Vec<deckcraft_model::MediaItem>,
     pub text: Option<deckcraft_model::TextBody>,
