@@ -485,6 +485,8 @@ mod browsetheme_tests;
 #[cfg(test)]
 mod compare_tests;
 #[cfg(test)]
+mod doc_tabs_tests;
+#[cfg(test)]
 mod eyedropper_tests;
 #[cfg(test)]
 mod field_frame_tests;
