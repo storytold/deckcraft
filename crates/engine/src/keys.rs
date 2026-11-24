@@ -143,6 +143,9 @@ impl Session {
         }
         if !editing && !has_shapes && !mods.cmd {
             let r = match k {
+                // Backspace is the Mac's Delete key: with slides selected it deletes them, rather
+                // than falling through to the registry's `text.delete`.
+                "backspace" if self.active().is_some_and(|d| !d.selection.slides.is_empty()) => Some("edit.delete"),
                 "pagedown" | "down" | "right" => Some("slide.next"),
                 "pageup" | "up" | "left" => Some("slide.previous"),
                 "home" => Some("slide.first"),
@@ -370,5 +373,23 @@ mod tests {
         s.key("Right", Mods::default()).unwrap();
         s.key("Delete", Mods::default()).unwrap();
         assert_eq!(s.doc().unwrap().current_slide().unwrap().shapes.len(), 1);
+    }
+
+    /// Backspace, the Mac's Delete key, deletes the selected slides from the slide panel; it
+    /// used to reach `text.delete` and fail with "no text insertion point".
+    #[test]
+    fn backspace_deletes_selected_slides() {
+        for key in ["Backspace", "Delete"] {
+            let mut s = Session::with_new();
+            s.execute("slide.new", &json!({})).unwrap();
+            s.execute("slide.new", &json!({})).unwrap();
+            let ids: Vec<_> = s.doc().unwrap().doc.slides.iter().map(|sl| sl.id).collect();
+            s.doc_mut().unwrap().selection.shapes.clear();
+            s.doc_mut().unwrap().selection.text = None;
+            s.doc_mut().unwrap().selection.slides = vec![ids[0], ids[1]];
+            let r = s.key(key, Mods::default()).unwrap();
+            assert_eq!(r["handled"], true, "{key}");
+            assert_eq!(s.doc().unwrap().doc.slides.len(), 1, "{key}");
+        }
     }
 }
