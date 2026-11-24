@@ -33,6 +33,10 @@ pub struct Renderer {
     /// Visits spent on outer-shadow silhouette passes, kept apart so they cannot use up the budget
     /// of the normal drawing that follows.
     shadow_work: usize,
+    /// `RenderOpts::skip` as a set, with the slice (address, length) it was built from: the
+    /// slice can be as long as the slide, and is tested for every shape drawn. Forgotten when a
+    /// frame starts, so another frame's slice at the same address is never mistaken for it.
+    skip: Option<(usize, usize, std::collections::HashSet<ShapeId>)>,
 }
 
 impl Default for Renderer {
@@ -48,6 +52,7 @@ impl Default for Renderer {
             in_shadow_pass: false,
             render_work: 0,
             shadow_work: 0,
+            skip: None,
         }
     }
 }
@@ -163,6 +168,7 @@ impl Renderer {
     pub(crate) fn slide(&mut self, pres: &Presentation, slide: &Slide, index: usize, opts: &RenderOpts) -> Image {
         self.render_work = 0;
         self.shadow_work = 0;
+        self.skip = None;
         self.in_shadow_pass = false;
         let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, slide));
         let f = Frame { pres, opts, fields: Self::fields(pres, index, opts) };
@@ -178,6 +184,7 @@ impl Renderer {
     pub(crate) fn slide_part(&mut self, pres: &Presentation, slide: &Slide, index: usize, part: SlidePart, opts: &RenderOpts) -> Image {
         self.render_work = 0;
         self.shadow_work = 0;
+        self.skip = None;
         self.in_shadow_pass = false;
         let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, slide));
         let f = Frame { pres, opts, fields: Self::fields(pres, index, opts) };
@@ -212,6 +219,7 @@ impl Renderer {
         let mix = if mix.is_finite() { mix.clamp(0.0, 1.0) } else { 1.0 };
         self.render_work = 0;
         self.shadow_work = 0;
+        self.skip = None;
         self.in_shadow_pass = false;
         let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, old.0) || needs_filters(pres, new.0));
         let (Some(co), Some(cn)) = (Ctx::for_slide(pres, old.0), Ctx::for_slide(pres, new.0)) else { return self.finish(ctx, w, h) };
@@ -260,6 +268,7 @@ impl Renderer {
     pub(crate) fn layout(&mut self, pres: &Presentation, mi: usize, li: Option<usize>, opts: &RenderOpts) -> Image {
         self.render_work = 0;
         self.shadow_work = 0;
+        self.skip = None;
         self.in_shadow_pass = false;
         let (w, h) = output_size(pres, opts);
         let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
@@ -359,17 +368,7 @@ impl Renderer {
     /// insets and font sizes stay in points; otherwise `w`, `h` and `m` themselves.
     fn text_space(&self, m: Affine, depth: usize, w: f64, h: f64) -> (f64, f64, Affine) {
         let (_, rel) = self.line_space(m, depth);
-        let c = rel.as_coeffs();
-        let (sx, sy) = (c[0].hypot(c[1]), c[2].hypot(c[3]));
-        let ok = |k: f64| k.is_finite() && k > 1e-9;
-        if depth == 0 || !ok(sx) || !ok(sy) || ((sx - 1.0).abs() < 1e-9 && (sy - 1.0).abs() < 1e-9) {
-            return (w, h, m);
-        }
-        let (tw, th) = (w * sx, h * sy);
-        if !tw.is_finite() || !th.is_finite() {
-            return (w, h, m);
-        }
-        (tw, th, m * Affine::scale_non_uniform(1.0 / sx, 1.0 / sy))
+        crate::placed::text_space(rel, m, depth, w, h)
     }
 
     /// A shape's geometry in its own `w` × `h` space, built at its size on the slide: inside a
@@ -393,8 +392,25 @@ impl Renderer {
         geo
     }
 
+    /// Whether `id` is in `skip`, looked up in a set built once per frame and slice.
+    fn skipped(&mut self, skip: &[ShapeId], id: ShapeId) -> bool {
+        if skip.is_empty() {
+            return false;
+        }
+        let key = (skip.as_ptr() as usize, skip.len());
+        match &self.skip {
+            Some((p, n, set)) if (*p, *n) == key => set.contains(&id),
+            _ => {
+                let set: std::collections::HashSet<ShapeId> = skip.iter().copied().collect();
+                let hit = set.contains(&id);
+                self.skip = Some((key.0, key.1, set));
+                hit
+            }
+        }
+    }
+
     fn shape_at(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, parent: Affine, depth: usize) {
-        if depth > 32 || (s.hidden && !f.opts.show_hidden) || f.opts.skip.contains(&s.id) {
+        if depth > 32 || (s.hidden && !f.opts.show_hidden) || self.skipped(f.opts.skip, s.id) {
             return;
         }
         let work = if self.in_shadow_pass { &mut self.shadow_work } else { &mut self.render_work };
@@ -758,8 +774,15 @@ impl Renderer {
         match &s.kind {
             ShapeKind::Picture { fill: pf } => {
                 // The picture's own fill shows behind its transparent pixels, as in PowerPoint (an
-                // emphasis tint recolours it, as it does any shape's fill).
-                if s.fill.as_ref().is_some_and(|f| !f.is_none())
+                // emphasis tint recolours it, as it does any shape's fill). A picture that sets
+                // neither a fill nor a style shows the fill its layout or master placeholder sets
+                // (#2068). A style fill alone, its own or inherited, stays undrawn.
+                let explicit = |sh: &deckcraft_model::Shape| sh.fill.as_ref().is_some_and(|f| !f.is_none());
+                let inherited = || {
+                    let (lp, mp) = resolve::parents(rctx, s);
+                    [lp, mp].into_iter().flatten().find(|p| p.fill.is_some() || p.style.is_some()).is_some_and(explicit)
+                };
+                if (explicit(s) || (s.fill.is_none() && s.style.is_none() && inherited()))
                     && let Some(fl) = &fill
                 {
                     self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);

@@ -72,7 +72,7 @@ pub use panels::notes;
 pub use panels::selpane;
 pub use panels::thumbs;
 pub use ribbon::qat;
-pub use services::{DownloadFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
+pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
 use state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp};
 pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
 
@@ -143,7 +143,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
-    ("app.smartArtPictureDialog", "Insert Picture in SmartArt…", None, "{id?, index}"),
+    ("app.smartArtPictureDialog", "Insert Picture in Diagram…", None, "{id?, index}"),
     ("app.changePictureDialog", "Change Picture…", None, "{}"),
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
@@ -276,7 +276,8 @@ pub struct SlideApp {
     ribbon_scroll: HashMap<String, u32>,
     /// Monotonic identity for a new slide show instance (`start_show`).
     show_instance: u64,
-    /// Monotonic identity for a new background-open attempt.
+    /// Monotonic identity for a new background-open attempt (the web build has no threads).
+    #[cfg(not(target_arch = "wasm32"))]
     opening_generation: u64,
     /// Canvas screen rect and points-per-slide-point scale (for control & tests).
     pub canvas_rect: Option<egui::Rect>,
@@ -335,6 +336,9 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// The empty presentation host mode starts with ([`SlideApp::start_for_host`]), until the
+    /// first file the page sends takes its place.
+    host_start: Option<u64>,
     /// Owner/generation/cause bookkeeping for the canvas text IME producer.
     ime_tracker: egui::ime_context::ImeContextTracker,
     /// Canvas IME geometry for this pass: the caret while editing, or the selected shape.
@@ -486,6 +490,9 @@ mod datetime_tests;
 
 #[cfg(test)]
 mod inbox_tests;
+
+#[cfg(test)]
+mod host_save_tests;
 
 #[cfg(test)]
 mod tests;

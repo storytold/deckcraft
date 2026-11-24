@@ -339,8 +339,9 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 app.save();
-                // In the browser a save is a download: the presentation stays "unsaved".
-                let web = app.services.pick_save.is_none() && app.services.download.is_some();
+                // In the browser a save is a download: the presentation stays "unsaved". A page
+                // that keeps the files saves it for real, so a failed save keeps it open.
+                let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
                 if web || app.session.active().is_some_and(|d| !d.is_dirty()) {
                     run(app, "file.close", json!({}));
                 }
@@ -706,6 +707,9 @@ fn dlg_rename_section(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Export…: the format (PDF, PNG or JPEG of the current slide or of every slide, PowerPoint,
+/// outline, animated GIF, RTF) and its options; Export hands them to [`SlideApp::export_as`].
+/// Returns true when the dialog should close.
 fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.label("Export the presentation as:");
     let fmt = d.get("fmt", "pdf");
@@ -714,6 +718,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ("PNG images (current slide)", "png"),
         ("PNG images (all slides)", "pngAll"),
         ("JPEG image (current slide)", "jpeg"),
+        ("JPEG images (all slides)", "jpegAll"),
         ("PowerPoint Presentation (.pptx)", "pptx"),
         ("Outline (.txt)", "outline"),
         ("Animated GIF (.gif)", "gif"),
@@ -1259,7 +1264,7 @@ fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let mut v = d.get("text", "Plan\nBuild\nLaunch");
-    ui.add(egui::TextEdit::multiline(&mut v).hint_text("SmartArt items").desired_rows(5).desired_width(320.0));
+    ui.add(egui::TextEdit::multiline(&mut v).hint_text("Diagram items").desired_rows(5).desired_width(320.0));
     d.fields.insert("text".into(), v.clone());
     let (ok, cancel) = buttons(ui, "Insert");
     if ok {
@@ -1350,8 +1355,14 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     // on release, and at once from the keyboard.
     let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
     let mut scale = pending.unwrap_or(app.ui.ui_scale);
-    let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
-    // No visible label here (the row is laid out to fit); the accessible name only.
+    // Labelled like the Measurement units row below it. The egui 0.37 migration (#1350) dropped
+    // the slider's own text and kept only its accessible name, which left a bare "1.00".
+    let r = ui
+        .horizontal(|ui| {
+            ui.label("Interface size:");
+            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75))
+        })
+        .inner;
     let enabled = r.enabled();
     r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
     if r.is_pointer_button_down_on() {

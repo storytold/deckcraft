@@ -18,6 +18,7 @@ mod presenter;
 mod render;
 mod ui;
 mod zoom;
+pub(crate) use zoom::GRID_CAP;
 
 #[cfg(test)]
 use media::{on_screen, pointer_on_media_bar, shown_slide_rect, slide_media_bars};
@@ -65,6 +66,8 @@ pub struct Show {
     preview_spawns: usize,
     remote_preview: Option<crate::presenter::Preview>,
     remote_next: Option<(usize, crate::presenter::Preview)>,
+    /// All slides thumbnails sent to the web presenter window while its grid is open (#1866).
+    remote_grid: Vec<crate::presenter::Preview>,
     remote_sent: f64,
     remote_opened: bool,
     /// The next slide's first frame, rendered in the background while this one is shown so
@@ -237,6 +240,7 @@ impl Show {
             preview_spawns: 0,
             remote_preview: None,
             remote_next: None,
+            remote_grid: vec![],
             remote_sent: f64::NEG_INFINITY,
             remote_opened: false,
             prefetch: None,
@@ -548,7 +552,8 @@ impl Show {
         true
     }
 
-    /// On entering a slide: auto-play its first step when it begins With/After Previous.
+    /// On entering a slide: auto-play its first step when it begins With/After Previous, once the
+    /// slide's transition is over.
     /// `ShowState` already starts such a step when it enters the slide (#631: asking it for the
     /// next step again finished the step at once, so the slide appeared fully built), so only
     /// its clock starts here. Autoplay previews start an On Click first step themselves.
@@ -564,7 +569,9 @@ impl Show {
             None
         };
         if let Some(k) = started {
-            self.step_start = now;
+            // The slide's transition plays first; its animations start when it has finished, as
+            // in PowerPoint (#2089).
+            self.step_start = self.trans.as_ref().map_or(now, |t| now.max(t.start + t.dur));
             self.media_clock = Some((k, f64::NEG_INFINITY));
         }
     }

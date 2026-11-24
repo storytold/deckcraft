@@ -516,6 +516,41 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
     assert!(show.tex.is_none(), "the new slide gets a texture of its own instead of overwriting the old one");
 }
 
+/// #2089: a slide's With Previous entrance waits for the slide's transition to finish, as in
+/// PowerPoint, instead of playing under it.
+#[test]
+fn animations_start_after_the_slides_transition() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "fade", "index": 1, "duration": 400})).unwrap();
+    let id = s.active().unwrap().doc.slides[1].shapes[0].id;
+    s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "withPrevious", "duration": 500})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    let a = show.state.next(&doc);
+    assert_eq!(a, ShowAction::Slide(1));
+    assert!(show.apply(a, &doc, 10.0));
+    assert!(show.trans.is_some(), "the fade plays");
+    assert!(show.state.playing, "the With Previous step is under way");
+    assert!((show.clock_snapshot().step_start - 10.4).abs() < 1e-9, "its clock starts when the 0.4 s fade ends");
+    let tl = ShowState::timeline(&doc, 1);
+    let at = |now: f64| state_for(&tl, id, show.state.step, now - show.clock_snapshot().step_start, &[], &[]);
+    assert!(!at(10.3).visible, "hidden while the transition plays");
+    assert!(at(10.6).visible && at(10.6).opacity < 1.0, "fading in after it");
+    // The step is not cut short by the time the transition took.
+    let mut actions = Vec::new();
+    assert!(show.queue_clock_actions(&doc, 10.8, &mut actions));
+    assert!(actions.is_empty(), "0.4 s into a 0.5 s step: still playing");
+
+    // Without a transition the step starts at once, as before.
+    s.execute("transition.set", &json!({"kind": "none", "index": 1})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    let a = show.state.next(&doc);
+    assert!(show.apply(a, &doc, 10.0));
+    assert_eq!(show.clock_snapshot().step_start, 10.0);
+}
+
 #[test]
 fn going_back_plays_the_left_slides_transition_reversed() {
     // #1531: Back from B to A played A's own entrance transition. PowerPoint plays the one B came
@@ -1132,6 +1167,8 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
         opens: usize,
         closes: usize,
         commands: Vec<Command>,
+        last: Option<Snapshot>,
+        gone: bool,
     }
     struct Mock(Rc<RefCell<Bridge>>);
     impl Host for Mock {
@@ -1140,12 +1177,14 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
             Ok(())
         }
         fn is_open(&self) -> bool {
-            true
+            !self.0.borrow().gone
         }
         fn commands(&mut self) -> Vec<Command> {
             std::mem::take(&mut self.0.borrow_mut().commands)
         }
-        fn update(&mut self, _: Snapshot) {}
+        fn update(&mut self, snapshot: Snapshot) {
+            self.0.borrow_mut().last = Some(snapshot);
+        }
         fn close(&mut self) {
             self.0.borrow_mut().closes += 1;
         }
@@ -1173,6 +1212,39 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
         h.run_steps(2);
         assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide);
     }
+    // #1864: the web popup's Previous/Next buttons send the DOM key names.
+    for (name, slide) in [("ArrowRight", 1), ("ArrowLeft", 0)] {
+        bridge.borrow_mut().commands.push(Command::Key { name: name.into(), command: false, shift: false, alt: false, ctrl: false });
+        h.run_steps(2);
+        assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide, "{name}");
+    }
+    // #1866: All slides opens in the web Presenter View, as on desktop; the audience keeps its slide.
+    bridge.borrow_mut().commands.push(Command::Key { name: "G".into(), command: false, shift: false, alt: false, ctrl: false });
+    h.run_steps(2);
+    let show = h.state().show.as_ref().unwrap();
+    assert!(show.presenter_grid && !show.grid, "G from the popup opens its own grid, not the audience's");
+    for _ in 0..20 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+    let last = bridge.borrow().last.clone().unwrap();
+    assert!(last.grid);
+    assert_eq!(last.slides.as_ref().map(Vec::len), Some(3), "the popup gets a thumbnail per slide");
+    assert!(last.slides.iter().flatten().all(|p| p.width.max(p.height) <= 96), "thumbnails stay small enough for one message");
+    assert!(last.current.is_none() && last.next.is_none(), "the grid replaces both previews");
+    bridge.borrow_mut().commands.push(Command::Goto { slide: 2 });
+    h.run_steps(2);
+    let show = h.state().show.as_ref().unwrap();
+    assert!(!show.presenter_grid && !show.grid);
+    assert_eq!(show.state.slide, 2);
+    // Closing the popup with its grid open must not hold auto-advance for the rest of the show.
+    bridge.borrow_mut().commands.push(Command::Key { name: "G".into(), command: false, shift: false, alt: false, ctrl: false });
+    h.run_steps(2);
+    assert!(h.state().show.as_ref().unwrap().presenter_grid);
+    bridge.borrow_mut().gone = true;
+    h.run_steps(2);
+    assert!(!h.state().show.as_ref().unwrap().presenter_grid);
+    bridge.borrow_mut().gone = false;
     bridge.borrow_mut().commands.push(Command::End);
     h.run_steps(2);
     assert!(h.state().show.is_none());
