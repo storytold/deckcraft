@@ -63,9 +63,13 @@ pub fn install_headless(ctx: &egui::Context) {
     }
 }
 
-/// Who DeckCraft is to the framework's dialogs (the update dialogs show its name).
+/// Who DeckCraft is to the framework's dialogs (the update dialogs show its name and icon).
 pub(crate) fn host() -> Arc<Host> {
-    Arc::new(Host::builder(AppInfo { id: "deckcraft", name: "DeckCraft", version: env!("CARGO_PKG_VERSION") }).build())
+    Arc::new(
+        Host::builder(AppInfo { id: "deckcraft", name: "DeckCraft", version: env!("CARGO_PKG_VERSION") })
+            .icon_png(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.deckcraft.png"))
+            .build(),
+    )
 }
 
 /// F6 and Shift+F6 move between framework panes by default. DeckCraft has none: the only stop is its document window

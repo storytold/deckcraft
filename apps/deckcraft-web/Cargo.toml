@@ -17,9 +17,9 @@ path = "src/main.rs"
 deckcraft-engine = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
 # The page command API (storytold/craft-libs#413): window.deckcraft over the control channel.
-craft-web-api = { git = "https://github.com/aiongg/craft-libs", rev = "22e82c930ec7062fba45757a8cac8ba5e3cb94bc", version = "0.1.0" }
+craft-web-api = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de", version = "0.1.0" }
 # The host messages (storytold/craft-libs): one contract and one bridge for the web builds.
-craft-web-host = { git = "https://github.com/aiongg/craft-libs", rev = "22e82c930ec7062fba45757a8cac8ba5e3cb94bc", version = "0.1.0" }
+craft-web-host = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de", version = "0.1.0" }
 egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
