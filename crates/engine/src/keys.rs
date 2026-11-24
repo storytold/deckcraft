@@ -148,6 +148,8 @@ impl Session {
                 "home" => Some("slide.first"),
                 "end" => Some("slide.last"),
                 "enter" | "return" => Some("slide.new"),
+                // Backspace, like Delete, removes the selected slides (Delete is also a registry shortcut).
+                "backspace" | "delete" => Some("edit.delete"),
                 "tab" => {
                     self.cycle_selection(!mods.shift)?;
                     return Ok(json!({"handled": true}));

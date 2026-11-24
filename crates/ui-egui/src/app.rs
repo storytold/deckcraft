@@ -312,6 +312,7 @@ impl SlideApp {
         self.keyboard(&ctx);
         self.sync_backstage();
         ribbon::title_bar(self, ui);
+        ribbon::doc_tabs(self, ui);
         if self.backstage.is_none() && self.session.active().is_some() {
             ribbon::show(self, ui);
             status::status_bar(self, ui);
