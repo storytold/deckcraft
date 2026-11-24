@@ -28,7 +28,7 @@ bin="$work/installed/bin"
 mv "$bin/deckcraft" "$bin/deckcraft-nightly"
 mv "$bin/deckcraft-cli" "$bin/deckcraft-nightly-cli"
 
-test ! -e "$stage/bin/.deckcraft-nightly"
+[[ ! -e "$stage/bin/.deckcraft-nightly" ]]
 cmp "$stage/bin/deckcraft" "$bin/.deckcraft-nightly/deckcraft"
 cmp "$stage/bin/deckcraft-cli" "$bin/deckcraft-nightly-cli"
 expect() {

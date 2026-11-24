@@ -150,6 +150,10 @@ if has deb || has rpm; then
     cat >"$NFPM_STAGE/usr/bin/$NFPM_BIN" <<'WRAPPER'
 #!/bin/sh
 set -eu
+: "${XDG_CONFIG_HOME:=${HOME:?HOME must be set}/.config}"
+: "${XDG_DATA_HOME:=$HOME/.local/share}"
+export XDG_CONFIG_HOME="$XDG_CONFIG_HOME/deckcraft-nightly"
+export XDG_DATA_HOME="$XDG_DATA_HOME/deckcraft-nightly"
 exec /usr/lib/deckcraft-nightly/deckcraft "$@"
 WRAPPER
     chmod 755 "$NFPM_STAGE/usr/bin/$NFPM_BIN"
