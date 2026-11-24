@@ -111,12 +111,19 @@ mod tests {
         crate::framework::install_headless(&ctx);
         assert!(!app.updates_rt.updater.prompt_open());
         app.updates_rt.updater.offer(craft_update::Release { tag: "v99.0.0".into(), ..Default::default() });
-        ctx.run_ui(egui::RawInput::default(), |ui| {
-            show(&mut app, ui.ctx());
-            app.framework_dialogs.run(ui);
-        })
-        .textures_delta
-        .clear();
+        // The offer reads on a thread whether this copy can install the release itself; a later
+        // pass's tick opens the prompt.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !app.updates_rt.updater.prompt_open() && std::time::Instant::now() < deadline {
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                tick(&mut app, ui.ctx());
+                show(&mut app, ui.ctx());
+                app.framework_dialogs.run(ui);
+            })
+            .textures_delta
+            .clear();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         assert!(app.updates_rt.updater.prompt_open());
     }
 
