@@ -1013,6 +1013,24 @@ fn harness() -> egui_kittest::Harness<'static, SlideApp> {
     )
 }
 
+/// With the framework runtime installed, the window's keys still reach DeckCraft's own routing: Alt+1 runs the
+/// first Quick Access Toolbar item (Alt+numpad code entry leaves the claimed chord alone off macOS), and Escape with
+/// nothing focused leaves the File tab.
+#[test]
+fn alt_digit_and_escape_reach_the_app_through_the_runtime() {
+    let mut h = harness();
+    h.state_mut().run("file.new", json!({})).unwrap();
+    h.state_mut().session.mac_keys = false;
+    h.run_steps(3);
+    assert!(!h.state().backstage_open());
+    h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::Num1);
+    h.run_steps(2);
+    assert!(h.state().backstage_open(), "Alt+1 runs app.home, which opens the File tab");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert!(!h.state().backstage_open(), "Escape leaves the File tab");
+}
+
 /// #172: a recent file that no longer exists is marked on File › Home, and clicking it draws
 /// the open error right there (the status bar is hidden while the backstage is open, so the
 /// message used to vanish).

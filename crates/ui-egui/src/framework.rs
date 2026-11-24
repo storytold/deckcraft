@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 
 use craft_host::target::ShellInfo;
 use craft_host::{AppInfo, Host};
-use craft_keymap::Overrides;
+use craft_keymap::{Chord, Key, Mods, Overrides};
 use craft_ui::fonts::{I18nScripts, SystemFonts, UiFonts};
 use craft_ui::runtime::commands::{CommandInput, CommandSet, NavCommand};
 use craft_ui::runtime::env::{RootEnv, Scale};
@@ -117,12 +117,28 @@ impl SlideApp {
     }
 }
 
-/// The keys DeckCraft's document window keeps while it is the window's key target: Tab (indent, next shape) and
-/// every clipboard event and edit chord, which `SlideApp::keyboard` routes itself.
-const DOCUMENT_KEYS: KeyUse = KeyUse::CANVAS.with_keep(KeepKeys::Tab).with_edits(EditSet::ALL);
+/// Alt+1 to Alt+9, the Quick Access Toolbar's positions on Windows and Linux (`menus::ui_shortcut`). Claimed, so
+/// the runtime's Alt+numpad code entry leaves them to DeckCraft's shortcuts.
+const QUICK_ACCESS_KEYS: [Chord; 9] = [
+    Chord::new(Mods::ALT, Key::Num1),
+    Chord::new(Mods::ALT, Key::Num2),
+    Chord::new(Mods::ALT, Key::Num3),
+    Chord::new(Mods::ALT, Key::Num4),
+    Chord::new(Mods::ALT, Key::Num5),
+    Chord::new(Mods::ALT, Key::Num6),
+    Chord::new(Mods::ALT, Key::Num7),
+    Chord::new(Mods::ALT, Key::Num8),
+    Chord::new(Mods::ALT, Key::Num9),
+];
+
+/// The keys DeckCraft's document window keeps while it is the window's key target: Tab (indent, next shape),
+/// every clipboard event and edit chord, and the Quick Access Toolbar's Alt+digits, which `SlideApp::keyboard`
+/// routes itself.
+const DOCUMENT_KEYS: KeyUse = KeyUse::CANVAS.with_keep(KeepKeys::Tab).with_edits(EditSet::ALL).with_claims(&QUICK_ACCESS_KEYS);
 
 /// Declares DeckCraft's document window, drawn in this pass, as the window's canvas. With nothing focused it is the
-/// window's key target, so Tab, the edit chords and the clipboard events stay in egui's input for DeckCraft.
+/// window's key target, so Tab, the edit chords, the clipboard events and the claimed Alt+digits stay in egui's input
+/// for DeckCraft.
 pub(crate) fn host_canvas(ctx: &egui::Context) {
     craft_ui::runtime::focus::host_canvas(ctx, egui::Id::unique("deckcraft_document"), DOCUMENT_KEYS);
 }
