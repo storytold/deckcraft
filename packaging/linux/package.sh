@@ -156,7 +156,7 @@ WRAPPER
     rm -f "$NFPM_STAGE/usr/bin/deckcraft"
     mv "$NFPM_STAGE/usr/bin/deckcraft-cli" "$NFPM_STAGE/usr/bin/$NFPM_CLI"
     mv "$NFPM_STAGE/usr/share/doc/deckcraft" "$NFPM_STAGE/usr/share/doc/$NFPM_NAME"
-    sed -e "s|^Exec=deckcraft\([[:space:]]\|$\)|Exec=$NFPM_BIN\1|" \
+    sed -e "s#^Exec=deckcraft\([[:space:]]\|$\)#Exec=$NFPM_BIN\1#" \
         -e "s|^TryExec=deckcraft$|TryExec=$NFPM_BIN|" \
         -e "s|^Icon=$APP_ID$|Icon=$NIGHTLY_DESK_ID|" \
         -e "s|^Name=DeckCraft$|Name=DeckCraft Nightly|" \
@@ -274,8 +274,8 @@ if has appimage; then
     UPDATE_ARGS=(-u "$UPDATE_INFO")
   else
     # Nightly releases are GitHub pre-releases (`latest` only selects stable releases), so point
-    # zsync update metadata at pre-release tags matching `-nightly` rather than stable `latest`.
-    UPDATE_INFO="gh-releases-zsync|${REPO%%/*}|${REPO#*/}|latest-pre|deckcraft-*-nightly*-linux-$ARCH.AppImage.zsync"
+    # zsync update metadata at `latest-pre` using the same asset naming pattern as `BASENAME`.
+    UPDATE_INFO="gh-releases-zsync|${REPO%%/*}|${REPO#*/}|latest-pre|deckcraft-*-linux-$ARCH.AppImage.zsync"
     UPDATE_ARGS=(-u "$UPDATE_INFO")
   fi
   # Extract-and-run: works without FUSE (containers, CI). The output embeds the static runtime,

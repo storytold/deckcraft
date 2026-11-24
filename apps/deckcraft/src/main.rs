@@ -250,7 +250,12 @@ fn main() -> eframe::Result {
             .with_title_shown(false),
         ..Default::default()
     };
-    options.viewport = options.viewport.with_app_id(APP_ID);
+    let app_id = if matches!(option_env!("DECKCRAFT_BUILD_CHANNEL"), Some("nightly-v1")) {
+        "ai.storyteller.deckcraft.nightly-v1"
+    } else {
+        APP_ID
+    };
+    options.viewport = options.viewport.with_app_id(app_id);
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
     }
