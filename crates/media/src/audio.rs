@@ -280,14 +280,21 @@ pub(crate) fn probe_symphonia(bytes: &Bytes, ext: &str) -> Option<(String, u32, 
     Some((name, p.sample_rate.unwrap_or(0), p.channels.map(|c| c.count() as u16).unwrap_or(0), p.n_frames))
 }
 
-/// Interleaved PCM resampled (linear) to `rate`.
+/// Interleaved PCM resampled (linear) to `rate`, up to the decoded audio budget.
 pub fn resample(pcm: &Pcm, rate: u32) -> Pcm {
-    if pcm.rate == rate || pcm.rate == 0 || rate == 0 {
-        return pcm.clone();
-    }
+    resample_with_limit(pcm, rate, MAX_PCM_SAMPLES)
+}
+
+fn resample_with_limit(pcm: &Pcm, rate: u32, max_samples: usize) -> Pcm {
     let c = pcm.channels.max(1) as usize;
+    let max_frames = max_samples / c;
+    if pcm.rate == rate || pcm.rate == 0 || rate == 0 {
+        let keep = pcm.samples.len().min(max_frames * c);
+        return Pcm { rate: pcm.rate, channels: pcm.channels, samples: pcm.samples[..keep].to_vec() };
+    }
     let n_in = pcm.frames();
-    let n_out = (n_in as u64 * rate as u64 / pcm.rate as u64) as usize;
+    let requested = n_in as u128 * u128::from(rate) / u128::from(pcm.rate);
+    let n_out = requested.min(max_frames as u128) as usize;
     let step = pcm.rate as f64 / rate as f64;
     let mut out = Vec::with_capacity(n_out * c);
     for i in 0..n_out {
@@ -314,6 +321,17 @@ mod tests {
         assert_eq!(r.frames(), 200);
         assert!((r.duration() - 1.0).abs() < 1e-9);
         assert!((r.at(101, 0) - 0.505).abs() < 1e-3);
+    }
+
+    #[test]
+    fn resample_limits_the_output_to_whole_frames() {
+        let pcm = Pcm { rate: 2, channels: 2, samples: vec![0.0, 1.0, 1.0, 0.0, 0.25, 0.5] };
+        for rate in [2, 4] {
+            let full = resample(&pcm, rate);
+            let capped = resample_with_limit(&pcm, rate, 5);
+            assert_eq!(capped.samples, full.samples[..4]);
+            assert_eq!((capped.rate, capped.channels), (rate, 2));
+        }
     }
 
     #[test]
