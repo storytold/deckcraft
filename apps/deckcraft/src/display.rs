@@ -36,16 +36,29 @@ fn wayland(display: Option<String>, socket: Option<String>) -> Option<String> {
     display.filter(|d| !d.is_empty()).or(socket)
 }
 
+/// `DECKCRAFT_X11` asks for X11 unless it is empty or `0`.
+fn x11_requested(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !matches!(v.trim(), "" | "0"))
+}
+
 /// [`choose`] for this process.
 pub fn choose_from_env() -> Choice {
     let display = std::env::var("DISPLAY").ok();
     let wayland = wayland(std::env::var("WAYLAND_DISPLAY").ok(), std::env::var("WAYLAND_SOCKET").ok());
-    choose(display.as_deref(), wayland.as_deref(), std::env::var_os("DECKCRAFT_X11").is_some())
+    choose(display.as_deref(), wayland.as_deref(), x11_requested(std::env::var("DECKCRAFT_X11").ok().as_deref()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn x11_request_ignores_zero_and_empty() {
+        assert!(x11_requested(Some("1")));
+        assert!(!x11_requested(Some("0")));
+        assert!(!x11_requested(Some("")));
+        assert!(!x11_requested(None));
+    }
 
     #[test]
     fn a_wayland_session_starts_on_wayland() {
