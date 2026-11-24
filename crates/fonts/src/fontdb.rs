@@ -417,6 +417,7 @@ struct CatalogEntry {
     style: String,
     aliases: Vec<String>,
     path: std::path::PathBuf,
+    is_legacy: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -604,12 +605,12 @@ fn instance_legacy_names(family: &str, style: &str) -> Option<(String, String)> 
 #[cfg(not(target_arch = "wasm32"))]
 const OUTLINE_TABLES: [&[u8; 4]; 4] = [b"glyf", b"CFF ", b"CFF2", b"VARC"];
 
-/// (family, style) of every face in the font file at `path`, reading only its table directories
-/// and `name` tables: a scan opens hundreds of font files, many of them megabytes long. A
-/// variable font is cataloged under its default style; its named instances appear once it loads.
+/// Family and style entries for every face in the font file at `path`, reading only its table
+/// directories and `name` tables: a scan opens hundreds of font files, many of them megabytes long.
+/// A variable font is cataloged under its default style; its named instances appear once it loads.
 /// Faces with none of the [`OUTLINE_TABLES`] are left out.
 #[cfg(not(target_arch = "wasm32"))]
-fn file_face_names(path: &std::path::Path) -> Vec<(String, String, Vec<String>)> {
+fn file_face_names(path: &std::path::Path) -> Vec<CatalogEntry> {
     use std::io::{Read, Seek, SeekFrom};
     /// Caps on what a (possibly damaged) file can make the scan read.
     const MAX_FACES: u32 = 256;
@@ -658,8 +659,15 @@ fn file_face_names(path: &std::path::Path) -> Vec<(String, String, Vec<String>)>
             let (family, style) = face_names(&f)?;
             let (aliases, legacy_aliases) = family_aliases(&f, &family);
             // Cataloged under its Windows family too, so "Segoe UI Semibold" finds the file.
-            let legacy = legacy_names(&f, &family).map(|(n, s)| (n, s, legacy_aliases));
-            Some(std::iter::once((family, style, aliases)).chain(legacy))
+            let legacy = legacy_names(&f, &family).map(|(family, style)| CatalogEntry {
+                family,
+                style,
+                aliases: legacy_aliases,
+                path: path.to_owned(),
+                is_legacy: true,
+            });
+            let canonical = CatalogEntry { family, style, aliases, path: path.to_owned(), is_legacy: false };
+            Some(std::iter::once(canonical).chain(legacy))
         })
         .flatten()
         .collect()
@@ -1124,7 +1132,7 @@ impl FontDb {
             .read_catalog()
             .iter()
             .filter(|c| c.matches_family(family))
-            .map(|c| (c.family.eq_ignore_ascii_case(family), c.style.clone()))
+            .map(|c| (!c.is_legacy && c.family.eq_ignore_ascii_case(family), c.style.clone()))
             .collect();
         let faces = self.read_faces();
         let exact = faces.iter().any(|f| f.family.eq_ignore_ascii_case(family));
@@ -1252,9 +1260,7 @@ impl FontDb {
                 if !font_file_ok(&meta) {
                     continue;
                 }
-                for (family, style, aliases) in file_face_names(&p) {
-                    found.push(CatalogEntry { family, style, aliases, path: p.clone() });
-                }
+                found.extend(file_face_names(&p));
             }
         }
         let n = found.len();
@@ -1263,28 +1269,26 @@ impl FontDb {
         n
     }
 
-    /// Load the files of the installed `family` (faces already loaded are kept). Returns whether
-    /// it is loaded.
+    /// Load the files matching an explicitly requested family, including localized names.
     #[cfg(not(target_arch = "wasm32"))]
-    fn load_cataloged(&self, family: &str) -> bool {
+    fn load_cataloged(&self, family: &str) {
         let loading = self.loading.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.load_family(family, &loading)
+        self.load_cataloged_files(|c| c.matches_family(family), &loading);
     }
 
-    /// [`FontDb::load_cataloged`] for a caller already holding `loading`.
+    /// Load matching catalog files while holding `loading`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn load_family(&self, family: &str, _loading: &std::sync::MutexGuard<'_, ()>) -> bool {
+    fn load_cataloged_files(&self, matches: impl Fn(&CatalogEntry) -> bool, _loading: &std::sync::MutexGuard<'_, ()>) {
         // Not skipped when some face of the family is loaded: a lookup by a Windows family name
         // loads only that style's file, and the family's other files must still load later.
         let paths: Vec<std::path::PathBuf> = {
             let cat = self.read_catalog();
-            let mut p: Vec<_> = cat.iter().filter(|c| c.matches_family(family)).map(|c| c.path.clone()).collect();
+            let mut p: Vec<_> = cat.iter().filter(|c| matches(c)).map(|c| c.path.clone()).collect();
             p.sort();
             p.dedup();
             p
         };
         self.add_fonts(paths.iter().filter(|p| std::fs::metadata(p).is_ok_and(|m| font_file_ok(&m))).filter_map(|p| std::fs::read(p).ok()).collect());
-        self.is_loaded(family)
     }
 
     /// Resolve a family + style to a face, falling back to the closest style of the family, then to
@@ -1359,6 +1363,14 @@ impl FontDb {
 
     pub(crate) fn is_loaded(&self, family: &str) -> bool {
         self.read_faces().iter().any(|f| f.matches_family(family) || f.matches_legacy(family))
+    }
+
+    /// System fallback priorities refer to canonical or Windows family names.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn is_system_family_loaded(&self, family: &str) -> bool {
+        self.read_faces()
+            .iter()
+            .any(|f| f.family.eq_ignore_ascii_case(family) || f.legacy.as_ref().is_some_and(|(name, _)| name.eq_ignore_ascii_case(family)))
     }
 
     /// A variable font's axes: (tag, name, min, default, max), empty for static fonts.
@@ -1523,8 +1535,8 @@ impl FontDb {
             return false;
         }
         for fam in SYSTEM_FALLBACKS {
-            if !self.is_loaded(fam) && cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
-                self.load_family(fam, &loading);
+            if !self.is_system_family_loaded(fam) && cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
+                self.load_cataloged_files(|c| c.family.eq_ignore_ascii_case(fam), &loading);
                 if covered(self) {
                     return true;
                 }
@@ -1597,8 +1609,9 @@ impl FontDb {
             let cataloged: Vec<String> =
                 if self.system_fallback_enabled() { self.read_catalog().iter().map(|e| e.family.clone()).collect() } else { Vec::new() };
             for fam in SYSTEM_FALLBACKS.iter().filter(|f| f.contains("Symbol")) {
-                if !self.is_loaded(fam) && cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
-                    self.load_cataloged(fam);
+                if !self.is_system_family_loaded(fam) && cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
+                    let loading = self.loading.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    self.load_cataloged_files(|c| c.family.eq_ignore_ascii_case(fam), &loading);
                 }
             }
         }

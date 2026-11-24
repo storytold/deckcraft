@@ -83,6 +83,39 @@ fn filtered_fallback_loads_an_eligible_system_face_and_does_not_cache_policy_mis
     assert!(accepted.covers('A'));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn localized_aliases_do_not_change_system_fallback_order() {
+    let character = '\u{f9980}';
+    for preferred_covers in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let (preferred_char, alias_char) = if preferred_covers { (character, 'A') } else { ('A', character) };
+        let font = |family, aliases: &[&str], glyph| test_font::font_with_chars(family, "Regular", 400, aliases, (800, 200), false, &[glyph]);
+        let alias = font("DeckCraft Unrelated", &["Helvetica Neue"], alias_char);
+        std::fs::write(dir.path().join("preferred.ttf"), font("Helvetica Neue", &[], preferred_char)).unwrap();
+        std::fs::write(dir.path().join("next.ttf"), font("Arial", &[], character)).unwrap();
+        std::fs::write(dir.path().join("unrelated.ttf"), &alias).unwrap();
+        let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+        if preferred_covers {
+            assert_eq!(db.add_font(alias), 1);
+        }
+        let expected = if preferred_covers { "Helvetica Neue" } else { "Arial" };
+        assert_eq!(db.fallback_for(character, u32::MAX).unwrap().family, expected);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_loaded_alias_does_not_block_the_preferred_system_symbol_face() {
+    let character = '\u{f9981}';
+    let dir = tempfile::tempdir().unwrap();
+    let font = |family, aliases: &[&str]| test_font::font_with_chars(family, "Regular", 400, aliases, (800, 200), false, &[character]);
+    std::fs::write(dir.path().join("symbols.ttf"), font("Apple Symbols", &[])).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+    assert_eq!(db.add_font(font("DeckCraft Unrelated", &["Apple Symbols"])), 1);
+    assert_eq!(db.plain_face_for(character, &[character]).unwrap().family, "Apple Symbols");
+}
+
 #[test]
 fn concurrent_lookups_all_find_an_installed_family() {
     // Threads resolving an installed family nobody had loaded yet used to fall back to
@@ -373,6 +406,28 @@ fn cataloged_canonical_family_wins_an_already_loaded_alias() {
     db.add_font(test_font::font("DeckCraft Exact", "Regular", 400, &[], (900, 100), false));
     assert_eq!(db.styles("DeckCraft Exact"), ["Regular"]);
     assert_eq!(db.styles("DeckCraft Other"), ["Bold"]);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn canonical_styles_exclude_an_installed_windows_family_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    let windows = test_font::font("DeckCraft Other", "Semibold", 600, &[], (900, 100), false);
+    std::fs::write(dir.path().join("windows.ttf"), windows).unwrap();
+    let family = "DeckCraft Other Semibold";
+    let canonical = test_font::font(family, "Bold", 700, &[], (900, 100), false);
+
+    let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+    assert_eq!(db.styles(family), ["Regular"]);
+    assert_eq!(db.face(family, "Regular").family, "DeckCraft Other");
+    assert_eq!(db.add_font(canonical.clone()), 1);
+    assert_eq!(db.styles(family), ["Bold"]);
+
+    std::fs::write(dir.path().join("canonical.ttf"), canonical).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+    assert_eq!(db.styles(family), ["Bold"]);
+    let face = db.face(family, "Regular");
+    assert_eq!((face.family.as_str(), face.style.as_str()), (family, "Bold"));
 }
 
 #[test]
