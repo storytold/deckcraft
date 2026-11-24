@@ -1,34 +1,10 @@
 //! Equations whose math namespace is declared above the equation: on the slide root or on a wrapper.
 
-use std::io::{Cursor, Read, Write};
-
 use deckcraft_geom::Xfrm;
 use deckcraft_model::text::{Paragraph, Run, RunKind, RunProps, TextBody};
 use deckcraft_model::{Shape, ShapeId, defaults};
 
 const NS_M: &str = r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math""#;
-
-fn entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
-    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
-    (0..z.len())
-        .map(|i| {
-            let mut f = z.by_index(i).expect("entry");
-            let mut d = vec![];
-            f.read_to_end(&mut d).expect("read");
-            (f.name().expect("ZIP member name").to_string(), d)
-        })
-        .collect()
-}
-
-fn rezip(es: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let o = zip::write::SimpleFileOptions::default();
-    for (n, d) in es {
-        z.start_file(n.as_str(), o).expect("start");
-        z.write_all(d).expect("write");
-    }
-    z.finish().expect("finish").into_inner()
-}
 
 /// Export an equation, move its `xmlns:m` from the equation to the element `host` opens, and
 /// return the OMML read back.
@@ -52,7 +28,7 @@ fn moved_to(host: &str) -> String {
     if let Some(s) = p.slides.first_mut() {
         std::sync::Arc::make_mut(s).shapes = vec![eq];
     }
-    let mut es = entries(&deckcraft_pptx::export(&p).expect("export"));
+    let mut es = super::zip_fixture::entries(&deckcraft_pptx::export(&p).expect("export"));
     let slide = es.iter_mut().find(|(n, _)| n == "ppt/slides/slide1.xml").expect("slide1");
     let xml = String::from_utf8(slide.1.clone()).expect("utf8");
     assert!(xml.contains(host), "{xml}");
@@ -60,7 +36,7 @@ fn moved_to(host: &str) -> String {
     assert_eq!(xml.matches(NS_M).count(), 1);
     slide.1 = xml.into_bytes();
 
-    let q = deckcraft_pptx::import(&rezip(&es)).expect("import");
+    let q = deckcraft_pptx::import(&super::zip_fixture::zip_of(&es)).expect("import");
     let shape = q.slides[0].shapes.iter().find(|s| s.name == "Equation").expect("shape");
     let run = shape.text.as_ref().and_then(|t| t.paragraphs.first()).and_then(|p| p.runs.first()).expect("run");
     match &run.kind {

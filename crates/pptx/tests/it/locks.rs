@@ -1,6 +1,6 @@
 //! Lock and hidden state (Selection pane): what PowerPoint writes for Lock, and what it reads as locked.
 
-use std::io::{Cursor, Read, Write};
+use std::io::Cursor;
 
 use deckcraft_geom::Xfrm;
 use deckcraft_model::style::PictureFill;
@@ -78,30 +78,8 @@ fn find<'a>(s: &'a Slide, name: &str) -> &'a Shape {
     found.unwrap_or_else(|| panic!("no shape {name}"))
 }
 
-fn entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
-    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
-    (0..z.len())
-        .map(|i| {
-            let mut f = z.by_index(i).expect("entry");
-            let mut d = vec![];
-            f.read_to_end(&mut d).expect("read");
-            (f.name().expect("ZIP member name").to_string(), d)
-        })
-        .collect()
-}
-
-fn rezip(es: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let o = zip::write::SimpleFileOptions::default();
-    for (n, d) in es {
-        z.start_file(n.as_str(), o).expect("start");
-        z.write_all(d).expect("write");
-    }
-    z.finish().expect("finish").into_inner()
-}
-
 fn slide1_xml(bytes: &[u8]) -> String {
-    let es = entries(bytes);
+    let es = super::zip_fixture::entries(bytes);
     let (_, d) = es.iter().find(|(n, _)| n == "ppt/slides/slide1.xml").expect("slide1");
     String::from_utf8(d.clone()).expect("utf8")
 }
@@ -168,7 +146,7 @@ fn partial_locks_are_not_lock() {
     if let Some(s) = p.slides.first_mut() {
         std::sync::Arc::make_mut(s).shapes = vec![a, b, c, d];
     }
-    let mut es = entries(&deckcraft_pptx::export(&p).expect("export"));
+    let mut es = super::zip_fixture::entries(&deckcraft_pptx::export(&p).expect("export"));
     let slide = es.iter_mut().find(|(n, _)| n == "ppt/slides/slide1.xml").expect("slide1");
     let xml = String::from_utf8(slide.1.clone()).expect("utf8");
     let swap = |xml: String, name: &str, locks: &str| {
@@ -186,7 +164,7 @@ fn partial_locks_are_not_lock() {
     let xml =
         swap(xml, "C", r#"<a:spLocks noGrp="1" noRot="1" noMove="1" noResize="1" noEditPoints="1" noAdjustHandles="1" noChangeShapeType="1"/>"#);
     slide.1 = xml.into_bytes();
-    let q = deckcraft_pptx::import(&rezip(&es)).expect("import");
+    let q = deckcraft_pptx::import(&super::zip_fixture::zip_of(&es)).expect("import");
     let s = &q.slides[0];
     assert!(!find(s, "A").locked);
     assert!(!find(s, "B").locked);
@@ -202,10 +180,10 @@ fn empty_locks_element_is_unlocked() {
     if let Some(s) = p.slides.first_mut() {
         std::sync::Arc::make_mut(s).shapes = vec![a];
     }
-    let mut es = entries(&deckcraft_pptx::export(&p).expect("export"));
+    let mut es = super::zip_fixture::entries(&deckcraft_pptx::export(&p).expect("export"));
     let slide = es.iter_mut().find(|(n, _)| n == "ppt/slides/slide1.xml").expect("slide1");
     let xml = String::from_utf8(slide.1.clone()).expect("utf8").replacen("<p:cNvSpPr/>", "<p:cNvSpPr><a:spLocks/></p:cNvSpPr>", 1);
     slide.1 = xml.into_bytes();
-    let q = deckcraft_pptx::import(&rezip(&es)).expect("import");
+    let q = deckcraft_pptx::import(&super::zip_fixture::zip_of(&es)).expect("import");
     assert!(!find(&q.slides[0], "A").locked);
 }

@@ -1,7 +1,9 @@
 //! A series-level `c:dLbls/c:delete val="1"` hides that series' labels although the
 //! chart-wide `showVal` is on (#1977).
 
-use std::io::{Cursor, Read, Write};
+#[path = "support/chart_fixture.rs"]
+mod chart_fixture;
+
 use std::sync::Arc;
 
 use deckcraft_geom::Xfrm;
@@ -26,26 +28,6 @@ fn bar_chart_pptx() -> Vec<u8> {
     deckcraft_pptx::export(&p).expect("export")
 }
 
-fn reimport(bytes: &[u8], f: impl Fn(&str) -> String) -> Presentation {
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
-    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let opts = zip::write::SimpleFileOptions::default();
-    for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).expect("entry");
-        let name = entry.name().expect("ZIP member name").to_string();
-        let mut data = vec![];
-        entry.read_to_end(&mut data).expect("read");
-        if name.starts_with("ppt/charts/chart") && name.ends_with(".xml") && !name.contains("_rels") {
-            let xml = String::from_utf8(data).expect("chart xml");
-            data = f(&xml).into_bytes();
-        }
-        out.start_file(&name, opts).expect("start");
-        out.write_all(&data).expect("write");
-    }
-    let patched = out.finish().expect("finish").into_inner();
-    deckcraft_pptx::import(&patched).expect("import")
-}
-
 fn chart_of(p: &Presentation) -> &Chart {
     let s = p.slides.first().expect("slide");
     for sh in &s.shapes {
@@ -58,7 +40,7 @@ fn chart_of(p: &Presentation) -> &Chart {
 
 #[test]
 fn series_dlbls_delete_hides_that_series_labels() {
-    let p = reimport(&bar_chart_pptx(), |xml| {
+    let p = chart_fixture::reimport(&bar_chart_pptx(), |xml| {
         xml.replacen("<c:cat>", r#"<c:dLbls><c:delete val="1"/></c:dLbls><c:cat>"#, 1).replacen(
             "<c:gapWidth",
             r#"<c:dLbls><c:showVal val="1"/></c:dLbls><c:gapWidth"#,

@@ -1,29 +1,10 @@
 //! Fills read from decks written by other tools.
 
-use std::io::{Cursor, Read, Write};
+use std::io::Cursor;
 
 use deckcraft_geom::Xfrm;
 use deckcraft_model::style::{Fill, PictureFill, PictureMode};
 use deckcraft_model::{Shape, ShapeId, defaults};
-
-/// `bytes` with `edit` applied to every slide part.
-fn edit_slides(bytes: &[u8], edit: impl Fn(String) -> String) -> Vec<u8> {
-    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
-    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let o = zip::write::SimpleFileOptions::default();
-    for i in 0..z.len() {
-        let mut f = z.by_index(i).expect("entry");
-        let mut d = vec![];
-        f.read_to_end(&mut d).expect("read");
-        let name = f.name().expect("ZIP member name").to_string();
-        if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
-            d = edit(String::from_utf8(d).expect("utf8")).into_bytes();
-        }
-        out.start_file(name, o).expect("start");
-        out.write_all(&d).expect("write");
-    }
-    out.finish().expect("finish").into_inner()
-}
 
 fn png() -> Vec<u8> {
     let mut out = Cursor::new(vec![]);
@@ -62,7 +43,7 @@ fn textured_mode(bytes: &[u8]) -> PictureMode {
 fn a_shape_picture_fill_without_stretch_or_tile_tiles() {
     // tdf#128596: `<a:blipFill><a:blip/></a:blipFill>` on a shape, as some tools write it;
     // PowerPoint tiles the picture at its own size.
-    let bare = edit_slides(&deck(), |s| {
+    let bare = super::zip_fixture::edit_slides(&deck(), |s| {
         let s = regex_free_strip(&s, "<a:stretch>", "</a:stretch>");
         assert!(!s.contains("<a:stretch"), "the test deck lost its stretch");
         s
@@ -167,8 +148,9 @@ fn a_gradient_tile_rect_is_read_and_round_trips() {
     let s = q.slides[0].shapes.iter().find(|s| s.name == "Corner").expect("shape");
     assert_eq!(s.fill, Some(Fill::Gradient(g)));
     // As written by PowerPoint (attributes it leaves out are 0).
-    let edited =
-        edit_slides(&bytes, |x| x.replace("<a:tileRect l=\"-100000\" t=\"-100000\" r=\"0\" b=\"0\"/>", "<a:tileRect l=\"-100000\" t=\"-100000\"/>"));
+    let edited = super::zip_fixture::edit_slides(&bytes, |x| {
+        x.replace("<a:tileRect l=\"-100000\" t=\"-100000\" r=\"0\" b=\"0\"/>", "<a:tileRect l=\"-100000\" t=\"-100000\"/>")
+    });
     let q = deckcraft_pptx::import(&edited).expect("import");
     let s = q.slides[0].shapes.iter().find(|s| s.name == "Corner").expect("shape");
     assert!(matches!(&s.fill, Some(Fill::Gradient(g)) if g.tile == [-1.0, -1.0, 0.0, 0.0]), "{:?}", s.fill);
@@ -200,7 +182,7 @@ fn a_table_naming_no_style_is_drawn_with_the_table_grid() {
     // Written with its style, it reads back as written.
     assert_eq!(style(&bytes), "none");
     // Without a:tableStyleId PowerPoint draws thin dark grid lines.
-    let bare = edit_slides(&bytes, |x| {
+    let bare = super::zip_fixture::edit_slides(&bytes, |x| {
         let (Some(a), Some(b)) = (x.find("<a:tableStyleId>"), x.find("</a:tableStyleId>")) else { return x };
         format!("{}{}", &x[..a], &x[b + "</a:tableStyleId>".len()..])
     });
@@ -235,7 +217,7 @@ fn black_and_white_and_inverted_alpha_pictures_round_trip() {
 #[test]
 fn an_upright_picture_fill_round_trips() {
     let bytes = deck();
-    let edited = edit_slides(&bytes, |x| x.replacen("rotWithShape=\"1\"", "rotWithShape=\"0\"", 1));
+    let edited = super::zip_fixture::edit_slides(&bytes, |x| x.replacen("rotWithShape=\"1\"", "rotWithShape=\"0\"", 1));
     let q = deckcraft_pptx::import(&edited).expect("import");
     let s = q.slides[0].shapes.iter().find(|s| s.name == "Textured").expect("shape");
     let Some(Fill::Picture(pf)) = &s.fill else { panic!("{:?}", s.fill) };

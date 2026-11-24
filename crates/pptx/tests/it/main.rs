@@ -30,5 +30,6 @@ mod table_styles;
 mod tags;
 mod transition_xml;
 mod trigger_steps;
+mod zip_fixture;
 
 mod picture_backing;
