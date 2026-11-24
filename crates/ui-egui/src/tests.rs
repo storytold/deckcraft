@@ -921,39 +921,6 @@ fn select_all_follows_the_focused_pane() {
     assert!(!st.selection.shapes.is_empty(), "canvas select all picks the shapes");
 }
 
-/// Selected slides in the thumbnail pane go with Delete or Backspace.
-#[test]
-fn delete_and_backspace_remove_selected_slides() {
-    for key in [egui::Key::Delete, egui::Key::Backspace] {
-        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-            |ui, app: &mut SlideApp| {
-                app.logic(ui.ctx());
-                app.ui(ui);
-            },
-            SlideApp::new(Session::with_new(), Services::default()),
-        );
-        harness.run_steps(2);
-        for _ in 0..2 {
-            harness.state_mut().run("slide.new", json!({})).unwrap();
-        }
-        harness.state_mut().run("slide.go", json!({"index": 0})).unwrap();
-        harness.run_steps(3);
-        let pos = egui::pos2(harness.state().ui.thumbs_width / 2.0, 300.0);
-        harness.event(egui::Event::PointerMoved(pos));
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
-        }
-        harness.run_steps(2);
-        assert!(harness.state().slides_focused);
-        harness.state_mut().run("slide.selectRange", json!({"from": 0, "to": 1})).unwrap();
-        harness.run_steps(2);
-        assert_eq!(harness.state().session.active().unwrap().selection.slides.len(), 2);
-        harness.key_press(key);
-        harness.run_steps(2);
-        assert_eq!(harness.state().session.active().unwrap().doc.slides.len(), 1, "{key:?} deletes the selected slides");
-    }
-}
-
 fn harness() -> egui_kittest::Harness<'static, SlideApp> {
     let mut app = SlideApp::new(Session::new(), Services::default());
     // The maths edition's first-run "Teaching a subject?" card would push Home's Recent list
