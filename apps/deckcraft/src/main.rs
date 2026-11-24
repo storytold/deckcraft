@@ -53,6 +53,9 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
+        // The window is closing for good: a ready update's helper starts now and installs it once
+        // the process has exited.
+        self.0.start_pending_update();
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -107,7 +110,13 @@ fn save_prefs(app: &SlideApp) {
     }
 }
 
-fn services() -> Services {
+/// The desktop services. `native_wayland`: the window is a Wayland client (not Xwayland).
+fn services(native_wayland: bool) -> Services {
+    // On native Wayland, egui-winit owns the clipboard through winit's data device, which carries
+    // text and PNG but no HTML. `pasteboard` (arboard, built for X11 only) would put a copy on the
+    // Xwayland selection instead and skip egui's Wayland claim, so Ctrl+V would read something
+    // else. There, text goes through egui and pictures arrive as `PasteImage` events.
+    let pasteboard = !native_wayland;
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
             let d = rfd::FileDialog::new();
@@ -122,9 +131,10 @@ fn services() -> Services {
                 "curriculum" => d.add_filter("Curriculum files", &["json"]),
                 "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
                 _ => d
-                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
+                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx", "ppt", "pot", "pps"])
                     .add_filter("DeckCraft", &["deckcraft"])
                     .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
+                    .add_filter("PowerPoint 97-2003", &["ppt", "pot", "pps"])
                     .add_filter("Outline", &["txt", "md"]),
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())
@@ -133,15 +143,23 @@ fn services() -> Services {
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
         maths: maths::services(),
-        clipboard_image: Some(Box::new(pasteboard::image_png)),
-        clipboard_html: Some(Box::new(pasteboard::html)),
-        clipboard_set_html: Some(Box::new(pasteboard::set_html)),
+        clipboard_image: pasteboard.then(|| Box::new(pasteboard::image_png) as Box<dyn FnMut() -> Option<Vec<u8>>>),
+        clipboard_html: pasteboard.then(|| Box::new(pasteboard::html) as Box<dyn FnMut() -> Option<String>>),
+        clipboard_set_html: pasteboard.then(|| Box::new(pasteboard::set_html) as Box<dyn FnMut(&str, &str) -> bool>),
         // Media is mixed and clocked by the output device; `DECKCRAFT_NO_AUDIO` plays silently.
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
         ..Default::default()
     }
+}
+
+/// Displays winit lists for `window`, counting an output Wayland lists twice once. `None` when it
+/// lists none: Presenter View then stays as it was.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn display_count(window: &winit::window::Window) -> Option<usize> {
+    let n = window.available_monitors().collect::<std::collections::BTreeSet<_>>().len();
+    (n > 0).then_some(n)
 }
 
 const APP_ID: &str = "ai.storyteller.deckcraft";
@@ -254,6 +272,11 @@ fn main() -> eframe::Result {
             false
         }
     };
+    // `Default` lets winit choose, and winit takes Wayland whenever `WAYLAND_DISPLAY` is set.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let native_wayland = !x11 && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|w| !w.is_empty());
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    let native_wayland = false;
     #[cfg(all(unix, not(target_os = "macos")))]
     if x11 {
         options.event_loop_builder = Some(Box::new(|b| {
@@ -275,7 +298,12 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
-            let mut app = SlideApp::new(Session::new(), services());
+            let mut app = SlideApp::new(Session::new(), services(native_wayland));
+            // Presenter View asks winit how many displays there are when a show starts.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            if let Some(window) = cc.winit_window().cloned() {
+                app.services.displays = Some(Box::new(move || display_count(&window)));
+            }
             load_prefs(&mut app);
             // No `enable_update_checks()`: upstream's start-up check asks storytold/deckcraft. The
             // maths edition's own updater (`maths::services`) checks this fork's releases, and only
@@ -342,6 +370,26 @@ mod tests {
         assert!(out.status.success(), "{stdout}");
         assert!(stdout.contains("calling on_exit"), "the child didn't run the test: {stdout}");
         assert_eq!(stdout.contains("on_exit returned"), !cfg!(target_os = "macos"), "{stdout}");
+    }
+
+    /// The egui 0.37 migration (#1350) left `clipboard` out of eframe's features. egui then
+    /// simulated a clipboard inside the app: nothing pasted from other apps, and Ctrl+C/Ctrl+V
+    /// lost text that went out as HTML. Keep the OS clipboard on.
+    #[test]
+    fn eframe_uses_the_os_clipboard() {
+        let manifest = include_str!("../Cargo.toml");
+        let eframe = manifest.lines().find(|l| l.starts_with("eframe = ")).unwrap_or_default();
+        assert!(eframe.contains("\"clipboard\""), "eframe must enable the OS clipboard: {eframe}");
+    }
+
+    /// On native Wayland, the X11-only pasteboard would bypass egui's Wayland clipboard; elsewhere
+    /// it carries HTML and pictures beside egui's text.
+    #[test]
+    fn the_pasteboard_stays_off_native_wayland() {
+        let s = services(true);
+        assert!(s.clipboard_html.is_none() && s.clipboard_set_html.is_none() && s.clipboard_image.is_none());
+        let s = services(false);
+        assert!(s.clipboard_html.is_some() && s.clipboard_set_html.is_some() && s.clipboard_image.is_some());
     }
 
     #[test]
@@ -421,12 +469,16 @@ mod tests {
             .collect();
         win.sort();
 
-        let mime_ext = |m: &str| match m {
-            "application/x-deckcraft" => Some("deckcraft"),
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
-            "application/vnd.openxmlformats-officedocument.presentationml.template" => Some("potx"),
-            "application/vnd.openxmlformats-officedocument.presentationml.slideshow" => Some("ppsx"),
-            _ => None,
+        // One MIME type covers all three PowerPoint 97-2003 extensions.
+        let mime_exts = |m: &str| -> Option<&[&str]> {
+            Some(match m {
+                "application/x-deckcraft" => &["deckcraft"],
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation" => &["pptx"],
+                "application/vnd.openxmlformats-officedocument.presentationml.template" => &["potx"],
+                "application/vnd.openxmlformats-officedocument.presentationml.slideshow" => &["ppsx"],
+                "application/vnd.ms-powerpoint" => &["ppt", "pot", "pps"],
+                _ => return None,
+            })
         };
         let mut linux: Vec<String> = desktop
             .lines()
@@ -434,7 +486,8 @@ mod tests {
             .unwrap_or_default()
             .split(';')
             .filter(|m| !m.is_empty())
-            .map(|m| mime_ext(m).unwrap_or(m).to_string()) // an unknown MIME type shows up in the diff
+            // An unknown MIME type shows up in the diff.
+            .flat_map(|m| mime_exts(m).map_or_else(|| vec![m.to_string()], |e| e.iter().map(|x| x.to_string()).collect()))
             .collect();
         linux.sort();
 

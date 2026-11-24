@@ -230,6 +230,8 @@ pub const LANGS: &[(&str, &str)] = &[
     ("Українська", "uk-UA"),
     ("Русский", "ru-RU"),
     ("Беларуская", "be-BY"),
+    ("Српски (ћирилица)", "sr-Cyrl-RS"),
+    ("Srpski (latinica)", "sr-Latn-RS"),
     ("Türkçe", "tr-TR"),
     ("Ελληνικά", "el-GR"),
     ("日本語", "ja-JP"),

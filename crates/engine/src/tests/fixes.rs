@@ -108,7 +108,7 @@ fn empty_notes_page_survives_open_and_save() {
     let mut s = session();
     s.execute("file.openBytes", &json!({"name": "empty-notes.pptx", "data": crate::cmd::base64_encode(&bytes)})).unwrap();
     let opened = s.doc().unwrap().doc.clone();
-    assert!(opened.slides[0].notes_page_present);
+    assert!(opened.slides[0].has_notes_slide);
     assert!(opened.slides[0].notes.is_empty());
 
     let saved = s.execute("file.saveBytes", &json!({"format": "pptx"})).unwrap()["data"].as_str().unwrap().to_string();
@@ -121,11 +121,11 @@ fn empty_notes_page_survives_open_and_save() {
     zip.by_name("ppt/notesMasters/notesMaster1.xml").unwrap().read_to_string(&mut notes_master).unwrap();
     assert!(notes_master.contains(r#"type="sldNum""#), "the notes master retains its slide-number placeholder");
     let reopened = deckcraft_pptx::import(&saved).unwrap();
-    assert!(reopened.slides[0].notes_page_present);
+    assert!(reopened.slides[0].has_notes_slide);
     assert!(reopened.slides[0].notes.is_empty());
 
     let native = s.execute("file.saveBytes", &json!({"format": "deckcraft"})).unwrap()["data"].as_str().unwrap().to_string();
     let mut native_session = session();
     native_session.execute("file.openBytes", &json!({"name": "empty-notes.deckcraft", "data": native})).unwrap();
-    assert!(native_session.doc().unwrap().doc.slides[0].notes_page_present);
+    assert!(native_session.doc().unwrap().doc.slides[0].has_notes_slide);
 }
