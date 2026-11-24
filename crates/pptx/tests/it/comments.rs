@@ -146,6 +146,33 @@ fn comments_on_several_slides_round_trip() {
     assert_eq!(q.slides[2].comments[0].text, "Slide three");
 }
 
+/// A slide that names a modern part another slide already owns, plus its own legacy part, must
+/// not import the legacy copy: modern precedence holds even when the modern part is not re-read.
+#[test]
+fn owned_modern_part_still_suppresses_later_legacy() {
+    let mut p = deck();
+    let layout = p.slides[0].layout;
+    let s2 = defaults::new_slide(&mut p, layout).expect("slide");
+    p.slides.push(Arc::new(s2));
+    Arc::make_mut(&mut p.slides[1]).comments = vec![Comment { author: "Cara".into(), text: "Slide two".into(), ..Default::default() }];
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let rels2 = part(&bytes, "ppt/slides/_rels/slide2.xml.rels").replace("modernComment2.xml", "modernComment1.xml");
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip");
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).expect("entry");
+        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).expect("start");
+        if f.name() == "ppt/slides/_rels/slide2.xml.rels" {
+            std::io::Write::write_all(&mut out, rels2.as_bytes()).expect("write");
+        } else {
+            std::io::copy(&mut f, &mut out).expect("copy");
+        }
+    }
+    let q = deckcraft_pptx::import(&out.finish().expect("finish").into_inner()).expect("import");
+    assert_eq!(q.slides[0].comments.len(), 2);
+    assert!(q.slides[1].comments.is_empty(), "{:?}", q.slides[1].comments);
+}
+
 /// A legacy-only package (what older tools read and write) still imports: 1/8 pt positions,
 /// flattened replies.
 #[test]

@@ -34,21 +34,10 @@ impl Class {
 /// prefix.
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
-    // Codecs and containers (ported from FilmCraft): L0 standalone leaves, L1 codecs over
-    // `bitstream`, and `media` (probe, decode, playback mixer) at L2.
-    ("bitstream", Class::Standalone),
-    ("matroska", Class::Standalone),
-    ("ogg", Class::Standalone),
-    ("opus", Class::Standalone),
-    ("h264", Class::Layer(1)),
-    ("hevc", Class::Layer(1)),
-    ("vp9", Class::Layer(1)),
-    ("av1", Class::Layer(1)),
-    ("isobmff", Class::Layer(1)),
+    // `media` (probe, decode, playback mixer) at L2. Containers, the Opus decoder and the video
+    // decoders come from craft-libs (craft-media, craft-audio, craft-video).
     ("media", Class::Layer(2)),
     ("color", Class::Layer(0)),
-    // WMF/EMF reader (ported from WordCraft).
-    ("metafile", Class::Layer(0)),
     ("model", Class::Layer(1)),
     ("fonts", Class::Layer(1)),
     ("text", Class::Layer(2)),
@@ -56,6 +45,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("format", Class::Layer(2)),
     ("render", Class::Layer(3)),
     ("pptx", Class::Layer(3)),
+    ("ppt", Class::Layer(3)),
     ("pdf", Class::Layer(4)),
     ("engine", Class::Layer(5)),
     ("ui-egui", Class::Layer(6)),
@@ -71,8 +61,8 @@ pub const TABLE: &[(&str, Class)] = &[
 ];
 
 /// Upward dev-dependencies allowed for integration tests: the PPTX round-trip tests drive the
-/// engine (build a deck with commands, export, re-import).
-pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine")];
+/// engine (build a deck with commands, export, re-import), and the PPT tests open a file through it.
+pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine"), ("ppt", "engine")];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
 pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];
