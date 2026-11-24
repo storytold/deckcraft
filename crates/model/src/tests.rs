@@ -250,6 +250,30 @@ fn linked_text_stays_readable_on_accent_filled_shapes_in_builtin_themes() {
 }
 
 #[test]
+fn linked_text_uses_opaque_highlight_as_its_background() {
+    use crate::text::{Action, Hyperlink};
+    use deckcraft_color::Rgba;
+
+    let p = Presentation::default();
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let shape = Shape { fill: Some(Fill::solid(ColorRef::rgb(Rgba::BLACK))), ..Default::default() };
+    let link = RunProps {
+        highlight: Some(ColorRef::rgb(Rgba::WHITE)),
+        link: Some(Hyperlink {
+            action: Action::Url { url: "https://example.org".into() },
+            tooltip: String::new(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        }),
+        ..Default::default()
+    };
+    let resolved = resolve::run(&ctx, &shape, &Paragraph::default(), &link);
+    assert!(resolve::text_color(&ctx, &resolved).contrast(Rgba::WHITE) >= 4.5);
+}
+
+#[test]
 fn a_layout_colour_map_override_applies_to_its_slides() {
     // A dark "section" layout maps bg1→dk1 and tx1→lt1; a slide on it that keeps the master
     // mapping (`masterClrMapping`) follows the layout, as PowerPoint draws it.

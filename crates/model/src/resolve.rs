@@ -374,23 +374,30 @@ pub fn run(ctx: &Ctx, shape: &Shape, para: &crate::text::Paragraph, run: &RunPro
         let from_def = run.link.is_none();
         if run.fill.is_none() && !(from_def && para.def_props.fill.is_some()) {
             let mut link_color = ColorRef::scheme(SchemeSlot::Hlink);
-            // A built-in theme may use the same colour for its hyperlink and a shape fill. Pick
-            // a theme text colour that is readable on a solid shape before painting the link.
-            if let (Some(Fill::Solid { color }), ph) = fill(ctx, shape) {
-                let bg = ctx.color(&color, ph);
-                if bg.a == 255 && ctx.color(&link_color, None).contrast(bg) < 4.5 {
-                    let candidates = [SchemeSlot::Tx1, SchemeSlot::Bg1];
-                    let best = candidates.into_iter().max_by(|a, b| {
-                        ctx.color(&ColorRef::scheme(*a), None).contrast(bg).total_cmp(&ctx.color(&ColorRef::scheme(*b), None).contrast(bg))
-                    });
-                    if let Some(slot) = best {
-                        link_color = ColorRef::scheme(slot);
-                    }
-                    if ctx.color(&link_color, None).contrast(bg) < 4.5 {
-                        let black = Rgba::BLACK;
-                        let white = Rgba::WHITE;
-                        link_color = ColorRef::rgb(if black.contrast(bg) >= white.contrast(bg) { black } else { white });
-                    }
+            // A built-in theme may use the same colour for its hyperlink and a shape fill. An
+            // opaque run highlight covers that fill, so use it as the background when present.
+            let background = r.highlight.as_ref().map(|color| ctx.color(color, None)).filter(|color| color.a == 255).or_else(|| {
+                let (shape_fill, ph) = fill(ctx, shape);
+                match shape_fill {
+                    Some(Fill::Solid { color }) => Some(ctx.color(&color, ph)),
+                    _ => None,
+                }
+            });
+            if let Some(bg) = background
+                && bg.a == 255
+                && ctx.color(&link_color, None).contrast(bg) < 4.5
+            {
+                let candidates = [SchemeSlot::Tx1, SchemeSlot::Bg1];
+                let best = candidates.into_iter().max_by(|a, b| {
+                    ctx.color(&ColorRef::scheme(*a), None).contrast(bg).total_cmp(&ctx.color(&ColorRef::scheme(*b), None).contrast(bg))
+                });
+                if let Some(slot) = best {
+                    link_color = ColorRef::scheme(slot);
+                }
+                if ctx.color(&link_color, None).contrast(bg) < 4.5 {
+                    let black = Rgba::BLACK;
+                    let white = Rgba::WHITE;
+                    link_color = ColorRef::rgb(if black.contrast(bg) >= white.contrast(bg) { black } else { white });
                 }
             }
             r.fill = Some(Fill::solid(link_color));
