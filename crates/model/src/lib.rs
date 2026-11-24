@@ -12,7 +12,7 @@ pub mod bidi;
 pub mod chart;
 pub mod defaults;
 pub mod edit;
-pub mod numfmt;
+pub use craft_drawingml::numfmt;
 pub mod resolve;
 pub mod style;
 pub mod table;
@@ -37,10 +37,6 @@ pub use theme::Theme;
 
 pub(crate) fn yes() -> bool {
     true
-}
-
-fn is_false(value: &bool) -> bool {
-    !value
 }
 
 macro_rules! id_type {
@@ -630,9 +626,10 @@ pub struct Slide {
     pub animations: Vec<Animation>,
     /// Speaker notes.
     pub notes: TextBody,
-    /// Whether the source file had a notes page, including pages with no speaker-note text.
-    #[serde(skip_serializing_if = "is_false")]
-    pub notes_page_present: bool,
+    /// Whether the slide has an associated notes slide even if its text is empty.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(alias = "has_notes_slide")]
+    pub has_notes_slide: bool,
     pub comments: Vec<Comment>,
     /// `clrMapOvr`: a colour map replacing the layout's or master's (`bg1`→`dk1`…); None follows
     /// the layout.
@@ -659,7 +656,7 @@ impl Default for Slide {
             transition: None,
             animations: vec![],
             notes: TextBody::default(),
-            notes_page_present: false,
+            has_notes_slide: false,
             comments: vec![],
             color_map: None,
             tags: vec![],
@@ -1120,11 +1117,13 @@ impl Presentation {
     pub fn validate(&self) -> Vec<String> {
         let mut out = vec![];
         let mut seen = std::collections::HashSet::new();
+        // Indexed once: a per-slide scan of every layout is slides × layouts work.
+        let layouts: std::collections::HashSet<_> = self.masters.iter().flat_map(|m| m.layouts.iter().map(|l| l.id)).collect();
         for s in &self.slides {
             if !seen.insert(s.id) {
                 out.push(format!("duplicate slide id {}", s.id));
             }
-            if self.layout(s.layout).is_none() {
+            if !layouts.contains(&s.layout) {
                 out.push(format!("slide {} uses missing layout {}", s.id, s.layout));
             }
             let mut ids = std::collections::HashSet::new();

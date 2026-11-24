@@ -6,7 +6,7 @@ use wasm_bindgen::JsCast as _;
 
 pub(crate) mod settings;
 
-const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
+const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "ppt", "pot", "pps", "txt", "md"];
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff"];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
@@ -26,8 +26,18 @@ pub fn start() {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
+        // Host modes (`craft-web-host`): `?host=parent`, a same-origin page framing DeckCraft,
+        // opens presentations in it and stores what it saves (`host`); `data-host="page"` on the
+        // canvas opts a page in that runs DeckCraft in its own document. The presenter popup is
+        // never the framed page.
+        let hosted = crate::presenter::token().is_none();
+        let bridge = if hosted { crate::host::Bridge::detect(&canvas) } else { None };
+        if hosted && bridge.is_none() && query_param("host").as_deref() == Some("parent") {
+            log::warn!("?host=parent needs a framing page on the same origin; saves download instead");
+        }
+        let app_bridge = bridge.clone();
         let mut options = eframe::WebOptions::default();
-        if query().contains("webgl")
+        if query_has("webgl")
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
@@ -48,7 +58,11 @@ pub fn start() {
                     let inbox: Inbox = Inbox::default();
                     // A window the presenter tab opened to show the presentation (see `Windowed`).
                     let audience_token = crate::presenter::audience_token();
-                    let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone(), audience_token.clone()));
+                    let mut services = services(inbox.clone(), cc.egui_ctx.clone(), audience_token.clone());
+                    if let Some(bridge) = &app_bridge {
+                        bridge.connect(&mut services, cc.egui_ctx.clone());
+                    }
+                    let mut app = SlideApp::new(Session::new(), services);
                     let mut settings = settings::Settings::load(&mut app);
                     crate::school::apply(&mut app);
                     settings.save_now(&app);
@@ -63,7 +77,12 @@ pub fn start() {
                     let q = query();
                     // A teacher opens the app to make or open a deck, so it starts on the Home
                     // screen with an empty presentation behind it; `?sample` loads the demo deck.
-                    if q.contains("sample") {
+                    // In host mode the parent sends the presentation to edit; no sample meanwhile.
+                    if app_bridge.is_some() {
+                        if let Err(e) = app.start_for_host() {
+                            log::error!("new presentation: {e}");
+                        }
+                    } else if q.contains("sample") {
                         if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                             log::error!("sample deck: {e}");
                         }
@@ -72,7 +91,7 @@ pub fn start() {
                     } else if audience_token.is_none() && !q.contains("show") {
                         let _ = app.run("app.home", serde_json::json!({"on": true}));
                     }
-                    if q.contains("show") {
+                    if query_has("show") {
                         app.start_show(0, false);
                     }
                     // Start-up check of the presenter tab and its presentation window.
@@ -91,6 +110,12 @@ pub fn start() {
                         },
                         None => None,
                     };
+                    if app_bridge.is_some()
+                        && let Some(author) = query_param("author")
+                    {
+                        crate::host::Bridge::set_author(&mut app, &author);
+                    }
+                    crate::api::install(&mut app, cc.egui_ctx.clone());
                     Ok(Box::new(WebShell {
                         app,
                         inbox,
@@ -102,10 +127,18 @@ pub fn start() {
                         connected_logged: false,
                         pending: None,
                         smoke,
+                        bridge: app_bridge,
                     }))
                 }),
             )
             .await;
+        // Ready only once the runner is up: starting can still fail after the app is made.
+        if let Some(bridge) = &bridge {
+            match &result {
+                Ok(()) => bridge.post_ready(),
+                Err(e) => bridge.post_failed(&format!("{e:?}")),
+            }
+        }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => el.remove(),
@@ -117,6 +150,16 @@ pub fn start() {
 
 fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
+}
+
+fn query_param(key: &str) -> Option<String> {
+    web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
+}
+
+/// Whether the URL has the flag `key` (`?show`, `&blank=1`). A whole parameter, never a substring:
+/// `?author=` is free text.
+fn query_has(key: &str) -> bool {
+    web_sys::UrlSearchParams::new_with_str(&query()).is_ok_and(|q| q.has(key))
 }
 
 /// Wraps the app to read dropped files asynchronously (browsers can't read them synchronously)
@@ -140,16 +183,22 @@ struct WebShell {
     pending: Option<(usize, Vec<u8>)>,
     /// `?smoke`: the start-up check a headless browser runs (`smoke`).
     smoke: Option<crate::smoke::Smoke>,
+    /// The parent page that keeps the files (`?host=parent`).
+    bridge: Option<crate::host::Bridge>,
 }
 
 impl eframe::App for WebShell {
-    /// Delegate one eframe logic pass to the wrapped application.
+    /// Delegate one eframe logic pass to the wrapped application, opening the files the parent
+    /// page sent first and telling it about unsaved changes after.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.exam_ready.take() {
             self.app.ui.maths.exam_library_dir = crate::school::EXAM_DIR.to_string();
         }
         if let Some(live) = self.live_bank.borrow_mut().take() {
             crate::school::apply_live(&mut self.app, &live);
+        }
+        if let Some(bridge) = &self.bridge {
+            bridge.open_files(&mut self.app);
         }
         self.windowed(ctx);
         fetch_wanted(ctx);
@@ -160,6 +209,9 @@ impl eframe::App for WebShell {
             self.app.logic(ctx);
         }
         // (The presentation window closes itself when its show ends, and must wait for the deck.)
+        if let Some(bridge) = &self.bridge {
+            bridge.report_dirty(&self.app);
+        }
         if self.app.show.is_none()
             && self.audience.is_none()
             && let Some(host) = self.app.services.presenter.as_mut()

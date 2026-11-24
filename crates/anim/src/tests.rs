@@ -893,6 +893,8 @@ fn show_back_leaves_a_slide_whose_first_step_is_automatic() {
         // While the automatic step plays.
         assert_eq!(s.prev(&p), ShowAction::Slide(0), "{start:?}");
         assert_eq!(s.next(&p), ShowAction::Slide(1));
+        // Going forward again plays the automatic step again (#2090).
+        assert_eq!(s.step_done(&p), ShowAction::FinishStep(0), "{start:?}");
         // Once it has played, the click step is undone first, then Back leaves the slide.
         assert_eq!(s.next(&p), ShowAction::PlayStep(1));
         assert_eq!(s.step_done(&p), ShowAction::FinishStep(1));
@@ -900,6 +902,56 @@ fn show_back_leaves_a_slide_whose_first_step_is_automatic() {
         assert_eq!(s.prev(&p), ShowAction::Slide(0), "{start:?}");
         assert_eq!((s.step, s.playing), (0, false));
     }
+}
+
+#[test]
+fn a_slide_entered_going_forward_again_plays_its_animations_again() {
+    // #2090: the show remembered slide 2 as fully built, so its entrance effects did not play the
+    // second time the show advanced to it.
+    for start in [AnimStart::WithPrevious, AnimStart::AfterPrevious] {
+        let mut p = pres(3);
+        Arc::make_mut(&mut p.slides[1]).shapes = vec![shape(1, "A")];
+        Arc::make_mut(&mut p.slides[1]).animations = vec![anim(1, AnimClass::Entrance, "fade", start)];
+        let mut s = ShowState::new(&p);
+        assert_eq!(s.next(&p), ShowAction::Slide(1));
+        assert_eq!(s.step_done(&p), ShowAction::FinishStep(0));
+        assert_eq!(s.prev(&p), ShowAction::Slide(0), "{start:?}");
+        assert_eq!(s.next(&p), ShowAction::Slide(1));
+        assert_eq!((s.step, s.playing), (0, true), "{start:?}: the slide starts again");
+        let a = ShowState::timeline(&p, 1).state(ShapeId(1), None, s.step, 0.0);
+        assert!(!a.visible || a.opacity < 0.01, "{start:?}: the shape has not come in yet");
+        // Back from the next slide still shows it as it was left.
+        assert_eq!(s.step_done(&p), ShowAction::FinishStep(0));
+        assert_eq!(s.next(&p), ShowAction::Slide(2));
+        assert_eq!(s.prev(&p), ShowAction::Slide(1));
+        assert_eq!((s.step, s.playing), (1, false), "{start:?}");
+    }
+    // An On Click build left by a jump starts again when the show advances to the slide.
+    let mut p = pres(2);
+    Arc::make_mut(&mut p.slides[1]).shapes = vec![shape(1, "A")];
+    Arc::make_mut(&mut p.slides[1]).animations = vec![anim(1, AnimClass::Entrance, "fade", AnimStart::OnClick)];
+    let mut s = ShowState::new(&p);
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert_eq!(s.next(&p), ShowAction::PlayStep(0));
+    assert_eq!(s.step_done(&p), ShowAction::FinishStep(0));
+    assert_eq!(s.goto(&p, 0), ShowAction::Slide(0));
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert_eq!((s.step, s.playing), (0, false));
+}
+
+#[test]
+fn a_looping_show_plays_the_first_slide_again() {
+    // #2090: a kiosk or loop-until-Esc show comes round to the first slide going forward.
+    let mut p = pres(2);
+    p.show.loop_until_esc = true;
+    Arc::make_mut(&mut p.slides[0]).shapes = vec![shape(1, "A")];
+    Arc::make_mut(&mut p.slides[0]).animations = vec![anim(1, AnimClass::Entrance, "fade", AnimStart::WithPrevious)];
+    let mut s = ShowState::new(&p);
+    assert!(s.playing);
+    assert_eq!(s.step_done(&p), ShowAction::FinishStep(0));
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert_eq!(s.next(&p), ShowAction::Slide(0));
+    assert_eq!((s.step, s.playing), (0, true));
 }
 
 #[test]
@@ -1171,4 +1223,59 @@ fn many_by_paragraph_animations_on_one_shape_share_paragraph_targets() {
     let tl = Timeline::new(&s, W, H);
     assert_eq!(tl.effects().len(), 6_000);
     assert_eq!(tl.paragraph_targets(ShapeId(1)), vec![0, 1, 2]);
+}
+
+#[test]
+fn morph_pairs_take_the_first_unused_match_in_slide_order() {
+    let mut a = Slide::default();
+    let mut b = Slide::default();
+    a.shapes = vec![shape(1, "Same"), shape(2, "Same"), shape(3, "Other")];
+    b.shapes = vec![shape(11, "Same"), shape(12, "Same"), shape(13, "Same")];
+    // By name first, in slide order; the shape of `a` left over pairs by kind and geometry with
+    // the shape of `b` left over.
+    assert_eq!(morph_pairs(&a, &b), [(ShapeId(1), ShapeId(11)), (ShapeId(2), ShapeId(12)), (ShapeId(3), ShapeId(13))]);
+}
+
+#[test]
+fn morph_of_large_slides_stays_linear() {
+    let n = 20_000u32;
+    let text = |i: u32, side: &str| Some(TextBody::from_text(&format!("{side} {i}")));
+    let mut a = Slide::default();
+    let mut b = Slide::default();
+    // Text no shape on the other slide shares: every pass looks for a partner and finds none.
+    a.shapes = (0..n).map(|i| Shape { text: text(i, "a"), ..shape(i + 1, "") }).collect();
+    b.shapes = (0..n).map(|i| Shape { text: text(i, "b"), ..shape(n + i + 1, "") }).collect();
+    // One named pair at opposite ends.
+    a.shapes[0].name = "Logo".into();
+    b.shapes[n as usize - 1].name = "Logo".into();
+    // No wall-clock bound (it would flake on a loaded runner): at this size a quadratic pairing
+    // takes minutes, so a regression shows as a test that hangs rather than a failed assertion.
+    assert_eq!(morph_pairs(&a, &b), [(ShapeId(1), ShapeId(2 * n))]);
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
+    // Every shape fades in place; the named pair differs in text, so it cross-fades as two.
+    assert_eq!(f.shapes.len(), 2 * n as usize);
+}
+
+#[test]
+fn paragraph_states_of_a_large_build_stay_linear() {
+    let n = 20_000usize;
+    let mut s = slide_with(vec![]);
+    let mut body = TextBody::from_text(&vec!["line"; n].join("\n"));
+    // One first-level paragraph owning every other paragraph.
+    for p in body.paragraphs.iter_mut().skip(1) {
+        p.level = 1;
+    }
+    s.shapes[0].text = Some(body);
+    let mut a = anim(1, AnimClass::Entrance, "fade", AnimStart::OnClick);
+    a.text_build = TextBuild::ByParagraph;
+    s.animations = vec![a];
+    let tl = Timeline::new(&s, W, H);
+    // No wall-clock bound, as above: a per-paragraph scan of the slide would take minutes here.
+    assert_eq!(tl.paragraph_targets(ShapeId(1)).len(), n);
+    for p in 0..n {
+        assert!(!tl.state(ShapeId(1), Some(p), 0, 0.0).visible);
+        assert!(tl.state(ShapeId(1), Some(p), 1, 0.0).visible);
+    }
+    assert_eq!(tl.animated_shapes(), [ShapeId(1)]);
 }

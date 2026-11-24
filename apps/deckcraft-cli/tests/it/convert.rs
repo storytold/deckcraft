@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn cli(args: &[&Path]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).args(args).output().unwrap()
+    Command::new(crate::deckcraft_cli()).args(args).output().unwrap()
 }
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -18,7 +18,7 @@ fn temp_dir(name: &str) -> PathBuf {
 fn convert_rejects_output_formats_it_cannot_write() {
     let dir = temp_dir("convert-unsupported");
     let input = dir.join("in.pptx");
-    let out = Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).args(["run", "--sample", "--export"]).arg(&input).output().unwrap();
+    let out = Command::new(crate::deckcraft_cli()).args(["run", "--sample", "--export"]).arg(&input).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 
     for name in ["out.odp", "out.bmp", "out.svg", "out.outline", "out"] {
@@ -48,7 +48,7 @@ fn run_rejects_unsupported_save_and_export_paths_before_running() {
     let dir = temp_dir("run-unsupported");
     for flag in ["--save", "--export"] {
         let target = dir.join("deck.odp");
-        let out = Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).args(["run", "--sample", flag]).arg(&target).output().unwrap();
+        let out = Command::new(crate::deckcraft_cli()).args(["run", "--sample", flag]).arg(&target).output().unwrap();
         assert!(!out.status.success(), "{flag}: run should fail");
         assert!(String::from_utf8_lossy(&out.stderr).contains("unsupported output format .odp"), "{flag}");
         assert!(!target.exists(), "{flag}: nothing is written");
