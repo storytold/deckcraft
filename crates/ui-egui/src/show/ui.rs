@@ -241,11 +241,13 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
 /// A browsed show starts: remember the editor's window, leave maximized and lower the minimum
 /// size, which is taller than a 16:9 slide at its width.
 fn start_window_fit(app: &mut SlideApp, ctx: &egui::Context) {
-    // A restore still pending from a show that ended this frame keeps the editor's own size.
-    if app.show_window.is_none() {
-        let maximized = ctx.input(|i| i.viewport().maximized == Some(true));
-        app.show_window = Some(WindowFit::new(Some(window_size(ctx)), maximized));
-    }
+    // A restore still pending from a show that ended this frame, or a browsed show this one
+    // replaces, keeps the editor's own size; the new show's slide may have another shape, so
+    // the window is fitted again from scratch.
+    app.show_window = Some(match app.show_window.take() {
+        Some(fit) => WindowFit::new(fit.editor_inner, fit.maximized),
+        None => WindowFit::new(Some(window_size(ctx)), ctx.input(|i| i.viewport().maximized == Some(true))),
+    });
     if ctx.input(|i| i.viewport().maximized == Some(true)) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
     }

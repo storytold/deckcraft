@@ -1117,6 +1117,47 @@ fn a_browsed_show_window_moved_to_a_smaller_monitor_fits_it() {
     assert_eq!(moved.frame(slide, slide, wide, small, None, 2.0 + SETTLE_SECS), Step::Resize(vec2(1280.0, 720.0)));
 }
 
+/// A browsed show replaced by one whose slide has another shape fits the window to the new
+/// shape, and the editor's size from before the first show still comes back at the end.
+#[test]
+fn a_replacing_browsed_show_of_another_shape_refits_the_window() {
+    use egui::ViewportCommand::InnerSize;
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("show.setup", &json!({"type": "browsed"})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = false;
+    let editor = vec2(1440.0, 900.0);
+    let mut h = egui_kittest::Harness::builder().with_size(editor).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    let resize = |h: &egui_kittest::Harness<'_, SlideApp>| {
+        h.output()
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .and_then(|v| v.commands.iter().find_map(|c| if let InnerSize(s) = c { Some(*s) } else { None }))
+    };
+    h.state_mut().start_show(0, false);
+    h.step();
+    let wide = resize(&h).unwrap();
+    h.set_size(wide);
+    h.step();
+    // The deck turns 4:3 and a new browsed show replaces the running one.
+    h.state_mut().session.execute("design.slideSize", &json!({"preset": "standard", "scale": "none"})).unwrap();
+    h.state_mut().start_show(0, false);
+    h.step();
+    let square = resize(&h).expect("the window is fitted again");
+    assert!(square.x / square.y < wide.x / wide.y, "the new shape is narrower: {square:?} vs {wide:?}");
+    h.set_size(square);
+    h.step();
+    h.state_mut().show = None;
+    h.step();
+    assert_eq!(resize(&h), Some(editor), "the editor's size from before the first show");
+}
+
 /// The window's minimum gives way with the slide: a 1:4 slide on a small monitor asks for a
 /// window narrower than 320 pt, and the minimum must not hold it at 320 with bars beside it.
 #[test]
