@@ -81,6 +81,8 @@ impl SlideApp {
             canvas_region: None,
             palette: None,
             integrated_titlebar: false,
+            window_controls: false,
+            viewport_commands: Vec::new(),
             backstage: None,
             pending_urls: vec![],
             print_previews: files::PrintPreviews::default(),
@@ -279,12 +281,21 @@ impl SlideApp {
             return;
         }
         self.ui_inner(ui);
+        // Linux/BSD frameless windows: caption buttons and resize edges over the whole UI.
+        ribbon::title_bar::window_frame(self, &ctx);
+        self.flush_viewport_commands(&ctx);
         // The last writer (all panels, dialogs, the custom producer and deferred child windows)
         // has run. Observe the actual custom descriptor for this pass, then reconcile the reset
         // lifetime against the actual committed output. This also runs for discarded passes.
         self.ime_frame_viewport = Some(ctx.viewport_id());
         let custom = self.observe_ime(&ctx);
         self.finalize_ime_reset(&ctx, custom);
+    }
+
+    pub(crate) fn flush_viewport_commands(&mut self, ctx: &egui::Context) {
+        for command in self.viewport_commands.drain(..) {
+            ctx.send_viewport_cmd(command);
+        }
     }
 
     /// Run the admitted root UI pass, including setup gating, panels, canvas, dialogs, overlays, and

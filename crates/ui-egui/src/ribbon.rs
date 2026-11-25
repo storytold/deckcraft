@@ -28,7 +28,7 @@ mod shape_format;
 mod slide_show;
 mod smartart;
 mod table;
-mod title_bar;
+pub mod title_bar;
 mod transitions;
 mod view;
 

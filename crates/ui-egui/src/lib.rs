@@ -94,8 +94,26 @@ struct PendingFile {
     target: FileTarget,
 }
 
+pub(crate) fn parse_resize_direction(value: &str) -> Option<egui::ResizeDirection> {
+    match value {
+        "north" => Some(egui::ResizeDirection::North),
+        "south" => Some(egui::ResizeDirection::South),
+        "east" => Some(egui::ResizeDirection::East),
+        "west" => Some(egui::ResizeDirection::West),
+        "northeast" => Some(egui::ResizeDirection::NorthEast),
+        "northwest" => Some(egui::ResizeDirection::NorthWest),
+        "southeast" => Some(egui::ResizeDirection::SouthEast),
+        "southwest" => Some(egui::ResizeDirection::SouthWest),
+        _ => None,
+    }
+}
+
 /// UI-only commands (id, label, shortcut, params).
 pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
+    ("ui.window.minimize", "Minimize", None, "{}"),
+    ("ui.window.maximize", "Maximize", None, "{on?: bool}"),
+    ("ui.window.close", "Close", None, "{}"),
+    ("ui.window.beginResize", "Begin Resize", None, "{direction}"),
     ("view.normal", "Normal", None, "{}"),
     ("view.outline", "Outline View", None, "{}"),
     ("view.sorter", "Slide Sorter", None, "{}"),
@@ -290,6 +308,9 @@ pub struct SlideApp {
     pub palette: Option<(String, usize)>,
     /// Integrated title bar (macOS traffic lights over our chrome).
     pub integrated_titlebar: bool,
+    /// Linux/BSD: frameless window with app-drawn controls and resize edges.
+    pub window_controls: bool,
+    viewport_commands: Vec<egui::ViewportCommand>,
     /// The File tab's full-window view (Backstage). Over a presentation it replaces the ribbon,
     /// slides and status bar until Esc or Back; with nothing open it is the start screen. Opening,
     /// creating or closing a presentation leaves it.
