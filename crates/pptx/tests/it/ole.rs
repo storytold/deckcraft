@@ -1,8 +1,8 @@
 //! Embedded (OLE) objects and their preview pictures, as other versions of PowerPoint write them.
 
-use std::io::{Cursor, Read, Write};
+use std::io::Cursor;
 
-use deckcraft_model::{ShapeKind, defaults};
+use deckcraft_model::ShapeKind;
 
 fn png() -> Vec<u8> {
     let mut out = Cursor::new(vec![]);
@@ -10,33 +10,6 @@ fn png() -> Vec<u8> {
         .write_to(&mut out, image::ImageFormat::Png)
         .expect("png");
     out.into_inner()
-}
-
-/// An exported deck with `parts` added (or replaced) and `edit` applied to every part's text.
-fn with_parts(parts: &[(&str, Vec<u8>)], edit: impl Fn(&str, String) -> String) -> Vec<u8> {
-    let base = deckcraft_pptx::export(&defaults::new_presentation(None)).expect("export");
-    let mut z = zip::ZipArchive::new(Cursor::new(base)).expect("zip");
-    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let o = zip::write::SimpleFileOptions::default();
-    for i in 0..z.len() {
-        let mut f = z.by_index(i).expect("entry");
-        let name = f.name().to_string();
-        if parts.iter().any(|(n, _)| *n == name) {
-            continue;
-        }
-        let mut d = vec![];
-        f.read_to_end(&mut d).expect("read");
-        if name.ends_with(".xml") || name.ends_with(".rels") {
-            d = edit(&name, String::from_utf8(d).expect("utf8")).into_bytes();
-        }
-        out.start_file(name, o).expect("start");
-        out.write_all(&d).expect("write");
-    }
-    for (name, data) in parts {
-        out.start_file(*name, o).expect("start");
-        out.write_all(data).expect("write");
-    }
-    out.finish().expect("finish").into_inner()
 }
 
 /// PowerPoint 2007 style: `p:oleObj spid` with no `p:pic`; the preview is the `v:imagedata` of the
@@ -51,7 +24,7 @@ fn ole_deck(spid_in_vml: &str) -> Vec<u8> {
     let vml_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/preview.png"/><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/other.png"/></Relationships>"#;
     let frame = r#"<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="900" name="Object 3"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"><p:oleObj spid="_x0000_s681987" name="Slide" r:id="rIdOle" imgW="4664160" imgH="3497400" progId="PowerPoint.Slide.8"><p:embed/></p:oleObj></a:graphicData></a:graphic></p:graphicFrame>"#;
-    with_parts(
+    super::zip_fixture::with_parts(
         &[
             ("ppt/drawings/vmlDrawing1.vml", vml.into_bytes()),
             ("ppt/drawings/_rels/vmlDrawing1.vml.rels", vml_rels.as_bytes().to_vec()),
@@ -107,7 +80,7 @@ fn an_ole_objects_fallback_picture_gives_it_its_fill_and_outline() {
         )
     };
     let deck = |frame: String| {
-        with_parts(&[("ppt/media/eq.png", png()), ("ppt/embeddings/oleObject1.bin", vec![0; 16])], move |name, s| {
+        super::zip_fixture::with_parts(&[("ppt/media/eq.png", png()), ("ppt/embeddings/oleObject1.bin", vec![0; 16])], move |name, s| {
             if name == "ppt/slides/slide1.xml" {
                 s.replacen("</p:spTree>", &format!("{frame}</p:spTree>"), 1)
             } else if name == "ppt/slides/_rels/slide1.xml.rels" {

@@ -1,7 +1,7 @@
 //! Speaker notes keep their run and paragraph formatting: a bold heading, indented points with
 //! custom bullets, plain lines.
 
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 
 use deckcraft_model::defaults;
@@ -21,23 +21,7 @@ fn empty_notes_deck() -> Vec<u8> {
     let mut p = defaults::new_presentation(None);
     Arc::make_mut(&mut p.slides[0]).notes = TextBody::from_text("placeholder");
     let bytes = deckcraft_pptx::export(&p).expect("export");
-    let mut src = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
-    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let mut found = false;
-    for i in 0..src.len() {
-        let mut f = src.by_index(i).expect("entry");
-        let name = f.name().to_string();
-        let mut data = vec![];
-        f.read_to_end(&mut data).expect("read");
-        if name == NOTES {
-            data = EMPTY_NOTES_XML.as_bytes().to_vec();
-            found = true;
-        }
-        out.start_file(name, zip::write::SimpleFileOptions::default()).expect("start");
-        out.write_all(&data).expect("write");
-    }
-    assert!(found, "the export has no {NOTES}");
-    out.finish().expect("finish").into_inner()
+    super::zip_fixture::replace_part(bytes, NOTES, EMPTY_NOTES_XML.as_bytes())
 }
 
 /// A deck with one notes slide, its notes replaced by [`NOTES_XML`].
@@ -45,23 +29,7 @@ fn deck() -> Vec<u8> {
     let mut p = defaults::new_presentation(None);
     Arc::make_mut(&mut p.slides[0]).notes = TextBody::from_text("placeholder");
     let bytes = deckcraft_pptx::export(&p).expect("export");
-    let mut src = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
-    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let mut found = false;
-    for i in 0..src.len() {
-        let mut f = src.by_index(i).expect("entry");
-        let name = f.name().to_string();
-        let mut data = vec![];
-        f.read_to_end(&mut data).expect("read");
-        if name == NOTES {
-            data = NOTES_XML.as_bytes().to_vec();
-            found = true;
-        }
-        out.start_file(name, zip::write::SimpleFileOptions::default()).expect("start");
-        out.write_all(&data).expect("write");
-    }
-    assert!(found, "the export has no {NOTES}");
-    out.finish().expect("finish").into_inner()
+    super::zip_fixture::replace_part(bytes, NOTES, NOTES_XML.as_bytes())
 }
 
 fn assert_formatted(notes: &TextBody) {

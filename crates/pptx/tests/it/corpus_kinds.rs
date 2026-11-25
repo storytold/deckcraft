@@ -4,7 +4,7 @@
 //! content parts. A second save keeps the same part names and text.
 
 use std::collections::BTreeMap;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 use std::sync::Arc;
 
 use deckcraft_model::anim::{AnimStart, Animation, TextBuild};
@@ -221,19 +221,7 @@ struct Pkg {
 
 impl Pkg {
     fn open(bytes: &[u8]) -> Self {
-        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
-        let mut parts = BTreeMap::new();
-        for i in 0..zip.len() {
-            let mut f = zip.by_index(i).expect("entry");
-            if f.is_dir() {
-                continue;
-            }
-            let name = f.name().trim_start_matches('/').to_string();
-            let mut data = vec![];
-            f.read_to_end(&mut data).expect("read");
-            parts.insert(name, data);
-        }
-        Pkg { parts }
+        Pkg { parts: super::zip_fixture::corpus_parts(bytes) }
     }
 
     fn bytes(&self) -> Vec<u8> {

@@ -3,8 +3,6 @@
 //! The deck is built here: an export of a new presentation with a SmartArt frame, data part and
 //! drawing part written by the test.
 
-use std::io::{Cursor, Read, Write};
-
 use deckcraft_engine::render::place_slide;
 use deckcraft_geom::{Point, Rect};
 use deckcraft_model::{Presentation, ShapeKind, defaults};
@@ -34,28 +32,6 @@ fn drawing_shape(prst: &str, shape: (f64, f64, f64, f64, f64), text_rect: (f64, 
     )
 }
 
-fn entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
-    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
-    (0..z.len())
-        .map(|i| {
-            let mut f = z.by_index(i).expect("entry");
-            let mut d = vec![];
-            f.read_to_end(&mut d).expect("read");
-            (f.name().to_string(), d)
-        })
-        .collect()
-}
-
-fn zip_of(files: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let o = zip::write::SimpleFileOptions::default();
-    for (n, d) in files {
-        z.start_file(n.as_str(), o).expect("start");
-        z.write_all(d).expect("write");
-    }
-    z.finish().expect("finish").into_inner()
-}
-
 fn replace(files: &mut [(String, Vec<u8>)], name: &str, from: &str, to: &str) {
     let (_, d) = files.iter_mut().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name} missing"));
     let s = String::from_utf8(d.clone()).expect("utf8");
@@ -65,7 +41,7 @@ fn replace(files: &mut [(String, Vec<u8>)], name: &str, from: &str, to: &str) {
 
 /// A deck whose first slide holds a SmartArt frame drawn by `shapes`.
 fn smartart_deck(shapes: &[String]) -> Vec<u8> {
-    let mut files = entries(&deckcraft_pptx::export(&defaults::new_presentation(None)).expect("export"));
+    let mut files = super::zip_fixture::entries(&deckcraft_pptx::export(&defaults::new_presentation(None)).expect("export"));
     let (fx, fy, fw, fh) = FRAME;
     let frame = format!(
         r#"<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="90" name="Diagram 1"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="{}" y="{}"/><a:ext cx="{}" cy="{}"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rIdDm" r:lo="rIdLo" r:qs="rIdQs" r:cs="rIdCs"/></a:graphicData></a:graphic></p:graphicFrame></p:spTree>"#,
@@ -90,7 +66,7 @@ fn smartart_deck(shapes: &[String]) -> Vec<u8> {
     );
     files.push(("ppt/diagrams/data1.xml".into(), data.as_bytes().to_vec()));
     files.push(("ppt/diagrams/drawing1.xml".into(), drawing.into_bytes()));
-    zip_of(&files)
+    super::zip_fixture::zip_of(&files)
 }
 
 /// Each text of slide 1 with the slide-space box it is laid out in (insets applied), the number of
