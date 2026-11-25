@@ -163,12 +163,27 @@ mod tests {
     fn permanent_probe_does_not_replace_an_existing_entry() {
         let dir = std::env::temp_dir().join(format!("deckcraft-writable-{}-{}", std::process::id(), line!()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(".deckcraft-write-probe"), b"someone else's file").unwrap();
-        assert!(ensure_writable(&dir).is_err(), "create_new must not truncate another file");
-        assert_eq!(std::fs::read(dir.join(".deckcraft-write-probe")).unwrap(), b"someone else's file");
-        std::fs::remove_file(dir.join(".deckcraft-write-probe")).unwrap();
+        let probe = |attempt: u32| dir.join(format!(".deckcraft-write-probe-{}-{attempt}", std::process::id()));
+        // An entry already at the probe's name must never be truncated: the probe takes the next
+        // free name, and it removes only the file it created.
+        std::fs::write(probe(0), b"someone else's file").unwrap();
         ensure_writable(&dir).unwrap();
-        assert!(!dir.join(".deckcraft-write-probe").exists());
+        assert_eq!(std::fs::read(probe(0)).unwrap(), b"someone else's file");
+        assert!(!probe(1).exists());
+        // Every name taken is an error, not a truncation of any of them.
+        for attempt in 0..8 {
+            std::fs::write(probe(attempt), b"someone else's file").unwrap();
+        }
+        assert!(ensure_writable(&dir).is_err(), "no free probe name is reported, not truncated");
+        for attempt in 0..8 {
+            assert_eq!(std::fs::read(probe(attempt)).unwrap(), b"someone else's file", "{attempt}");
+        }
+        for attempt in 0..8 {
+            std::fs::remove_file(probe(attempt)).unwrap();
+        }
+        // A folder whose stale probes were cleared is writable, and the probe leaves nothing behind.
+        ensure_writable(&dir).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
