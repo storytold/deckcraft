@@ -683,6 +683,35 @@ fn just_low_stretches_arabic_with_kashida() {
 }
 
 #[test]
+fn thai_distributed_spreads_space_between_clusters() {
+    let db = FontDb::global();
+    if !db.cascade(&['\u{0E01}'], &[db.face("Inter", "Regular")], "Regular").covers('\u{0E01}') {
+        eprintln!("skipped: no Thai face available");
+        return;
+    }
+    // Thai has no spaces between words, so spreading the slack over spaces leaves the line
+    // ragged; thaiDist spreads it between the clusters instead.
+    let text = "ภาษาไทยไม่เว้นวรรคระหว่างคำจึงกระจายช่องว่างระหว่างตัวอักษรแทน";
+    let (p, sh) = bidi_setup(vec![Run::new(text)], 200.0, false, Align::ThaiDistributed);
+    let l = lay(&p, &sh, 200.0, 600.0);
+    let (p, sh) = bidi_setup(vec![Run::new(text)], 200.0, false, Align::Left);
+    let plain = lay(&p, &sh, 200.0, 600.0);
+    assert!(l.lines.len() >= 2);
+    let (first, base) = (&l.lines[0], &plain.lines[0]);
+    assert_eq!((first.start, first.end), (base.start, base.end));
+    let w = l.inner.width();
+    assert!((first.extent.1 - first.extent.0 - w).abs() < 0.5, "first line fills the box: {:?} vs {w}", first.extent);
+    // Each cluster (vowel and tone marks stay on their letter) gains the same width.
+    let stops: Vec<usize> = (0..first.boundary.len()).filter(|&k| first.boundary[k]).chain([first.boundary.len()]).collect();
+    let gains: Vec<f64> = stops.windows(2).map(|s| (first.caret_x[s[1]] - first.caret_x[s[0]]) - (base.caret_x[s[1]] - base.caret_x[s[0]])).collect();
+    let (lo, hi) = gains[..gains.len() - 1].iter().fold((f64::MAX, f64::MIN), |(a, b), g| (a.min(*g), b.max(*g)));
+    assert!(lo > 0.0 && hi - lo < 1e-6, "even gaps between clusters: {gains:?}");
+    // The last line isn't stretched.
+    let last = l.lines.last().unwrap();
+    assert!((last.extent.0 - l.inner.x0).abs() < 0.5 && last.extent.1 - last.extent.0 < w - 1.0, "{:?}", last.extent);
+}
+
+#[test]
 fn wrapped_rtl_lines_break_in_logical_order() {
     let text = "واحد اثنان ثلاثة أربعة خمسة ستة سبعة ثمانية تسعة عشرة";
     let (p, sh) = bidi_setup(vec![Run::new(text)], 160.0, true, Align::Right);

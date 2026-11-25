@@ -398,7 +398,7 @@ fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64) -> (Vec<f6
     (adv, x)
 }
 
-/// Justification: kashida (justLow, Arabic), spaces, or every character. Widens `adv` and returns
+/// Justification: kashida (justLow, Arabic), spaces, every cluster (thaiDist), or every character. Widens `adv` and returns
 /// the kashida widths and whether the line was filled to the box edges.
 fn justify_line(p: &ParaShaped, rl: &RawLine, adv: &mut [f64], align: Align, slack: f64, stretch: bool) -> (Vec<f64>, bool) {
     let n = adv.len();
@@ -418,7 +418,21 @@ fn justify_line(p: &ParaShaped, rl: &RawLine, adv: &mut [f64], align: Align, sla
             filled = true;
         }
     }
-    if stretch && !filled && matches!(align, Align::Justify | Align::JustLow | Align::ThaiDistributed) {
+    if stretch && align == Align::ThaiDistributed {
+        // Thai distributed treats each character as a word: the slack goes between the line's
+        // clusters, after the last cell of each one, so marks stay on their base letter.
+        let gaps: Vec<usize> = (rl.start + 1..rl.end).filter(|&i| p.cells.get(i).is_some_and(|c| c.breakable(i))).map(|i| i - rl.start - 1).collect();
+        if !gaps.is_empty() {
+            let each = slack / gaps.len() as f64;
+            for k in gaps {
+                if let Some(a) = adv.get_mut(k) {
+                    *a += each;
+                }
+            }
+            filled = true;
+        }
+    }
+    if stretch && !filled && matches!(align, Align::Justify | Align::JustLow) {
         let spaces = line_cells.iter().filter(|c| c.ch == ' ').count();
         if spaces > 0 {
             for (a, c) in adv.iter_mut().zip(line_cells) {
