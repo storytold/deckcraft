@@ -2347,3 +2347,62 @@ fn reflection_angles_and_skews_out_of_range_are_written_inside_the_schema() {
     let r = round(&p).slides.last().and_then(|sl| by_name(sl, "Reflected").effects.clone()).and_then(|fx| fx.reflection).expect("reflection");
     assert_eq!((r.st_pos, r.dir, r.fade_dir, r.kx, r.ky), (Some(100_000), Some(21_599_995), Some(0), Some(5_399_999), Some(-5_399_999)));
 }
+
+#[test]
+fn pptx_potx_ppsx_export_parity_preserves_masters_charts_themes_and_timing() {
+    let mut p = rich_deck();
+    let m0 = Arc::make_mut(&mut p.masters[0]);
+    m0.theme.name = "ParityTheme".into();
+    m0.theme.colors.set(deckcraft_color::SchemeSlot::Accent1, deckcraft_color::Rgba::rgb(0x11, 0x22, 0x33));
+    p.notes_master = Some(Arc::new(deckcraft_model::Master { name: "NotesParity".into(), ..Default::default() }));
+    p.handout_master = Some(Arc::new(deckcraft_model::Master { name: "HandoutParity".into(), ..Default::default() }));
+
+    let audio = p.add_media("cue.m4a", "audio/mp4", b"audio-bytes".to_vec()).expect("media");
+    let aud_id = ShapeId(p.alloc_id().expect("id"));
+    Arc::make_mut(&mut p.slides[0]).shapes.push(Shape {
+        id: aud_id,
+        name: "Cue".into(),
+        xfrm: Some(Xfrm::new(20.0, 20.0, 40.0, 40.0)),
+        kind: ShapeKind::Media(deckcraft_model::MediaClip {
+            media: audio,
+            video: false,
+            autoplay: true,
+            loop_play: true,
+            volume: 0.5,
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+
+    let edited_values = vec![Some(111.5), Some(222.25), Some(333.75), Some(444.0)];
+    let chart_slide_idx = p.slides.iter().position(|sl| sl.shapes.iter().any(|s| s.name == "Chart 0")).expect("chart slide");
+    {
+        let ch_shape = Arc::make_mut(&mut p.slides[chart_slide_idx]).shapes.iter_mut().find(|s| s.name == "Chart 0").expect("Chart 0");
+        ch_shape.name = "Revenue Chart".into();
+        let ShapeKind::Chart(ch) = &mut ch_shape.kind else { panic!("expected chart") };
+        ch.series[0].values = edited_values.clone();
+    }
+
+    for (ext, expected_ct) in [
+        ("pptx", "presentationml.presentation.main+xml"),
+        ("potx", "presentationml.template.main+xml"),
+        ("POTX", "presentationml.template.main+xml"),
+        (".ppsx", "presentationml.slideshow.main+xml"),
+    ] {
+        let bytes = deckcraft_pptx::export_as(&p, ext).expect("export_as");
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip");
+        let ct = std::io::read_to_string(z.by_name("[Content_Types].xml").expect("content types")).expect("read");
+        assert!(ct.contains(expected_ct), "{ext}: {ct}");
+        let reopened = deckcraft_pptx::import(&bytes).expect("reopen");
+        assert_eq!(reopened.masters[0].theme.name, "ParityTheme");
+        assert_eq!(reopened.masters[0].theme.colors.get(deckcraft_color::SchemeSlot::Accent1), deckcraft_color::Rgba::rgb(0x11, 0x22, 0x33));
+        assert!(reopened.notes_master.is_some());
+        assert_eq!(reopened.handout_master.as_ref().map(|m| m.name.as_str()), Some("HandoutParity"));
+        let cue = reopened.slides[0].shapes.iter().find(|s| s.name == "Cue").expect("cue");
+        let ShapeKind::Media(clip) = &cue.kind else { panic!("expected media") };
+        assert!(clip.autoplay && clip.loop_play && (clip.volume - 0.5).abs() < 1e-3);
+        let chart_shape = reopened.slides[chart_slide_idx].shapes.iter().find(|s| s.name == "Revenue Chart").expect("named chart");
+        let ShapeKind::Chart(chart) = &chart_shape.kind else { panic!("expected chart") };
+        assert_eq!(chart.series[0].values, edited_values, "{ext}");
+    }
+}

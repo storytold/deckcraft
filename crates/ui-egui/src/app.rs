@@ -74,6 +74,7 @@ impl SlideApp {
             synthetic_injected_time: None,
             ribbon_scroll: HashMap::new(),
             show_instance: 0,
+            #[cfg(not(target_arch = "wasm32"))]
             opening_generation: 0,
             canvas_rect: None,
             eyedropper: None,
@@ -141,7 +142,7 @@ impl SlideApp {
 
     /// Start the helper of an update that is ready, so that it installs once the process has
     /// exited. The desktop shell calls it in `on_exit`, which ends the process on macOS before the
-    /// app is dropped. Later calls do nothing.
+    /// app is dropped. Later calls do nothing, and a Nightly launch never starts a stable update.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn start_pending_update(&mut self) {
         updates_ui::start_pending_update(self);

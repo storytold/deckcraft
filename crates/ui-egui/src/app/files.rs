@@ -79,6 +79,9 @@ fn is_presentation_name(lower: &str) -> bool {
         || lower.ends_with(".pptx")
         || lower.ends_with(".potx")
         || lower.ends_with(".ppsx")
+        || lower.ends_with(".ppt")
+        || lower.ends_with(".pot")
+        || lower.ends_with(".pps")
 }
 
 /// File → Open keeps the requested operation: a presentation opens, an outline becomes slides.
@@ -182,7 +185,7 @@ impl SlideApp {
         format!("{name}.{ext}")
     }
 
-    /// Exports the active presentation as `fmt` (`pdf`, `png`, `pngAll`, `jpeg`, `pptx`,
+    /// Exports the active presentation as `fmt` (`pdf`, `png`, `pngAll`, `jpeg`, `jpegAll`, `pptx`,
     /// `deckcraft`, `outline`) through `file.export`: the save picker on the desktop, a download
     /// on the web. `extra` adds `file.export` params (the PDF's layout, slides…). The
     /// presentation keeps its own file. Returns whether a file was written or handed over.
@@ -193,6 +196,7 @@ impl SlideApp {
             "png" => ("png", "png", false),
             "pngAll" => ("png", "png", true),
             "jpeg" | "jpg" => ("jpg", "jpeg", false),
+            "jpegAll" => ("jpg", "jpeg", true),
             "pptx" => ("pptx", "pptx", false),
             "outline" | "txt" => ("txt", "outline", false),
             "rtf" => ("rtf", "rtf", false),
@@ -312,10 +316,10 @@ impl SlideApp {
     }
 
     /// Files the system hands over (the command line, a double-click through the file
-    /// association), opened in order. When the last one is a PowerPoint Show (`.ppsx`), its slide
-    /// show starts at once from where Play from Start begins, as PowerPoint does; anything else
-    /// opens for editing, and File › Open opens a `.ppsx` for editing too. Returns the files that
-    /// couldn't be opened, with the reason.
+    /// association), opened in order. When the last one is a PowerPoint Show (`.ppsx`, or the
+    /// 97-2003 `.pps`), its slide show starts at once from where Play from Start begins, as
+    /// PowerPoint does; anything else opens for editing, and File › Open opens a `.ppsx` for
+    /// editing too. Returns the files that couldn't be opened, with the reason.
     pub fn open_from_system(&mut self, paths: &[String]) -> Vec<(String, String)> {
         let mut failed = Vec::new();
         let mut last = None;
@@ -325,7 +329,10 @@ impl SlideApp {
                 Err(e) => failed.push((p.clone(), e)),
             }
         }
-        if last.is_some_and(|p| p.to_ascii_lowercase().ends_with(".ppsx")) {
+        if last.is_some_and(|p| {
+            let p = p.to_ascii_lowercase();
+            p.ends_with(".ppsx") || p.ends_with(".pps")
+        }) {
             self.start_show(self.show_start_index(), false);
         }
         failed
