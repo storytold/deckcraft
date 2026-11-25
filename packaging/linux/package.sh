@@ -117,7 +117,7 @@ if has tar; then
     # bin/deckcraft-bin), because the binary alone refuses to run without a launch profile.
     install -Dm755 "$WORK/tar/$BASENAME/bin/deckcraft" "$WORK/tar/$BASENAME/bin/deckcraft-bin"
     rm -f "$WORK/tar/$BASENAME/bin/deckcraft"
-    install -Dm755 "$HERE/nightly-launch.sh" "$WORK/tar/$BASENAME/bin/deckcraft-nightly"
+    install -Dm755 "$HERE/nightly-package-launch.sh" "$WORK/tar/$BASENAME/bin/deckcraft-nightly"
     TAR_DESK="$WORK/tar/$BASENAME/share/applications/$APP_ID.desktop"
     sed -e "s#^Exec=deckcraft\([[:space:]]\|$\)#Exec=deckcraft-nightly\1#" \
         -e "s|^TryExec=deckcraft$|TryExec=deckcraft-nightly|" \
@@ -164,7 +164,7 @@ if has deb || has rpm; then
     # The GUI keeps its name under /usr/lib; /usr/bin/deckcraft-nightly is the launcher, whose
     # /usr/bin gate is what reaches that fixed path (the same file as the tar and AppImage use).
     install -Dm755 "$NFPM_STAGE/usr/bin/deckcraft" "$NFPM_STAGE/usr/lib/deckcraft-nightly/deckcraft"
-    install -Dm755 "$HERE/nightly-launch.sh" "$NFPM_STAGE/usr/bin/$NFPM_BIN"
+    install -Dm755 "$HERE/nightly-package-launch.sh" "$NFPM_STAGE/usr/bin/$NFPM_BIN"
     rm -f "$NFPM_STAGE/usr/bin/deckcraft"
     mv "$NFPM_STAGE/usr/bin/deckcraft-cli" "$NFPM_STAGE/usr/bin/$NFPM_CLI"
     mv "$NFPM_STAGE/usr/share/doc/deckcraft" "$NFPM_STAGE/usr/share/doc/$NFPM_NAME"
@@ -227,8 +227,8 @@ if has appimage; then
     # read it.
     install -Dm755 "$APPDIR/usr/bin/deckcraft" "$APPDIR/usr/bin/deckcraft-bin"
     rm -f "$APPDIR/usr/bin/deckcraft"
-    install -Dm755 "$HERE/nightly-launch.sh" "$APPDIR/AppRun"
-    install -Dm755 "$HERE/nightly-launch.sh" "$APPDIR/usr/bin/deckcraft-nightly"
+    install -Dm755 "$HERE/nightly-package-launch.sh" "$APPDIR/AppRun"
+    install -Dm755 "$HERE/nightly-package-launch.sh" "$APPDIR/usr/bin/deckcraft-nightly"
   else
     ln -s usr/bin/deckcraft "$APPDIR/AppRun"
   fi
