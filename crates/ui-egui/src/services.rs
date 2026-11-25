@@ -73,4 +73,7 @@ pub struct Services {
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
     /// How many displays are connected, when the host can tell: Presenter View needs a second.
     pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
+    /// Work that must finish on a clean quit. `eframe::App::on_exit` takes and runs it once: on
+    /// macOS ⌘Q ends the process inside AppKit's terminate, so nothing after `run_native` runs.
+    pub at_exit: Option<Box<dyn FnOnce()>>,
 }
