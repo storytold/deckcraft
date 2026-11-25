@@ -60,6 +60,19 @@ fn selection(h: &Harness<'static, SlideApp>) -> Vec<u32> {
 }
 
 #[test]
+fn space_on_the_focused_slide_picks_no_colour() {
+    let mut h = harness();
+    ask(&mut h);
+    let on_shape = at(&h, 150.0, 150.0);
+    h.input_mut().events.push(Event::PointerMoved(on_shape));
+    h.run_steps(3);
+    assert!(h.ctx.memory(|m| m.has_focus(crate::framework::document_id())));
+    h.key_press(egui::Key::Space);
+    h.run_steps(3);
+    assert!(h.state().eyedropper.is_some() && !result_waits_for(&h.ctx, menu()));
+}
+
+#[test]
 fn a_click_on_the_slide_takes_the_colour_under_it_and_nothing_else_happens() {
     let mut h = harness();
     let before = selection(&h);

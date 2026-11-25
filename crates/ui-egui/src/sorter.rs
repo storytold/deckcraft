@@ -279,7 +279,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let zoom = app.ui.sorter_zoom.clamp(0.5, 3.0);
     let grouped = groups(&doc);
     // Behind the thumbnails, which take the presses: the document's Tab stop and key target.
-    app.document_widget(ui, ui.available_rect_before_wrap(), Sense::focusable_noninteractive());
+    app.document_behind(ui, ui.available_rect_before_wrap());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(12.0);
         ui.horizontal(|ui| {

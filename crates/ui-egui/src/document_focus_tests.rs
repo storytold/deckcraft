@@ -4,6 +4,7 @@ use deckcraft_engine::Session;
 use egui::{Event, Id, Key, Modifiers, PointerButton, Role, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
+use serde_json::json;
 
 use crate::framework::document_id;
 use crate::state::ViewMode;
@@ -82,6 +83,71 @@ fn a_press_on_the_slide_takes_the_keyboard_from_a_focused_button() {
     press(&mut h, Modifiers::NONE, Key::Enter);
     assert!(!h.state().backstage_open(), "the File button isn't activated");
     assert_eq!(h.state().session.active().unwrap().doc.slides.len(), 2, "Enter adds a slide");
+}
+
+#[test]
+fn after_a_dialog_closes_tab_selects_the_next_object() {
+    let mut h = harness();
+    h.state_mut().dialog = Some(crate::dialogs::Dialog::new("find"));
+    h.run_steps(3);
+    assert!(h.ctx.text_edit_focused(), "the dialog's field has the focus");
+    h.state_mut().dialog = None;
+    h.run_steps(4);
+    let first = h.state().session.active().unwrap().shapes()[0].id;
+    tab(&mut h);
+    assert_eq!((selected(&h), focused(&h)), (vec![first], Some(document_id())));
+}
+
+#[test]
+fn a_press_in_the_sorter_takes_the_keyboard_from_a_focused_button() {
+    let mut h = harness();
+    h.state_mut().ui.view = ViewMode::Sorter;
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "File").focus();
+    h.run_steps(2);
+    assert_ne!(focused(&h), Some(document_id()));
+    let pos = h.get_by_role_and_label(Role::Button, "Slide 1").rect().center();
+    h.hover_at(pos);
+    h.run_steps(1);
+    h.event(Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(focused(&h), Some(document_id()));
+}
+
+#[test]
+fn edited_text_traps_no_focus_in_the_sorter_or_the_file_tab() {
+    let mut h = harness();
+    let title = h.state().session.active().unwrap().shapes()[0].id.0;
+    h.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
+    h.run_steps(2);
+    h.state_mut().ui.view = ViewMode::Sorter;
+    h.run_steps(2);
+    tab(&mut h);
+    let stop = focused(&h);
+    assert!(stop.is_some_and(|id| id != document_id()), "Tab moves on from the sorter");
+    tab(&mut h);
+    assert!(focused(&h).is_some_and(|id| Some(id) != stop && id != document_id()), "and on again");
+    h.state_mut().open_backstage(crate::backstage::Page::Home);
+    h.run_steps(3);
+    tab(&mut h);
+    h.run_steps(2);
+    assert!(h.state().session.active().unwrap().selection.text.is_some());
+    assert!(focused(&h).is_some(), "Tab stays on a control of the File tab");
+}
+
+#[test]
+fn a_presentation_opened_from_the_palette_gets_the_keyboard() {
+    let mut h = harness();
+    h.state_mut().run("app.palette", json!({})).unwrap();
+    h.run_steps(3);
+    assert!(h.ctx.text_edit_focused(), "the palette's field has the focus");
+    let app = h.state_mut();
+    app.palette = None;
+    app.run("file.new", json!({})).unwrap();
+    app.run("slide.new", json!({"layout": "blank"})).unwrap();
+    assert!(!app.session.tab_has_work(), "an empty slide, which asks for the focus only because it opened");
+    h.run_steps(4);
+    assert_eq!(focused(&h), Some(document_id()));
 }
 
 #[test]

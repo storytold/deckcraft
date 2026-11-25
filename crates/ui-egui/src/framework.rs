@@ -29,9 +29,6 @@ use crate::SlideApp;
 #[cfg(not(target_arch = "wasm32"))]
 pub use craft_ui::shell::embed::before_ui;
 
-/// The id every OS window of the app carries, as the main window's builder sets it.
-const APP_ID: &str = "ai.storyteller.deckcraft";
-
 /// The scripts of the interface languages, for the font stack.
 static SCRIPTS: I18nScripts = I18nScripts;
 
@@ -42,7 +39,7 @@ fn ui_fonts() -> UiFonts<'static> {
 }
 
 fn install_with(ctx: &egui::Context, shell: ShellInfo, windows: Arc<dyn WindowSystem>) -> Result<(), String> {
-    let spec = craft_ui::InstallSpec::new(shell, windows).app_id(APP_ID);
+    let spec = craft_ui::InstallSpec::new(shell, windows).app_id(crate::os_window::app_id());
     embed::install(ctx, spec, &ui_fonts()).map(drop).map_err(|error| format!("the UI runtime could not be installed: {error}"))
 }
 
