@@ -81,6 +81,10 @@ impl SlideApp {
             canvas_region: None,
             palette: None,
             integrated_titlebar: false,
+            #[cfg(target_os = "linux")]
+            captions: None,
+            #[cfg(target_os = "linux")]
+            caption_icon_theme: None,
             backstage: None,
             pending_urls: vec![],
             print_previews: files::PrintPreviews::default(),
@@ -279,6 +283,10 @@ impl SlideApp {
             return;
         }
         self.ui_inner(ui);
+        #[cfg(target_os = "linux")]
+        if self.captions.is_some() && self.show.is_none() {
+            ribbon::resize_edges(&ctx);
+        }
         // The last writer (all panels, dialogs, the custom producer and deferred child windows)
         // has run. Observe the actual custom descriptor for this pass, then reconcile the reset
         // lifetime against the actual committed output. This also runs for discarded passes.

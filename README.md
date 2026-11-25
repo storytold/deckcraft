@@ -241,6 +241,10 @@ DirectX 12 shaders are compiled with FXC, which is part of Windows, so no `dxcom
 
 ### Linux
 
+On GNOME and KDE Plasma, the Quick Access Toolbar, presentation name and window buttons share one title bar.
+The buttons follow the desktop's layout and use its icon theme's symbolic window icons when available.
+Launch with `DECKCRAFT_TITLEBAR=system` to use the system frame.
+
 | Format | x86_64 | aarch64 (ARM64) | Notes |
 |---|---|---|---|
 | AppImage | `deckcraft-<ver>-linux-x86_64.AppImage` | `deckcraft-<ver>-linux-aarch64.AppImage` | Runs anywhere; updates itself with [AppImageUpdate](https://github.com/AppImageCommunity/AppImageUpdate) (`.zsync` files) |

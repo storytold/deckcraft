@@ -26,6 +26,13 @@ serde_json = { workspace = true }
 log = { workspace = true }
 web-time = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+craft-window = { workspace = true }
+# Later releases pull in option-ext (MPL-2.0) through dirs 5.
+freedesktop-icons = "=0.2.4"
+craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", features = ["tree"] }
+resvg = { version = "=0.48.1", default-features = false }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 craft-update = { workspace = true }
 
