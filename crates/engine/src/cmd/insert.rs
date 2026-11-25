@@ -275,6 +275,7 @@ fn insert_icon(s: &mut Session, p: &Value) -> Result<Value> {
     if rect.w < 1.0 || rect.h < 1.0 {
         return Err(bad("insert.icon", "rect needs a positive width and height"));
     }
+    let (tag, value) = crate::icons::INSERTED_ICON_TAG;
     let shape = Shape {
         name: icon.label.to_string(),
         xfrm: Some(rect),
@@ -296,6 +297,7 @@ fn insert_icon(s: &mut Session, p: &Value) -> Result<Value> {
             ..Default::default()
         }),
         style: Some(ShapeStyle::line(SchemeSlot::Tx1)),
+        tags: vec![(tag.into(), value.into())],
         ..Default::default()
     };
     let id = add_shape(s, "insert.icon", shape, true)?;

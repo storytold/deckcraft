@@ -12,6 +12,14 @@ use deckcraft_geom::{BezPath, PathEl};
 /// Design size of every icon, in path units. Lucide's viewBox is `0 0 24 24`.
 pub const VIEW: f64 = 24.0;
 
+/// Shape tag that preserves gallery icon identity in native and PPTX files.
+pub(crate) const INSERTED_ICON_TAG: (&str, &str) = ("DECKCRAFT_INSERTED_ICON", "1");
+
+pub(crate) fn is_inserted_icon(shape: &deckcraft_model::Shape) -> bool {
+    let (name, value) = INSERTED_ICON_TAG;
+    shape.tags.iter().any(|(key, tag_value)| key == name && tag_value == value)
+}
+
 /// One icon from the Insert gallery.
 pub struct Icon {
     pub name: &'static str,
@@ -208,6 +216,43 @@ mod tests {
         assert!(paths.iter().any(|path| path.fill == FillMode::None && path.stroke && path.d.contains('M')));
         let width = sh.line.as_ref().and_then(|l| l.width).unwrap();
         assert!((width - 8.0).abs() < 0.05, "{width}");
+    }
+
+    #[test]
+    fn missing_icon_alt_text_is_reported_after_round_trips() {
+        let mut s = Session::with_new();
+        let insert_icon = |s: &mut Session| s.execute("insert.icon", &json!({"name": "star"})).unwrap()["id"].as_u64().unwrap();
+        let missing = insert_icon(&mut s);
+        let described = insert_icon(&mut s);
+        let decorative = insert_icon(&mut s);
+        let freeform = s.execute("shape.freeform", &json!({"points": [[0, 0], [20, 10], [5, 25]], "closed": true})).unwrap()["id"].as_u64().unwrap();
+        s.execute("shape.rename", &json!({"ids": [freeform], "name": "Star"})).unwrap();
+        s.execute("shape.rename", &json!({"ids": [missing], "name": "Repainted symbol"})).unwrap();
+        s.execute("shape.altText", &json!({"ids": [described], "text": "Five-point outline"})).unwrap();
+        s.execute("shape.altText", &json!({"ids": [decorative], "decorative": true})).unwrap();
+
+        let assert_alert = |s: &mut Session| {
+            let issues = s.execute("review.accessibility", &json!({})).unwrap();
+            let shapes: Vec<_> = issues
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|issue| issue["issue"] == "Missing alternative text")
+                .map(|issue| issue["shape"].as_u64().unwrap())
+                .collect();
+            assert_eq!(shapes, [missing], "{issues}");
+        };
+        assert_alert(&mut s);
+
+        let doc = &s.doc().unwrap().doc;
+        let native = deckcraft_format::load(&deckcraft_format::save(doc).unwrap()).unwrap();
+        let pptx = deckcraft_pptx::import(&deckcraft_pptx::export(doc).unwrap()).unwrap();
+        let second_pptx = deckcraft_pptx::import(&deckcraft_pptx::export(&pptx).unwrap()).unwrap();
+        for doc in [native, pptx, second_pptx] {
+            let mut reopened = Session::new();
+            reopened.add_document(crate::DocState::new(doc, None, "Reopened deck".into()));
+            assert_alert(&mut reopened);
+        }
     }
 
     fn ink_in(img: &deckcraft_render::Image, x: f64, y: f64, w: f64, h: f64, scale: f64) -> usize {
