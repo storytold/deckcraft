@@ -596,7 +596,7 @@ impl Show {
 fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPlay], stamps: &[StepStamp]) -> ShapeState {
     let a = tl.state_ordered(id, None, step, t, plays, stamps);
     ShapeState {
-        paras: tl.paragraph_targets(id).into_iter().map(|p| (p, ParaState::from(tl.state(id, Some(p), step, t)))).collect(),
+        paras: tl.paragraph_targets(id).into_iter().map(|p| (p, ParaState::from(tl.state_ordered(id, Some(p), step, t, plays, stamps)))).collect(),
         ..ShapeState::from(a)
     }
 }
