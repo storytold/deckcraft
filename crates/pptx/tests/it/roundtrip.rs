@@ -1504,6 +1504,23 @@ fn embedded_fonts_round_trip() {
     assert!(f.bold_italic.is_none());
 }
 
+#[test]
+fn subset_font_setting_round_trips_only_when_enabled() {
+    for enabled in [false, true] {
+        let p = Presentation { save_subset_fonts: enabled, ..Default::default() };
+        let bytes = deckcraft_pptx::export(&p).expect("export");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip");
+        let xml = std::io::read_to_string(zip.by_name("ppt/presentation.xml").expect("pres")).expect("read");
+        assert_eq!(xml.contains("saveSubsetFonts=\"1\""), enabled, "first export: {xml}");
+        let q = deckcraft_pptx::import(&bytes).expect("import");
+        assert_eq!(q.save_subset_fonts, enabled);
+        let again = deckcraft_pptx::export(&q).expect("second export");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&again)).expect("zip");
+        let xml = std::io::read_to_string(zip.by_name("ppt/presentation.xml").expect("pres")).expect("read");
+        assert_eq!(xml.contains("saveSubsetFonts=\"1\""), enabled, "second export: {xml}");
+    }
+}
+
 /// A package whose font list this writer did not produce: bold only, relationship id not `rIdN`.
 #[test]
 fn an_embedded_font_list_already_in_the_package_is_read() {
