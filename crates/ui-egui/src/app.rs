@@ -267,6 +267,10 @@ impl SlideApp {
         if !self.ime_in_ui_pass(ctx) {
             self.finalize_ime_logic(ctx);
         }
+        // A hidden window runs logic without a UI pass, so commands the control channel queued
+        // (ui.window.close/minimize/maximize/beginResize) would stay pending until a UI pass;
+        // flush them here. The flush in `ui` covers the commands its controls generate.
+        self.flush_viewport_commands(ctx);
     }
 
     /// Lay out the whole window.

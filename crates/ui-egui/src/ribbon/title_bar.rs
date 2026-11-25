@@ -35,8 +35,10 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
     let (height, left, control_h) = title_geometry(app.integrated_titlebar);
     egui::Panel::top("title_bar").exact_size(height).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
-        // Dragging the empty title bar moves the window. The frameless resize band keeps its edge.
-        let drag = ui.interact(rect.shrink(RESIZE_BAND), ui.scope_id().with("titledrag"), Sense::click_and_drag());
+        // Dragging the empty title bar moves the window. The resize band takes its edge only while the
+        // frame draws one: a maximized window has no edge resize, so its top edge stays draggable.
+        let edge_resize = app.window_controls && !ui.input(|i| i.viewport().maximized.unwrap_or(false));
+        let drag = ui.interact(if edge_resize { rect.shrink(RESIZE_BAND) } else { rect }, ui.scope_id().with("titledrag"), Sense::click_and_drag());
         // The drag surface is not a button: a full-width Button would be announced as one.
         drag.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Window, true, "Window title bar"));
         if drag.drag_started() {
@@ -145,7 +147,7 @@ pub fn window_frame(app: &mut SlideApp, ctx: &egui::Context) {
             for kind in ["minimize", "maximize", "close"] {
                 let (r, response) = ui.allocate_exact_size(vec2(CONTROL_W, TITLE_H), Sense::click());
                 let close = kind == "close";
-                let hot = response.hovered() || response.is_pointer_button_down_on();
+                let hot = response.hovered() || response.is_pointer_button_down_on() || response.has_focus();
                 let color = if close && hot {
                     ui.painter().rect_filled(r, 0.0, egui::Color32::from_rgb(0xC4, 0x2B, 0x1C));
                     egui::Color32::WHITE
