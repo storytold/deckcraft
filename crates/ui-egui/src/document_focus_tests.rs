@@ -86,6 +86,22 @@ fn a_press_on_the_slide_takes_the_keyboard_from_a_focused_button() {
 }
 
 #[test]
+fn after_a_press_on_a_pane_tab_selects_the_next_object() {
+    let mut h = harness();
+    let pos = egui::pos2(h.state().ui.thumbs_width / 2.0, 300.0);
+    h.hover_at(pos);
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+    }
+    assert!(h.state().slides_focused, "the press is in the thumbnail pane");
+    let first = h.state().session.active().unwrap().shapes()[0].id;
+    tab(&mut h);
+    assert_eq!((selected(&h), focused(&h)), (vec![first], Some(document_id())));
+}
+
+#[test]
 fn after_a_dialog_closes_tab_selects_the_next_object() {
     let mut h = harness();
     h.state_mut().dialog = Some(crate::dialogs::Dialog::new("find"));
