@@ -326,7 +326,6 @@ pub(crate) fn apply_leading_tabs(para: &mut deckcraft_model::text::Paragraph) ->
 /// The Outline editor sends all paragraphs, with tabs recording their levels. Use identifiable
 /// section headings to preserve child formatting when sections change order.
 fn replace_outline(body: &mut TextBody, mut next: TextBody, mut adjust: impl FnMut(&mut deckcraft_model::text::Paragraph)) {
-    use std::collections::HashMap;
     let old_text: Vec<_> = body.paragraphs.iter().map(|para| para.text()).collect();
     let new_text: Vec<_> = next
         .paragraphs
@@ -336,57 +335,27 @@ fn replace_outline(body: &mut TextBody, mut next: TextBody, mut adjust: impl FnM
             para.text()
         })
         .collect();
-    let mut by_text = HashMap::<&str, (Vec<usize>, Vec<usize>)>::new();
-    for (i, text) in old_text.iter().enumerate() {
-        by_text.entry(text).or_default().0.push(i);
-    }
-    for (i, text) in new_text.iter().enumerate() {
-        by_text.entry(text).or_default().1.push(i);
-    }
-
-    // A heading whose text appears once at the same level in both outlines identifies a section.
-    let mut old_headings = vec![None; old_text.len()];
-    let mut new_headings = vec![None; new_text.len()];
-    for (&text, (old, new)) in &by_text {
-        if !text.is_empty()
-            && let ([source], [target]) = (old.as_slice(), new.as_slice())
-            && body.paragraphs[*source].level == next.paragraphs[*target].level
-        {
-            old_headings[*source] = Some(*source);
-            new_headings[*target] = Some(*source);
-        }
-    }
-    let sections = (!new_headings.iter().flatten().is_sorted())
-        .then(|| [outline_sections(&body.paragraphs, &old_headings), outline_sections(&next.paragraphs, &new_headings)]);
     let mut used = vec![false; old_text.len()];
     let mut originals = vec![None; new_text.len()];
     let bodies = [&*body, &next];
-    for (mut old, mut new) in by_text.into_values() {
-        if let Some(sections) = &sections
-            && (old.len() > 1 || new.len() > 1)
-        {
-            for group in group_outline_sections(sections, [&old, &new]) {
-                match_identical_outline_lines(bodies, group, &mut used, &mut originals);
+    let texts: [&[String]; 2] = [&old_text, &new_text];
+    let old: Vec<_> = (0..old_text.len()).collect();
+    let new: Vec<_> = (0..new_text.len()).collect();
+    let all: [&[usize]; 2] = [&old, &new];
+    let [old_headings, new_headings] = outline_headings(bodies, texts);
+    if !new_headings.iter().flatten().is_sorted() {
+        for (target, &source) in new_headings.iter().enumerate() {
+            if let Some(source) = source {
+                originals[target] = Some(source);
+                used[source] = true;
             }
-            old.retain(|&i| !used[i]);
-            new.retain(|&i| originals[i].is_none());
         }
-        match_identical_outline_lines(bodies, [old, new], &mut used, &mut originals);
+        let sections = [outline_sections(&body.paragraphs, &old_headings), outline_sections(&next.paragraphs, &new_headings)];
+        for [old, new] in group_outline_sections(&sections, all) {
+            match_outline_group(bodies, texts, [&old, &new], &mut used, &mut originals);
+        }
     }
-
-    let mut candidates: Vec<_> = (0..old_text.len()).filter(|&i| !used[i]).collect();
-    let mut unmatched: Vec<_> = (0..new_text.len()).filter(|&i| originals[i].is_none()).collect();
-    if let Some(sections) = &sections {
-        for [old, new] in group_outline_sections(sections, [&candidates, &unmatched]) {
-            match_outline_edits(&old_text, &new_text, &old, &new, &mut originals);
-        }
-        for &source in originals.iter().flatten() {
-            used[source] = true;
-        }
-        candidates.retain(|&i| !used[i]);
-        unmatched.retain(|&i| originals[i].is_none());
-    }
-    match_outline_edits(&old_text, &new_text, &candidates, &unmatched, &mut originals);
+    match_outline_group(bodies, texts, all, &mut used, &mut originals);
     let mut following = originals.iter().flatten().copied().peekable();
     let mut preceding = None;
     for ((para, text), source) in next.paragraphs.iter_mut().zip(&new_text).zip(originals.iter().copied()) {
@@ -408,6 +377,28 @@ fn replace_outline(body: &mut TextBody, mut next: TextBody, mut adjust: impl FnM
         }
     }
     body.paragraphs = next.paragraphs;
+}
+
+/// A nonempty heading with children identifies a section when its text and level are unique
+/// among the headings in each outline.
+fn outline_headings(bodies: [&TextBody; 2], texts: [&[String]; 2]) -> [Vec<Option<usize>>; 2] {
+    let mut by_heading = std::collections::HashMap::<(&str, u8), [Vec<usize>; 2]>::new();
+    for (side, body) in bodies.into_iter().enumerate() {
+        for (i, pair) in body.paragraphs.windows(2).enumerate() {
+            let text = &texts[side][i];
+            if !text.is_empty() && pair[1].level > pair[0].level {
+                by_heading.entry((text, pair[0].level)).or_default()[side].push(i);
+            }
+        }
+    }
+    let [mut old, mut new] = bodies.map(|body| vec![None; body.paragraphs.len()]);
+    for [sources, targets] in by_heading.into_values() {
+        if let ([source], [target]) = (sources.as_slice(), targets.as_slice()) {
+            old[*source] = Some(*source);
+            new[*target] = Some(*source);
+        }
+    }
+    [old, new]
 }
 
 /// The closest identifiable heading above each paragraph, named by its original position.
@@ -439,6 +430,29 @@ fn group_outline_sections(sections: &[Vec<Option<usize>>; 2], indices: [&[usize]
         }
     }
     groups.into_values()
+}
+
+/// Reserve exact matches before applying the ordinary edit heuristics to the remaining lines.
+fn match_outline_group(
+    bodies: [&TextBody; 2],
+    [old_text, new_text]: [&[String]; 2],
+    [old, new]: [&[usize]; 2],
+    used: &mut [bool],
+    originals: &mut [Option<usize>],
+) {
+    let mut by_text = std::collections::HashMap::<&str, [Vec<usize>; 2]>::new();
+    for &i in old.iter().filter(|&&i| !used[i]) {
+        by_text.entry(&old_text[i]).or_default()[0].push(i);
+    }
+    for &i in new.iter().filter(|&&i| originals[i].is_none()) {
+        by_text.entry(&new_text[i]).or_default()[1].push(i);
+    }
+    for group in by_text.into_values() {
+        match_identical_outline_lines(bodies, group, used, originals);
+    }
+    let candidates: Vec<_> = old.iter().copied().filter(|&i| !used[i]).collect();
+    let unmatched: Vec<_> = new.iter().copied().filter(|&i| originals[i].is_none()).collect();
+    match_outline_edits(old_text, new_text, &candidates, &unmatched, used, originals);
 }
 
 /// Match identical lines by level. Equal-sized groups with a level mismatch keep their order
@@ -474,7 +488,14 @@ fn match_identical_outline_lines([body, next]: [&TextBody; 2], [old, new]: [Vec<
 
 /// Match edited lines in their original order. When there are excess lines, a shared edge
 /// distinguishes an edit from a nearby insertion or deletion.
-fn match_outline_edits(old: &[String], new: &[String], candidates: &[usize], unmatched: &[usize], originals: &mut [Option<usize>]) {
+fn match_outline_edits(
+    old: &[String],
+    new: &[String],
+    candidates: &[usize],
+    unmatched: &[usize],
+    used: &mut [bool],
+    originals: &mut [Option<usize>],
+) {
     let (mut old_at, mut new_at) = (0, 0);
     while old_at < candidates.len() && new_at < unmatched.len() {
         let (source, target) = (candidates[old_at], unmatched[new_at]);
@@ -486,6 +507,7 @@ fn match_outline_edits(old: &[String], new: &[String], candidates: &[usize], unm
             old_at += 1;
         } else {
             originals[target] = Some(source);
+            used[source] = true;
             old_at += 1;
             new_at += 1;
         }
@@ -696,18 +718,18 @@ mod outline_tests {
         assert_eq!(after, &expected);
     }
 
-    fn outline_with_styled_children(text: &str) -> (Session, deckcraft_model::ShapeId) {
+    fn outline_with_styled_children(text: &str, [first, second]: [usize; 2]) -> (Session, deckcraft_model::ShapeId) {
         let mut s = Session::with_new();
         s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": text})).unwrap();
         let id = s.doc().unwrap().selection.shapes[0];
         edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
             let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
-            paragraphs[1].level = 1;
-            paragraphs[1].runs[0].props.bold = Some(true);
-            paragraphs[1].props.margin_left = Some(4.5);
-            paragraphs[3].level = 1;
-            paragraphs[3].runs[0].props.italic = Some(true);
-            paragraphs[3].props.margin_left = Some(8.0);
+            paragraphs[first].level = 1;
+            paragraphs[first].runs[0].props.bold = Some(true);
+            paragraphs[first].props.margin_left = Some(4.5);
+            paragraphs[second].level = 1;
+            paragraphs[second].runs[0].props.italic = Some(true);
+            paragraphs[second].props.margin_left = Some(8.0);
             Ok(())
         })
         .unwrap();
@@ -716,7 +738,7 @@ mod outline_tests {
 
     #[test]
     fn moving_an_outline_section_keeps_identical_children_with_their_headings() {
-        let (mut s, id) = outline_with_styled_children("A\nTask\nB\nTask");
+        let (mut s, id) = outline_with_styled_children("A\nTask\nB\nTask", [1, 3]);
         let mut expected = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
         expected.rotate_left(2);
 
@@ -726,13 +748,32 @@ mod outline_tests {
     }
 
     #[test]
+    fn moving_an_outline_section_recognizes_a_heading_that_also_occurs_as_a_leaf() {
+        for (leaf_level, edited) in [(1, "B\n\tTask\nA\n\tTask\n\tB"), (0, "B\n\tTask\nA\n\tTask\nB")] {
+            let (mut s, id) = outline_with_styled_children("A\nTask\nB\nB\nTask", [1, 4]);
+            edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+                shape.text.as_mut().unwrap().paragraphs[2].level = leaf_level;
+                Ok(())
+            })
+            .unwrap();
+            let mut expected = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+            expected.rotate_left(3);
+
+            s.execute("text.set", &json!({"id": id, "text": edited, "outline": true})).unwrap();
+            let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+            assert_eq!(after, &expected, "{edited:?}");
+        }
+    }
+
+    #[test]
     fn moving_an_outline_section_keeps_edited_child_styles_and_paragraph_properties() {
         for (original, edited, indices) in [
             ("A\nFirst task\nB\nSecond task", "B\n\tSecond task!\nA\n\tFirst task!", [3, 1]),
             ("A\nFirst task\nB\nSecond task", "A\n\tFirst task!\nB\n\tSecond task!", [1, 3]),
             ("Section\nFirst task\nSection\nSecond task", "Section\n\tSecond task!\nSection\n\tFirst task!", [1, 3]),
+            ("A\nTask\nB\nTask draft", "B\n\tTask\nA\n\tTask!", [3, 1]),
         ] {
-            let (mut s, id) = outline_with_styled_children(original);
+            let (mut s, id) = outline_with_styled_children(original, [1, 3]);
             let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
 
             s.execute("text.set", &json!({"id": id, "text": edited, "outline": true})).unwrap();
