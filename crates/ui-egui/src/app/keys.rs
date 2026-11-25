@@ -1,5 +1,6 @@
 use super::clipboard::OBJECTS_MARKER;
 use super::{Mods, SlideApp, Value, backstage, json, menus};
+use crate::framework::widget_has_keyboard;
 
 impl SlideApp {
     /// The app shortcuts that still make sense on the empty File/start screen: create, open,
@@ -47,7 +48,7 @@ impl SlideApp {
         }
     }
 
-    /// Keyboard and clipboard for the slide (when no text field has focus).
+    /// Keyboard and clipboard for the slide (with nothing or the document window focused).
     pub(super) fn keyboard(&mut self, ctx: &egui::Context) {
         let mut events = ctx.input(|i| i.events.clone());
         if crate::framework::window_escape(ctx) {
@@ -79,26 +80,15 @@ impl SlideApp {
             // File-tab navigation and document-free shortcuts remain available.
             self.suspend_ime_reset(viewport);
             self.route_ime_controls_only(ctx, &events);
-            if self.palette.is_none() && self.dialog.as_ref().is_none_or(|d| !d.modal()) && ctx.memory(|m| m.focused().is_none()) {
+            if self.palette.is_none() && self.dialog.as_ref().is_none_or(|d| !d.modal()) && !widget_has_keyboard(ctx) {
                 self.route_backstage_keys(events);
             }
             self.drain_requests();
             return;
         }
         let modal = self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some();
-        // While slide text is being edited, the text owns the keyboard (#93). Tab and the arrow
-        // keys move egui's keyboard focus onto ordinary widgets (the window's drag handle, ribbon
-        // buttons), and that stray focus would swallow every later key and end text entry. Let it
-        // go; a real text field or an open menu keeps its keys.
-        if !modal
-            && self.session.active().is_some_and(|d| d.selection.text.is_some())
-            && !ctx.text_edit_focused()
-            && !ctx.any_popup_open()
-            && let Some(id) = ctx.memory(|m| m.focused())
-        {
-            ctx.memory_mut(|m| m.surrender_focus(id));
-        }
-        if ctx.memory(|m| m.focused().is_some()) || modal {
+        self.edited_text_takes_focus(ctx);
+        if widget_has_keyboard(ctx) || modal {
             // A stock field/modal/palette owns input now. Retire the custom fence, then visit
             // controls in raw order; stock text/key events are left for the stock widgets.
             self.suspend_ime_reset(viewport);
@@ -180,12 +170,6 @@ impl SlideApp {
                     }
                 }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
-                    if key == egui::Key::Tab {
-                        // The slide has the keyboard, so Tab is ours (indent, tab character, next
-                        // shape). Left to egui it would also focus the first ribbon widget, and
-                        // every key after it would go there instead of the slide (#78).
-                        ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
-                    }
                     if key == egui::Key::Escape && self.anim_preview.is_some() && !modifiers.command && !modifiers.ctrl && !modifiers.alt {
                         self.anim_preview = None;
                         continue;

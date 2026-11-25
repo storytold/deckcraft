@@ -13,6 +13,7 @@ use super::{
 mod clipboard;
 mod commands;
 mod control;
+mod document_focus;
 pub(crate) mod files;
 mod frame;
 mod ime;
@@ -22,6 +23,7 @@ mod playback;
 
 #[cfg(test)]
 pub(crate) use clipboard::{OBJECTS_MARKER, system_clipboard_text};
+pub(crate) use document_focus::DocumentFocus;
 #[cfg(test)]
 pub(crate) use files::web_image_files;
 pub use keys::key_name;
@@ -69,6 +71,7 @@ impl SlideApp {
             synthetic_generation: 0,
             synthetic_target: None,
             synthetic_focus: None,
+            document_focus: DocumentFocus::default(),
             synthetic_injected_time: None,
             ribbon_scroll: HashMap::new(),
             show_instance: 0,
@@ -287,8 +290,7 @@ impl SlideApp {
         let ctx = ui.ctx().clone();
         self.ime_frame_viewport = Some(ctx.viewport_id());
         self.ime_pending = None;
-        // Every pass, discarded ones included: the runtime routes the next frame's keys by the last pass's canvas.
-        crate::framework::host_canvas(&ctx);
+        let document_before = self.document_focus.drawn.take();
         if !self.ui_setup(&ctx) {
             // This pass is discarded for the new fonts. The input events were already consumed
             // by egui, so keep them queued for the next frame instead of silently losing them.
@@ -352,6 +354,7 @@ impl SlideApp {
                 }
             }
         });
+        self.finish_document(&ctx, document_before);
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);

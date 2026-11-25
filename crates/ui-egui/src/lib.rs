@@ -268,8 +268,11 @@ pub struct SlideApp {
     synthetic_generation: u64,
     /// Document/slide/canvas identity the queued/injected batch belongs to.
     synthetic_target: Option<InputTarget>,
-    /// Focus identity the pending batch was injected with; a focus change retracts it.
+    /// Focus identity the pending batch was injected with (the document window counts as none); a focus change
+    /// retracts it.
     synthetic_focus: Option<egui::Id>,
+    /// The document window as a Tab stop, and when it takes the keyboard focus.
+    document_focus: app::DocumentFocus,
     /// `RawInput::time` of the pass the batch was injected into. A logic-only callback leaves
     /// `InputState` from the previous pass; comparing this value keeps retraction from draining
     /// an unrelated batch out of that stale input.
@@ -459,6 +462,8 @@ mod animpane_tests;
 mod browsetheme_tests;
 #[cfg(test)]
 mod compare_tests;
+#[cfg(test)]
+mod document_focus_tests;
 #[cfg(test)]
 mod eyedropper_tests;
 #[cfg(test)]

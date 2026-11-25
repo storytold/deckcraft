@@ -5,18 +5,18 @@
 //!
 //! The runtime takes Escape, Tab and the clipboard events for the whole window unless one of DeckCraft's own egui
 //! widgets has the keyboard. The window's Escape is read with [`escape_pressed`] or [`take_window_cancel`]; the
-//! document window is declared to the runtime with [`host_canvas`] each pass, which keeps Tab, the edit chords and
-//! the clipboard events in egui's input for DeckCraft's own key routing (`SlideApp::keyboard`).
+//! document window is declared to the runtime with [`host_canvas`] each pass that draws it, which keeps the edit chords
+//! and the clipboard events, and Tab while it has the focus and Tab has work, in egui's input for DeckCraft's own key
+//! routing (`SlideApp::keyboard`). That routing has the keyboard unless [`widget_has_keyboard`].
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use craft_host::target::ShellInfo;
 use craft_host::{AppInfo, Host};
-use craft_keymap::{Chord, Key, Mods, Overrides};
+use craft_keymap::{Chord, Key, Mods};
 use craft_ui::fonts::{I18nScripts, SystemFonts, UiFonts};
-use craft_ui::runtime::commands::{CommandInput, CommandSet, NavCommand};
 use craft_ui::runtime::env::{RootEnv, Scale};
-use craft_ui::runtime::focus::{EditSet, KeepKeys, KeyUse};
+use craft_ui::runtime::focus::{self, EditSet, FocusTarget, KeepKeys, KeyUse};
 use craft_ui::runtime::frame::{FrameInput, FrameOutput};
 use craft_ui::runtime::keys::{Intent, with_window_intents};
 use craft_ui::shell::embed::{self, CloseDecision};
@@ -72,21 +72,6 @@ pub(crate) fn host() -> Arc<Host> {
     )
 }
 
-/// F6 and Shift+F6 move between framework panes by default. DeckCraft has none: the only stop is its document window
-/// ([`host_canvas`]), and focusing it would turn its arrows and clipboard events into framework intents that
-/// DeckCraft's key routing does not read. Overrides are keyed by command id, which the command set gives.
-fn command_overrides() -> Arc<Overrides> {
-    static OVERRIDES: OnceLock<Arc<Overrides>> = OnceLock::new();
-    OVERRIDES
-        .get_or_init(|| {
-            let mut overrides = Overrides::new();
-            overrides.insert(NavCommand::NextPane.id(), Vec::new());
-            overrides.insert(NavCommand::PreviousPane.id(), Vec::new());
-            Arc::new(overrides)
-        })
-        .clone()
-}
-
 impl SlideApp {
     /// The framework's part of `App::raw_input_hook`, once per frame before the first pass: takes what the runtime
     /// gathered since the last frame and gives the coming passes the root values (theme mode, interface scale).
@@ -101,7 +86,7 @@ impl SlideApp {
         let mode = if self.ui.brightness == crate::theme::Brightness::Dark { craft_theme::Mode::Dark } else { craft_theme::Mode::Light };
         // The slide show and the canvas read Ctrl/Cmd+wheel themselves, so a smooth Ctrl+wheel stays a wheel event.
         let root = RootEnv::new().mode(mode).scale(Scale::new(self.ui.ui_scale.clamp(0.5, 3.0))).ctrl_wheel_pinch(false);
-        FrameInput::new(root).commands(CommandInput::new().overrides(command_overrides())).host(Arc::clone(&self.framework_host))
+        FrameInput::new(root).host(Arc::clone(&self.framework_host))
     }
 
     /// The framework's part of `App::logic`, after DeckCraft's own: the root window's close path. With unsaved
@@ -135,16 +120,38 @@ const QUICK_ACCESS_KEYS: [Chord; 9] = [
     Chord::new(Mods::ALT, Key::Num9),
 ];
 
-/// The keys DeckCraft's document window keeps while it is the window's key target: Tab (indent, next shape),
-/// every clipboard event and edit chord, and the Quick Access Toolbar's Alt+digits, which `SlideApp::keyboard`
-/// routes itself.
-const DOCUMENT_KEYS: KeyUse = KeyUse::CANVAS.with_keep(KeepKeys::Tab).with_edits(EditSet::ALL).with_claims(&QUICK_ACCESS_KEYS);
+/// The keys DeckCraft's document window keeps while it has the focus or is the window's key target: every clipboard
+/// event and edit chord, and the Quick Access Toolbar's Alt+digits, which `SlideApp::keyboard` routes itself.
+const DOCUMENT_KEYS: KeyUse = KeyUse::CANVAS.with_edits(EditSet::ALL).with_claims(&QUICK_ACCESS_KEYS);
+
+/// The document window's widget: the slide canvas, the slide sorter or the notes page, whichever the view draws.
+pub(crate) fn document_id() -> egui::Id {
+    egui::Id::unique("deckcraft_document")
+}
 
 /// Declares DeckCraft's document window, drawn in this pass, as the window's canvas. With nothing focused it is the
-/// window's key target, so Tab, the edit chords, the clipboard events and the claimed Alt+digits stay in egui's input
-/// for DeckCraft.
-pub(crate) fn host_canvas(ctx: &egui::Context) {
-    craft_ui::runtime::focus::host_canvas(ctx, egui::Id::unique("deckcraft_document"), DOCUMENT_KEYS);
+/// window's key target: the edit chords, the clipboard events and the claimed Alt+digits stay in egui's input for
+/// DeckCraft. Tab and Shift+Tab stop at it; with `keeps_tab` the focused document keeps them in egui's input, else they
+/// move on from it.
+pub(crate) fn host_canvas(ctx: &egui::Context, keeps_tab: bool) {
+    let keys = if keeps_tab { DOCUMENT_KEYS.with_keep(KeepKeys::Tab) } else { DOCUMENT_KEYS };
+    focus::host_canvas(ctx, document_id(), keys);
+}
+
+/// Gives the document window the keyboard focus. It is the runtime's focus, which an Escape does not take away.
+pub(crate) fn focus_document(ctx: &egui::Context) {
+    focus::request(ctx, FocusTarget::Id(document_id()));
+}
+
+/// The widget that has the keyboard, the document window left out: a focused document leaves the keyboard to
+/// DeckCraft's own key routing, as with nothing focused.
+pub(crate) fn focused_widget(ctx: &egui::Context) -> Option<egui::Id> {
+    ctx.memory(|m| m.focused()).filter(|id| *id != document_id())
+}
+
+/// Whether a widget other than the document window has the keyboard.
+pub(crate) fn widget_has_keyboard(ctx: &egui::Context) -> bool {
+    focused_widget(ctx).is_some()
 }
 
 /// Whether Escape was pressed in this pass: from egui while one of DeckCraft's own widgets or popups has the keyboard,
