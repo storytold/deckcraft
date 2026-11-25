@@ -222,10 +222,14 @@ pub fn window_frame(app: &mut SlideApp, ctx: &egui::Context) {
         (direction, icon)
     });
     if let Some((direction, icon)) = hit {
-        if !controls.contains(pos) {
+        // The northeast corner resizes through a narrow strip of the controls rect: over a control at
+        // the window's edge only the grip-wide band resizes, so the caption buttons keep their presses.
+        let ne_strip = pos.x >= screen.max.x - RESIZE_GRIP && pos.y <= screen.min.y + RESIZE_GRIP;
+        let resizes = !controls.contains(pos) || ne_strip;
+        if resizes {
             ctx.set_cursor_icon(icon);
         }
-        if !controls.contains(pos) && ctx.input(|i| i.pointer.primary_pressed()) {
+        if resizes && ctx.input(|i| i.pointer.primary_pressed()) {
             let direction = match direction {
                 ResizeDirection::North => "north",
                 ResizeDirection::South => "south",
