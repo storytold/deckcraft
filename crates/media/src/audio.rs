@@ -289,7 +289,7 @@ fn resample_with_limit(pcm: &Pcm, rate: u32, max_samples: usize) -> Pcm {
     let c = pcm.channels.max(1) as usize;
     let max_frames = max_samples / c;
     if pcm.rate == rate || pcm.rate == 0 || rate == 0 {
-        let keep = pcm.samples.len().min(max_frames * c);
+        let keep = pcm.frames().min(max_frames) * c;
         return Pcm { rate: pcm.rate, channels: pcm.channels, samples: pcm.samples[..keep].to_vec() };
     }
     let n_in = pcm.frames();
@@ -332,6 +332,8 @@ mod tests {
             assert_eq!(capped.samples, full.samples[..4]);
             assert_eq!((capped.rate, capped.channels), (rate, 2));
         }
+        let partial = Pcm { rate: 2, channels: 2, samples: vec![0.0, 1.0, 0.5] };
+        assert_eq!(resample(&partial, 2).samples, partial.samples[..2]);
     }
 
     #[test]
