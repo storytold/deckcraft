@@ -1,0 +1,61 @@
+{
+  "title": "DeckCraft nightly deep-background icons",
+  "author": "@skylartaylor",
+  "license": "MIT OR Apache-2.0",
+  "inputs": [
+    {
+      "path": "assets/app-icon/deckcraft-1024.png",
+      "sha256": "457cb046a1a4f2e13f06cf7e2e071cb48f6011633ed629b99ff348be4ca91ce0",
+      "purpose": "native padded Mac 1024 master; not upscaled from 256"
+    },
+    {
+      "path": "assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png",
+      "sha256": "66343901b993332bceadf13277e6a028b80b2fb3a1e215b841c855be731e5130",
+      "purpose": "stable 256 window icon the nightly icon replaces"
+    }
+  ],
+  "method": {
+    "kind": "original code-generated derivative of the project-owned icon",
+    "original_palette": {
+      "ink": "#0b0b0c",
+      "paper": "#efe9dc",
+      "background": "#f26b1d"
+    },
+    "nightly_background": "#a6420c",
+    "transform": "Solve each pixel's background contribution a in p = a*F + (1-a)*background for the ink and paper foregrounds, then recolour only the background region reached by a flush inward from the icon's transparent padding, so the accent bars that share the background colour keep their brightness behind the ink outlines. Preserve alpha, padding, foreground and detail RGBA. Derive native-size frames separately by area-averaging from the 1024 master (not upscaled from 256) and pack them into ICO/ICNS. No crescent, letter or badge.",
+    "generator": "pure-Python stdlib script (zlib/struct), run once by the porting agent; not committed, matching PhotoCraft's provenance-only record",
+    "generator_sha256": "0f90e2d49fe8fc3f2c75c442e730f49652e9b47b0bf9b8ee83c0a9214088569e"
+  },
+  "outputs": {
+    "assets/app-icon/deckcraft-nightly.png": "560b27431cba6bc8658bf654c34981687c2061499139a03ba8b15a6ffed0bc9b",
+    "assets/app-icon/deckcraft-nightly.ico": "8c66648b036da025b29e1f3d981c959f5d3aab818ddea5049a49706eee800a3a",
+    "assets/app-icon/deckcraft-nightly-1024.png": "b64ef900d0997d7fe99d75b1f5471276cca75029902841d02f045a4f3f8a7f09",
+    "assets/app-icon/deckcraft-nightly.icns": "3eb88330c1fffb8e7a27667ac7d53deea62d4c99f43e6bf878a0b89d43934b8d"
+  },
+  "ico_frame_sizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64,
+    128,
+    256
+  ],
+  "icns_png_slots": {
+    "icp4": 16,
+    "icp5": 32,
+    "ic11": 32,
+    "icp6": 64,
+    "ic12": 64,
+    "ic07": 128,
+    "ic08": 256,
+    "ic13": 256,
+    "ic09": 512,
+    "ic14": 512,
+    "ic10": 1024
+  },
+  "validation": "Input/output hashes, PNG CRC/dimensions and exact container members checked; the source master is unchanged. Native Explorer/Finder/iconutil/app-package qualification remains unrun.",
+  "ico_frame_format": "16-128 are 32bpp BGRA DIB frames with AND masks (rc.exe/Explorer); 256 is a PNG frame"
+}
