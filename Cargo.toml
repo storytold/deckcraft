@@ -12,17 +12,17 @@ repository = "https://github.com/storytold/deckcraft"
 
 [workspace.dependencies]
 # OPC part-name primitives and package reader/writer.
-craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "0.1.0" }
+craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "0.1.0" }
 # Compound File Binary directory reads (password-protected deck detection).
-craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "0.1.0" }
+craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "0.1.0" }
 # Bounded XML reader and writer primitives.
-craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "0.1.0" }
+craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "0.1.0" }
 # DrawingML colours, themes, charts, tables and text (craft-libs#778, #792).
-craft-drawingml = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "0.1.0" }
+craft-drawingml = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "0.1.0" }
 # PresentationML PPTX/POTX/PPSX reader and writer (craft-libs#778).
-craft-pptx = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "0.1.0" }
+craft-pptx = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "0.1.0" }
 # Shared MCP stdio framing and protocol constants (craft-libs#778).
-craft-mcp-server = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "0.1.0" }
+craft-mcp-server = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "0.1.0" }
 # internal
 deckcraft-geom = { path = "crates/geom" }
 deckcraft-color = { path = "crates/color" }
@@ -62,27 +62,27 @@ vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
 # Base64 for command payloads (engine); base64_compat keeps the legacy lenient decoder. Same rev as craft-deckcraft-format.
-craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0" }
+craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0" }
 # craft-media, craft-audio and craft-video share types and stay on one rev.
 # The .deckcraft package layer (identity, manifest, member names, bounded reads); crates/format maps the presentation onto it.
-craft-deckcraft-format = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0" }
-craft-rtf = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0" }
-craft-media = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0", default-features = false }
-craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
+craft-deckcraft-format = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0" }
+craft-rtf = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0" }
+craft-media = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0", default-features = false }
+craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
 # H.264, HEVC, VP9 and AV1 decoders.
-craft-video = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0", default-features = false, features = ["h264-decode", "hevc-decode", "vp9-decode", "av1-decode", "threads"] }
+craft-video = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0", default-features = false, features = ["h264-decode", "hevc-decode", "vp9-decode", "av1-decode", "threads"] }
 # WMF, EMF and EMF+ reader.
-craft-metafile = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0" }
-craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
+craft-metafile = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0" }
+craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # craft-update: app-specific pretend versions apply to startup and manual checks.
-craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", features = ["ui"] }
-craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0" }
+craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", features = ["ui"] }
+craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0" }
 # The framework runtime's host: the app's identity, its window services, its key overrides and the theme mode
 # the framework's components draw in.
-craft-host = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0" }
-craft-keymap = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0" }
-craft-theme = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0" }
-craft-window = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.1.0" }
+craft-host = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0" }
+craft-keymap = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0" }
+craft-theme = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0" }
+craft-window = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.1.0" }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }
@@ -129,7 +129,7 @@ codegen-units = 16
 debug = 0
 
 [patch.crates-io]
-krilla = { git = "https://github.com/storytold/craft-libs", rev = "d1bdf8e5dac7513e4fbc4dab16edaaeda5ebcf5e", version = "=0.8.2" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "aa401985dd4658cdaa272fdccafdcd6e7f4dd60b", version = "=0.8.2" }
 ecolor = { git = "https://github.com/storytold/egui.git", rev = "b15ffe9bfc2c8e6748533b32b708e10abaf2afec" }
 emath = { git = "https://github.com/storytold/egui.git", rev = "b15ffe9bfc2c8e6748533b32b708e10abaf2afec" }
 epaint = { git = "https://github.com/storytold/egui.git", rev = "b15ffe9bfc2c8e6748533b32b708e10abaf2afec" }
