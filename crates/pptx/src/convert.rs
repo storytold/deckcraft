@@ -747,6 +747,7 @@ fn run_props_to(r: &dm_text::RunProps) -> cd_text::RunProps {
         glow: r.glow.as_ref().map(glow_to),
         reflection: r.reflection.as_ref().map(reflection_to),
         soft_edge: r.soft_edge,
+        own_effects: r.own_effects,
         no_proof: r.no_proof,
         normalize_height: r.normalize_height,
     }
@@ -788,6 +789,7 @@ fn run_props_from(r: cd_text::RunProps) -> dm_text::RunProps {
         glow: r.glow.map(glow_from),
         reflection: r.reflection.map(reflection_from),
         soft_edge: r.soft_edge,
+        own_effects: r.own_effects,
         no_proof: r.no_proof,
         normalize_height: r.normalize_height,
     }
@@ -1319,6 +1321,10 @@ fn chart_to(c: &dm_chart::Chart) -> cd_chart::Chart {
         y2_major: c.y2_major,
         y2_format: c.y2_format.clone(),
         y2_hidden: c.y2_hidden,
+        // deckcraft's chart model has no category format or 1904 date system yet: the defaults
+        // are what craft-pptx wrote before it had these fields.
+        category_format: None,
+        date_1904: false,
         lang: c.lang.clone(),
         subtotals: c.subtotals.clone(),
         category_levels: c.category_levels.clone(),

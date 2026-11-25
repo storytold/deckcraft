@@ -1181,7 +1181,8 @@ mod tests {
         c.y_format = Some(r#"_-* #\ ##0\ "₽"_-;\-* #\ ##0\ "₽"_-;_-* "-"??\ "₽"_-;_-@_-"#.into());
         c.lang = Some("ru-RU".into());
         assert_eq!(c.axis_label(false, 800_000.0), "800\u{a0}000 ₽");
-        assert_eq!(c.axis_label(false, 0.0), "- ₽");
+        // Excel shows the two `??` of the zero section as spaces (craft-libs#1691).
+        assert_eq!(c.axis_label(false, 0.0), "-   ₽");
         // No format: General.
         assert_eq!(c.axis_label(true, 2.5), "2,5");
         c.lang = None;
@@ -1190,7 +1191,7 @@ mod tests {
         c.lang = Some("ru-RU".into());
         c.series[0].number_format = Some(r#"#,##0\ "₽""#.into());
         assert_eq!(c.data_label(&c.series[0], 516_600_000.0), "516\u{a0}600\u{a0}000 ₽");
-        assert_eq!(c.data_label(&c.series[1], 0.0), "- ₽");
+        assert_eq!(c.data_label(&c.series[1], 0.0), "-   ₽");
     }
 
     #[test]

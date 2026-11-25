@@ -430,6 +430,8 @@ mod tests {
 #[cfg(test)]
 mod effects_tests;
 pub mod qat;
+#[cfg(test)]
+mod text_shadow_tests;
 
 #[cfg(test)]
 mod master_layout_tests;

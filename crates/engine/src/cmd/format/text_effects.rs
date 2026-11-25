@@ -1,9 +1,22 @@
 use super::{
-    Line, Result, Session, Value, bad, color_param, current_run, ed, edit_shapes, f64_or, format_body, format_run, json, ok, on_param, str_param,
+    Line, Result, Session, Value, bad, color_param, current_run, ed, edit_shapes, f64_or, format_body, format_run, format_run_inherited, json, ok,
+    on_param, str_param,
 };
 
+/// Text Shadow (Home › Font): toggles the outer shadow of the selected text, or sets it with
+/// `on`. A shadow the text inherits from its layout or master is turned off by the run's own
+/// effect list (as PowerPoint writes it), which keeps the other effects that run shows; a shadow
+/// turned on next to inherited effects keeps them the same way.
 pub(super) fn text_shadow(s: &mut Session, p: &Value) -> Result<Value> {
     let v = on_param(p, Some(current_run(s).shadow.is_some()));
+    if !v {
+        return format_run_inherited(s, &|r, inh| {
+            r.shadow = None;
+            if inh.shadow.is_some() {
+                own_effect_list(r, inh);
+            }
+        });
+    }
     let sh = deckcraft_model::style::Shadow {
         color: deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::BLACK).with(deckcraft_color::ColorTransform::Alpha(43000)),
         blur: 3.0,
@@ -17,7 +30,26 @@ pub(super) fn text_shadow(s: &mut Session, p: &Value) -> Result<Value> {
         align: String::new(),
         rotate_with_shape: false,
     };
-    format_run(s, &move |r| r.shadow = if v { Some(sh.clone()) } else { None })
+    format_run_inherited(s, &move |r, inh| {
+        r.shadow = Some(sh.clone());
+        if inh.inner_shadow.is_some() || inh.glow.is_some() || inh.reflection.is_some() || inh.soft_edge.is_some() {
+            own_effect_list(r, inh);
+        }
+    })
+}
+
+/// Gives run `r` its own effect list, with the inner shadow, glow, reflection and soft edge it
+/// shows from `inh` (what it inherits) copied in: a run's `a:effectLst` replaces the inherited
+/// one as a whole, so writing one effect of its own must not drop the inherited others.
+fn own_effect_list(r: &mut deckcraft_model::text::RunProps, inh: &deckcraft_model::text::RunProps) {
+    if r.own_effects == Some(true) {
+        return;
+    }
+    r.inner_shadow = r.inner_shadow.take().or_else(|| inh.inner_shadow.clone());
+    r.glow = r.glow.take().or_else(|| inh.glow.clone());
+    r.reflection = r.reflection.take().or_else(|| inh.reflection.clone());
+    r.soft_edge = r.soft_edge.or(inh.soft_edge);
+    r.own_effects = Some(true);
 }
 
 pub(super) fn text_outline(s: &mut Session, p: &Value) -> Result<Value> {
