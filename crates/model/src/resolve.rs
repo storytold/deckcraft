@@ -375,14 +375,20 @@ pub fn run(ctx: &Ctx, shape: &Shape, para: &crate::text::Paragraph, run: &RunPro
         if run.fill.is_none() && !(from_def && para.def_props.fill.is_some()) {
             let mut link_color = ColorRef::scheme(SchemeSlot::Hlink);
             // A built-in theme may use the same colour for its hyperlink and a shape fill. An
-            // opaque run highlight covers that fill, so use it as the background when present.
-            let background = r.highlight.as_ref().map(|color| ctx.color(color, None)).filter(|color| color.a == 255).or_else(|| {
+            // opaque run highlight covers that fill. For a translucent highlight the effective
+            // colour depends on the painted content below it, so keep the theme hyperlink colour.
+            let shape_background = || {
                 let (shape_fill, ph) = fill(ctx, shape);
                 match shape_fill {
                     Some(Fill::Solid { color }) => Some(ctx.color(&color, ph)),
                     _ => None,
                 }
-            });
+            };
+            let background = match r.highlight.as_ref().map(|color| ctx.color(color, None)) {
+                Some(highlight) if highlight.a == 255 => Some(highlight),
+                Some(highlight) if highlight.a > 0 => None,
+                _ => shape_background(),
+            };
             if let Some(bg) = background
                 && bg.a == 255
                 && ctx.color(&link_color, None).contrast(bg) < 4.5

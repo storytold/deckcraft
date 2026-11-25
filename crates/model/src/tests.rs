@@ -240,7 +240,7 @@ fn linked_text_stays_readable_on_accent_filled_shapes_in_builtin_themes() {
             ..Default::default()
         };
         for slot in [SchemeSlot::Accent1, SchemeSlot::Accent2, SchemeSlot::Accent3, SchemeSlot::Accent4, SchemeSlot::Accent5, SchemeSlot::Accent6] {
-            let shape = Shape { fill: Some(Fill::solid(ColorRef::scheme(slot))), ..Default::default() };
+            let shape = Shape { style: Some(ShapeStyle::accent(slot)), ..Default::default() };
             let resolved = resolve::run(&ctx, &shape, &Paragraph::default(), &link);
             let background = ctx.color(&ColorRef::scheme(slot), None);
             let contrast = resolve::text_color(&ctx, &resolved).contrast(background);
@@ -271,6 +271,30 @@ fn linked_text_uses_opaque_highlight_as_its_background() {
     };
     let resolved = resolve::run(&ctx, &shape, &Paragraph::default(), &link);
     assert!(resolve::text_color(&ctx, &resolved).contrast(Rgba::WHITE) >= 4.5);
+}
+
+#[test]
+fn translucent_highlight_keeps_the_theme_hyperlink_colour() {
+    use crate::text::{Action, Hyperlink};
+    use deckcraft_color::Rgba;
+
+    let p = Presentation::default();
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let shape = Shape { style: Some(ShapeStyle::accent(SchemeSlot::Accent1)), ..Default::default() };
+    let link = RunProps {
+        highlight: Some(ColorRef::rgb(Rgba::WHITE.with_alpha(128))),
+        link: Some(Hyperlink {
+            action: Action::Url { url: "https://example.org".into() },
+            tooltip: String::new(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        }),
+        ..Default::default()
+    };
+    let resolved = resolve::run(&ctx, &shape, &Paragraph::default(), &link);
+    assert_eq!(resolved.fill, Some(Fill::solid(ColorRef::scheme(SchemeSlot::Hlink))));
 }
 
 #[test]
