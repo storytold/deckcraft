@@ -323,8 +323,9 @@ pub(crate) fn apply_leading_tabs(para: &mut deckcraft_model::text::Paragraph) ->
     true
 }
 
-/// The Outline editor sends all paragraphs, with tabs recording their levels. Preserve the
-/// order of identical lines when they all survive an edit; use levels to distinguish deletions.
+/// The Outline editor sends all paragraphs, with tabs recording their levels. Match identical
+/// lines by level where possible. When the same number of lines has different counts per level,
+/// keep their order so changing indentation preserves each line's formatting.
 fn replace_outline(body: &mut TextBody, mut next: TextBody, mut adjust: impl FnMut(&mut deckcraft_model::text::Paragraph)) {
     use std::collections::{HashMap, VecDeque};
     let old_text: Vec<_> = body.paragraphs.iter().map(|para| para.text()).collect();
@@ -346,17 +347,21 @@ fn replace_outline(body: &mut TextBody, mut next: TextBody, mut adjust: impl FnM
     let mut used = vec![false; old_text.len()];
     let mut originals = vec![None; new_text.len()];
     for (old, new) in by_text.into_values() {
-        if old.len() != new.len() {
-            let mut levels = HashMap::<u8, VecDeque<usize>>::new();
-            for &i in &old {
-                levels.entry(body.paragraphs[i].level).or_default().push_back(i);
+        let mut levels = HashMap::<u8, VecDeque<usize>>::new();
+        for &i in &old {
+            levels.entry(body.paragraphs[i].level).or_default().push_back(i);
+        }
+        for &i in &new {
+            originals[i] = levels.get_mut(&next.paragraphs[i].level).and_then(VecDeque::pop_front);
+        }
+        if old.len() == new.len() && new.iter().any(|&i| originals[i].is_none()) {
+            for (target, source) in new.into_iter().zip(old) {
+                originals[target] = Some(source);
             }
-            for &i in &new {
-                originals[i] = levels.get_mut(&next.paragraphs[i].level).and_then(VecDeque::pop_front);
-                if let Some(source) = originals[i] {
-                    used[source] = true;
-                }
-            }
+            continue;
+        }
+        for source in new.iter().filter_map(|&i| originals[i]) {
+            used[source] = true;
         }
         let mut unused = old.into_iter().filter(|&i| !used[i]);
         for i in new {
@@ -592,6 +597,29 @@ mod outline_tests {
         let mut expected = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
         expected[0].level = 1;
         s.execute("text.set", &json!({"id": id, "text": "\tTask\n\tTask", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &expected);
+    }
+
+    #[test]
+    fn moving_an_outline_section_keeps_duplicate_styles_at_their_levels() {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": "A\nTask\nB\nSection\nTask"})).unwrap();
+        let id = s.doc().unwrap().selection.shapes[0];
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
+            paragraphs[1].level = 1;
+            paragraphs[1].runs[0].props.bold = Some(true);
+            paragraphs[3].level = 1;
+            paragraphs[4].level = 2;
+            paragraphs[4].runs[0].props.italic = Some(true);
+            Ok(())
+        })
+        .unwrap();
+        let mut expected = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+        expected.rotate_left(2);
+
+        s.execute("text.set", &json!({"id": id, "text": "B\n\tSection\n\t\tTask\nA\n\tTask", "outline": true})).unwrap();
         let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
         assert_eq!(after, &expected);
     }
