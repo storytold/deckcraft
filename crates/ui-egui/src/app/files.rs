@@ -418,6 +418,18 @@ impl SlideApp {
     pub(crate) fn pick_and_insert(&mut self, purpose: &str, cmd: &str) {
         self.pick_and_run(purpose, cmd, &json!({}));
     }
+    /// Change Picture ▸ From Clipboard…: the picture on the system clipboard replaces the
+    /// selected one, read the way a pasted picture is (PNG above all, plus what the host decodes).
+    pub(super) fn change_picture_from_clipboard(&mut self) {
+        let Some(png) = self.services.clipboard_image.as_mut().and_then(|f| f()) else {
+            self.set_status("The clipboard has no picture");
+            return;
+        };
+        let args = json!({"name": "clipboard.png", "data": deckcraft_engine::cmd::base64_encode(&png)});
+        if let Err(e) = self.session.execute("picture.change", &args) {
+            self.set_status(e.to_string());
+        }
+    }
 
     /// Pick a file and run `cmd` with it (`name` + `data`, or `path`) added to `extra`.
     pub(super) fn pick_and_run(&mut self, purpose: &str, cmd: &str, extra: &Value) {

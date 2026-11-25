@@ -568,3 +568,49 @@ fn animation_painter_sets_the_cursor() {
     let after = h.output().platform_output.cursor_icon;
     assert_eq!(after, egui::CursorIcon::Copy, "the animation painter arms the Copy cursor");
 }
+
+/// The shape context menu offers Change Picture ▸ From Clipboard…: the picture on the system
+/// clipboard replaces the selected one, in place, as a pasted picture would.
+#[test]
+fn change_picture_from_clipboard_replaces_the_selected_picture() {
+    let svg =
+        |c: &str| format!("<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><rect width='4' height='4' fill='{c}'/></svg>").into_bytes();
+    let clip = svg("blue");
+    let services = Services { clipboard_image: Some(Box::new(move || Some(clip.clone()))), ..Default::default() };
+    let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), services),
+    );
+    h.run_steps(3);
+    let id = h
+        .state_mut()
+        .session
+        .execute("insert.picture", &json!({"name": "a.svg", "data": deckcraft_engine::cmd::base64_encode(&svg("red"))}))
+        .unwrap()["id"]
+        .clone();
+    h.state_mut().session.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    h.run_steps(3);
+    let media = |h: &Harness<'_, SlideApp>| {
+        let st = h.state().session.active().unwrap();
+        st.doc.slides[0]
+            .shapes
+            .iter()
+            .find_map(|s| if let deckcraft_model::ShapeKind::Picture { fill } = &s.kind { Some(fill.media) } else { None })
+            .expect("a picture on the slide")
+    };
+    let before = media(&h);
+    let p = screen(h.state(), 500.0, 250.0);
+    right_click(&mut h, p);
+    h.run_steps(2);
+    h.get_by_label("Change Picture").click();
+    h.run_steps(2);
+    h.get_by_label("From Clipboard…").click();
+    h.run_steps(3);
+    assert_ne!(media(&h), before, "the clipboard picture replaces the selected one");
+    let st = h.state().session.active().unwrap();
+    let n = st.doc.slides[0].shapes.iter().filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).count();
+    assert_eq!(n, 1, "in place, not a second picture");
+}
