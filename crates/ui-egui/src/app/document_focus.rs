@@ -79,8 +79,9 @@ impl SlideApp {
 
     /// Ends the document window's pass, after the views; `before` is the presentation the last pass drew. The pass's
     /// input has changed what Tab has to do, so the document is declared again. A presentation that opened or became
-    /// active asks for the focus, and so does the document when a dialog, menu or popup closes and leaves nothing
-    /// focused. Both wait for the last of them to close.
+    /// active asks for the focus. So does the document with nothing focused, when a dialog, menu or popup has closed, and
+    /// while Tab has work on the slide (a ribbon field committed with Enter leaves nothing focused). All wait for the
+    /// last dialog, menu or popup to close.
     pub(super) fn finish_document(&mut self, ctx: &egui::Context, before: Option<u64>) {
         let drawn = self.document_focus.drawn;
         if drawn.is_none() {
@@ -88,7 +89,8 @@ impl SlideApp {
             self.document_focus.uncovered = 0;
             return;
         }
-        host_canvas(ctx, self.document_keeps_tab(ctx));
+        let keeps_tab = self.document_keeps_tab(ctx);
+        host_canvas(ctx, keeps_tab);
         if drawn != before {
             self.document_focus.opened = ASKING_PASSES;
         }
@@ -96,11 +98,11 @@ impl SlideApp {
             self.document_focus.uncovered = ASKING_PASSES;
             return;
         }
+        let unfocused = ctx.memory(|m| m.focused().is_none());
         let DocumentFocus { opened, uncovered, .. } = &mut self.document_focus;
-        if *opened == 0 && *uncovered == 0 {
+        if *opened == 0 && *uncovered == 0 && !(unfocused && keeps_tab) {
             return;
         }
-        let unfocused = ctx.memory(|m| m.focused().is_none());
         if unfocused || (*opened > 0 && Self::focus_is_free(ctx)) {
             (*opened, *uncovered) = (0, 0);
             focus_document(ctx);

@@ -99,6 +99,23 @@ fn after_a_dialog_closes_tab_selects_the_next_object() {
 }
 
 #[test]
+fn after_enter_in_a_ribbon_field_tab_selects_the_next_object() {
+    let mut h = harness();
+    h.state_mut().ui.tab = "Transitions".into();
+    tab(&mut h);
+    let objects: Vec<_> = h.state().session.active().unwrap().shapes().iter().map(|s| s.id).collect();
+    assert_eq!(selected(&h), objects[..1]);
+    h.get_by_role_and_label(Role::TextInput, "Duration value").focus();
+    h.run_steps(2);
+    assert!(h.ctx.text_edit_focused());
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(!h.ctx.text_edit_focused(), "Enter commits the field");
+    assert!(h.state().session.active().unwrap().selection.text.is_none(), "and reaches nothing on the slide");
+    tab(&mut h);
+    assert_eq!((selected(&h), focused(&h)), (vec![objects[1]], Some(document_id())));
+}
+
+#[test]
 fn a_press_in_the_sorter_takes_the_keyboard_from_a_focused_button() {
     let mut h = harness();
     h.state_mut().ui.view = ViewMode::Sorter;
