@@ -35,6 +35,8 @@ pub(crate) fn probe_fits(b: &[u8]) -> bool {
     }
 }
 
+use craft_media::isobmff::boxes::BoxIter;
+
 fn be32(b: &[u8], at: usize) -> Option<u64> {
     b.get(at..at.checked_add(4)?).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as u64)
 }
@@ -43,37 +45,28 @@ fn boxes_fit(b: &[u8], file_len: u64, depth: u32) -> bool {
     if depth > 16 {
         return false;
     }
-    let mut at = 0usize;
-    while b.len() - at >= 8 {
-        let Some(size32) = be32(b, at) else { return false };
-        let kind = &b[at + 4..at + 8];
-        let (header, size) = match size32 {
-            0 => (8, (b.len() - at) as u64),
-            1 => match b.get(at + 8..at + 16) {
-                Some(s) => (16, u64::from_be_bytes(s.try_into().unwrap_or_default())),
-                None => return false,
-            },
-            n => (8, n),
-        };
-        if size < header as u64 || size > (b.len() - at) as u64 {
+    let mut iter = if depth == 0 { BoxIter::new(b).allow_truncated() } else { BoxIter::new(b) };
+    while let Some(item) = iter.next() {
+        // Fewer than 8 trailing bytes are not a box header; symphonia stops there.
+        let Ok(bx) = item else { return b.len().saturating_sub(iter.offset()) < 8 };
+        let kind = &bx.kind.0;
+        if bx.truncated {
             // A box that runs past the end of the file is fine at the top level (the file was cut
-            // short; symphonia stops there), but never inside a parent.
-            return depth == 0 && !matches!(kind, b"moov" | b"moof");
+            // short; symphonia stops there), but never inside a parent (the iterator rejects it there) or for `moov` / `moof`.
+            return !matches!(kind, b"moov" | b"moof");
         }
-        let body = &b[at + header..at + size as usize];
-        let ok = if CONTAINERS.iter().any(|c| c.as_slice() == kind) {
-            boxes_fit(body, file_len, depth + 1)
+        let ok = if CONTAINERS.contains(&kind) {
+            boxes_fit(bx.payload, file_len, depth + 1)
         } else if kind == b"meta" {
             // ISO `meta` is a full box (4 bytes of version and flags first); QuickTime's is not.
-            let skip = if be32(body, 0) == Some(0) { 4 } else { 0 };
-            boxes_fit(&body[skip.min(body.len())..], file_len, depth + 1)
+            let skip = if be32(bx.payload, 0) == Some(0) { 4 } else { 0 };
+            boxes_fit(&bx.payload[skip.min(bx.payload.len())..], file_len, depth + 1)
         } else {
-            table_fits(kind, body, file_len)
+            table_fits(kind, bx.payload, file_len)
         };
         if !ok {
             return false;
         }
-        at += size as usize;
     }
     true
 }
@@ -121,5 +114,13 @@ mod tests {
         assert!(!probe_fits(&prefixed));
         let far = [&vec![0u8; PROBE_SEARCH_LIMIT + 16][..], &mp4].concat();
         assert!(probe_fits(&far), "past the probe window symphonia never reads it as an MP4");
+    }
+
+    #[test]
+    fn short_tails_and_cut_top_level_boxes() {
+        let ftyp = [&16u32.to_be_bytes()[..], b"ftyp", b"isom", &[0; 4]].concat();
+        assert!(tables_fit(&[&ftyp[..], &[0, 0, 1]].concat()));
+        assert!(tables_fit(&[&ftyp[..], &100u32.to_be_bytes(), b"mdat"].concat()));
+        assert!(!tables_fit(&[&ftyp[..], &100u32.to_be_bytes(), b"moov"].concat()));
     }
 }
