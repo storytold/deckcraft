@@ -337,7 +337,7 @@ mod tests {
         app.session.execute("format.language", &json!({"lang": "en-US-x-a-very-long-private-use-tag"})).unwrap();
         app.ui.notes = false;
         let size = egui::vec2(700.0, 800.0);
-        let mut h = Harness::builder().with_size(size).build_ui_state(
+        let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(size).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());
                 app.ui(ui);
@@ -384,7 +384,7 @@ mod tests {
     /// hear which view button is on, and read the slide counter and the status message.
     #[test]
     fn status_bar_controls_have_names() {
-        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());
                 app.ui(ui);

@@ -49,6 +49,8 @@ enum Paint {
     Pattern(String, Rgba, Rgba),
     /// `a:noFill`: only the outline, if any, shows.
     Nothing,
+    /// A line series' legend key: its colour and width, and whether it carries a marker.
+    Line(Rgba, f64, bool),
 }
 
 /// The paint of fill `f` as a bar or legend key draws it; the palette's `fallback` when the file
@@ -72,6 +74,20 @@ fn fill_with(ctx: &mut RenderContext, p: &Paint, r: Rect, m: Affine) {
         }
         Paint::Pattern(name, fg, bg) => crate::pattern::fill(ctx, name, *fg, *bg, 1.0, &r.to_path(0.1), m),
         Paint::Nothing => {}
+        Paint::Line(c, width, marker) => {
+            // A short stretch of the series' line through the key's middle, with the marker on it.
+            let mid = (r.y0 + r.y1) / 2.0;
+            let mut p = BezPath::new();
+            p.move_to((r.x0, mid));
+            p.line_to((r.x1, mid));
+            ctx.set_transform(m);
+            ctx.set_paint(color(*c, 1.0));
+            ctx.set_stroke(kurbo::Stroke::new(width.min(r.height() * 0.4)));
+            ctx.stroke_path(&p);
+            if *marker {
+                ctx.fill_path(&kurbo::Circle::new(((r.x0 + r.x1) / 2.0, mid), r.height() * 0.3).to_path(0.1));
+            }
+        }
     }
 }
 
@@ -95,6 +111,13 @@ fn bar_paint(ctx: &Ctx, c: &Chart, si: usize, pi: usize, s: &deckcraft_model::ch
         return Paint::Color(series_color(ctx, c, pi));
     }
     paint_of(ctx, s.fill.as_ref(), series_color(ctx, c, si))
+}
+
+/// Colour of pie slice `i`: its `<c:dPt>` solid fill, else the palette's. Slices and legend keys share it.
+fn pie_slice_color(ctx: &Ctx, c: &Chart, s: Option<&deckcraft_model::chart::Series>, i: usize) -> Rgba {
+    s.and_then(|s| s.point_fills.iter().find(|(k, _)| *k == i))
+        .and_then(|(_, f)| if let Fill::Solid { color: cc } = f { Some(ctx.color(cc, None)) } else { None })
+        .unwrap_or_else(|| series_color(ctx, c, i))
 }
 
 fn polyline(pts: &[Point]) -> BezPath {
@@ -613,7 +636,7 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
         // A map draws its own colour scale.
         vec![]
     } else if pie {
-        c.categories.iter().enumerate().map(|(i, n)| (n.clone(), Paint::Color(series_color(rctx, c, i)), None)).collect()
+        c.categories.iter().enumerate().map(|(i, n)| (n.clone(), Paint::Color(pie_slice_color(rctx, c, c.series.first(), i)), None)).collect()
     } else {
         c.series
             .iter()
@@ -621,7 +644,14 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
             .map(|(i, s)| {
                 let k = c.series_kind(s);
                 let line = !k.is_bar_like() && !matches!(k, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
-                if line {
+                if matches!(k, ChartType::Line | ChartType::LineMarkers | ChartType::StackedLine | ChartType::Radar) {
+                    let lw = s.line.as_ref().and_then(|l| l.width).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(2.25).clamp(0.25, 20.0);
+                    (
+                        s.name.clone(),
+                        Paint::Line(series_line(rctx, c, i, s), lw, k == ChartType::LineMarkers || (k == ChartType::Radar && s.marker.is_some())),
+                        None,
+                    )
+                } else if line {
                     (s.name.clone(), Paint::Color(series_line(rctx, c, i, s)), None)
                 } else if k.is_bar_like() {
                     let paint = if c.vary_colors && c.series.len() == 1 && s.fill.is_none() {
@@ -1179,12 +1209,7 @@ fn draw_pie(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
         p.extend(arc.append_iter(0.1));
         p.close_path();
         ctx.set_transform(m);
-        let col = s
-            .point_fills
-            .iter()
-            .find(|(k, _)| *k == i)
-            .and_then(|(_, f)| if let Fill::Solid { color: cc } = f { Some(rctx.color(cc, None)) } else { None })
-            .unwrap_or_else(|| series_color(rctx, c, i));
+        let col = pie_slice_color(rctx, c, Some(s), i);
         ctx.set_paint(color(col, 1.0));
         ctx.fill_path(&p);
         ctx.set_paint(color(Rgba::WHITE, 1.0));

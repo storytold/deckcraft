@@ -18,13 +18,17 @@ fn png() -> Vec<u8> {
 }
 
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1600.0, 1200.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     h
 }
