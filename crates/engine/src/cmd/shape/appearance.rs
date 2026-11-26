@@ -101,13 +101,18 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
     let mut stops = stops;
     stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
     let path = |p: &str| GradientShape::Path { path: p.into(), focus };
+    // An omitted `scaled` is false; a present value that is not a boolean is refused.
+    let scaled = match v.get("scaled") {
+        None => false,
+        Some(s) => s.as_bool()?,
+    };
     let shape = match v.get("kind").and_then(Value::as_str) {
         Some("radial" | "circle") => path("circle"),
         Some("rectangular" | "rect") => path("rect"),
         Some("path" | "shape") => path("shape"),
         _ => GradientShape::Linear {
             angle: v.get("angle").and_then(Value::as_f64).filter(|a| a.is_finite()).unwrap_or(90.0).rem_euclid(360.0),
-            scaled: v.get("scaled").and_then(Value::as_bool).unwrap_or(false),
+            scaled,
         },
     };
     // An omitted tile is the shape's own box; a tile that is not four finite numbers is refused.
@@ -690,6 +695,16 @@ mod tests {
         assert_eq!(gradient_param(&json!({"stops": stops, "tile": [0.1, 0.2, 0.3, 0.4]})).expect("tile").tile, [0.1, 0.2, 0.3, 0.4]);
         for tile in [json!([0.1, 0.2]), json!([0.1, 0.2, 0.3, 0.4, 0.5]), json!([0.1, 0.2, "x", 0.4]), json!("none"), json!([0.1, 0.2, 0.3, null])] {
             assert!(gradient_param(&json!({"stops": stops, "tile": tile})).is_none(), "{tile}");
+        }
+    }
+
+    #[test]
+    fn a_gradient_scaled_flag_that_is_not_a_boolean_is_refused() {
+        let stops = json!([[0, "#ff0000"], [1, "#0000ff"]]);
+        assert!(gradient_param(&json!({"stops": stops})).is_some());
+        assert!(gradient_param(&json!({"stops": stops, "scaled": true})).is_some());
+        for scaled in [json!("yes"), json!(1), json!(null)] {
+            assert!(gradient_param(&json!({"stops": stops, "scaled": scaled})).is_none(), "{scaled}");
         }
     }
 
