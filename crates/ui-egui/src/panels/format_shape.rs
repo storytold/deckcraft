@@ -11,12 +11,14 @@ pub(super) fn solid_fill_transparency_percent(fill: Option<&Fill>) -> f32 {
     ((1.0 - color.alpha()) * 100.0) as f32
 }
 
-/// Percent transparency the Transparency slider starts at: the shape's own solid or picture
-/// fill, or, for an automatic fill, the `effective` fill it inherits.
-pub(super) fn fill_transparency_seed(own: Option<&Fill>, effective: Option<&Fill>) -> f32 {
-    match own.or(effective) {
-        Some(Fill::Picture(pf)) => ((1.0 - pf.alpha.unwrap_or(1.0)) * 100.0) as f32,
-        other => solid_fill_transparency_percent(other),
+/// Whether the Transparency slider shows. `shape.fill {transparency}` changes a solid fill (an
+/// automatic one through its effective color) and the shape's own picture fill. It leaves a
+/// picture that an automatic fill inherits as it is, so no slider shows for that.
+pub(super) fn fill_transparency_editable(own: Option<&Fill>, effective: Option<&Fill>) -> bool {
+    match own {
+        None => !matches!(effective, Some(Fill::Picture(_))),
+        Some(Fill::Solid { .. } | Fill::Picture(_)) => true,
+        Some(_) => false,
     }
 }
 
@@ -413,9 +415,8 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     None => ("shape.fill".into(), json!({"none": true})),
                 });
             }
-            // `shape.fill {transparency}` changes a solid fill (an automatic one through its
-            // effective color) and a picture fill; a gradient has a transparency per stop.
-            let transparency = !members_background && matches!(sh.fill, None | Some(Fill::Solid { .. } | Fill::Picture(_)));
+            // A gradient has a transparency per stop.
+            let transparency = !members_background && fill_transparency_editable(sh.fill.as_ref(), effective_fill.as_ref());
             ui.horizontal(|ui| {
                 if !transparency {
                     return;
@@ -423,7 +424,12 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 let label = ui.label("Transparency");
                 // Seed from this shape. A shared temp defaulted to 0, so a shape that was
                 // already 40% transparent showed as opaque, and leaving the slider wrote 0.
-                let seed = fill_transparency_seed(sh.fill.as_ref(), effective_fill.as_ref());
+                let seed = match &sh.fill {
+                    Some(Fill::Picture(pf)) => ((1.0 - pf.alpha.unwrap_or(1.0)) * 100.0) as f32,
+                    Some(fill) => solid_fill_transparency_percent(Some(fill)),
+                    // An automatic fill shows the transparency of the fill it inherits.
+                    None => solid_fill_transparency_percent(effective_fill.as_ref()),
+                };
                 let id = ui.scope_id().with(("ftr", sh.id.0));
                 let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(seed));
                 let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix("%")).labelled_by(label.id);

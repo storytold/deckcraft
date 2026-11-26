@@ -193,14 +193,19 @@ mod tests {
         assert_eq!(super::edited_scheme(&app).raw.get(SchemeSlot::Accent1), half_red);
     }
 
-    /// An automatic fill that inherits a picture starts the slider at the picture's transparency.
+    /// `shape.fill {transparency}` does not change a picture that an automatic fill inherits, so
+    /// no Transparency slider shows for one.
     #[test]
-    fn an_inherited_picture_fill_seeds_the_transparency_slider() {
-        use super::format_shape::fill_transparency_seed;
+    fn an_inherited_picture_fill_has_no_transparency_slider() {
+        use super::format_shape::fill_transparency_editable;
         let pic = Fill::Picture(deckcraft_model::style::PictureFill { alpha: Some(0.6), ..Default::default() });
-        assert!((fill_transparency_seed(None, Some(&pic)) - 40.0).abs() < 0.01);
-        assert!((fill_transparency_seed(Some(&pic), None) - 40.0).abs() < 0.01);
-        assert_eq!(fill_transparency_seed(None, None), 0.0);
+        let solid = Fill::solid(ColorRef::scheme(SchemeSlot::Accent1));
+        assert!(!fill_transparency_editable(None, Some(&pic)));
+        assert!(fill_transparency_editable(None, Some(&solid)));
+        assert!(fill_transparency_editable(None, None));
+        assert!(fill_transparency_editable(Some(&pic), None));
+        assert!(fill_transparency_editable(Some(&solid), Some(&pic)));
+        assert!(!fill_transparency_editable(Some(&Fill::None), None));
     }
 
     #[test]
