@@ -14,13 +14,17 @@ fn ctrl_f_puts_the_caret_in_find_what() {
     s.execute("text.exit", &json!({})).unwrap();
     s.doc_mut().unwrap().selection.shapes.clear();
     let app = SlideApp::new(s, Services::default());
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
     h.run_steps(3);

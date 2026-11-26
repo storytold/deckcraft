@@ -15,7 +15,7 @@ fn harness() -> Harness<'static, SlideApp> {
     session.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     session.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
     session.execute("shape.fill", &json!({"color": "#ff0000"})).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -57,6 +57,19 @@ fn click(h: &mut Harness<'static, SlideApp>, pos: Pos2) {
 
 fn selection(h: &Harness<'static, SlideApp>) -> Vec<u32> {
     h.state().session.doc().unwrap().selection.shapes.iter().map(|s| s.0).collect()
+}
+
+#[test]
+fn space_on_the_focused_slide_picks_no_colour() {
+    let mut h = harness();
+    ask(&mut h);
+    let on_shape = at(&h, 150.0, 150.0);
+    h.input_mut().events.push(Event::PointerMoved(on_shape));
+    h.run_steps(3);
+    assert!(h.ctx.memory(|m| m.has_focus(crate::framework::document_id())));
+    h.key_press(egui::Key::Space);
+    h.run_steps(3);
+    assert!(h.state().eyedropper.is_some() && !result_waits_for(&h.ctx, menu()));
 }
 
 #[test]
@@ -125,7 +138,7 @@ fn set_transparent_color_takes_the_colour_clicked_in_the_picture() {
     session.execute("insert.picture", &json!({"data": data, "name": "a.png", "rect": [100, 100, 400, 200]})).unwrap();
     let mut app = SlideApp::new(session, Services::default());
     app.ui.tab = "Picture Format".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1600.0, 1200.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

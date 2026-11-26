@@ -112,9 +112,11 @@ fn wheel_navigation(app: &mut SlideApp, ui: &mut Ui, carry_id: egui::Id, doc_uid
 }
 
 fn empty_deck_prompt(app: &mut SlideApp, ui: &mut Ui, avail: Rect, t: &Tokens) {
-    let resp = ui.allocate_rect(avail, Sense::click());
+    ui.advance_cursor_after_rect(avail);
+    let resp = app.document_widget(ui, avail, Sense::click());
     ui.painter().text(avail.center(), Align2::CENTER_CENTER, "Click to add first slide", theme::font(22.0), t.text_dim);
-    if resp.clicked() {
+    // Enter on the focused document is the session's New Slide, not a click of the prompt.
+    if resp.clicked_by(egui::PointerButton::Primary) || ui.input(|i| i.has_accesskit_action_request(resp.id, egui::accesskit::Action::Click)) {
         let _ = app.run("slide.new", json!({"layout": "title"}));
     }
 }
@@ -172,7 +174,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let last_id = scroll_id.with("last");
     let mut offset: egui::Vec2 = ui.data_mut(|d| d.get_temp(scroll_id).unwrap_or_default());
     let last: Option<(Rect, f32)> = ui.data_mut(|d| d.get_temp(last_id));
-    let resp = ui.allocate_rect(avail, Sense::click_and_drag());
+    ui.advance_cursor_after_rect(avail);
+    let resp = app.document_widget(ui, avail, Sense::click_and_drag());
     let (wheel, zoom_delta, hover) = ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
     let zooming = resp.hovered() && (zoom_delta - 1.0).abs() > 1e-3;
     if zooming {

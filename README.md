@@ -19,7 +19,8 @@
 
 <p align="center">
   Build decks with themes, layouts, shapes, pictures, tables, charts, transitions and animations,
-  open and save .pptx presentation files, and present them full screen. Native on macOS, Windows, Linux
+  open and save .pptx presentation files, open PowerPoint 97–2003 .ppt/.pot/.pps files (import only), and present them full
+  screen. Native on macOS, Windows, Linux
   and FreeBSD, and in the browser. Every button is also a command that the CLI and AI agents
   (through MCP) can drive.
 </p>
@@ -81,7 +82,7 @@ Today it can:
   audio and video (MP3, AAC, FLAC, ALAC, Ogg, Opus, WAV, AIFF; H.264, HEVC, VP9, AV1).
 - **Present**: transitions (including Morph), entrance/emphasis/exit and motion-path animations,
   by-paragraph builds, full-screen slide show, presenter view, pen, rehearse timings, media playback.
-- **Exchange files**: open and save .pptx presentations, export PDF (slides, notes pages, handouts
+- **Exchange files**: open and save .pptx presentations, open PowerPoint 97–2003 .ppt/.pot/.pps files (import only: Save asks for a new name), export PDF (slides, notes pages, handouts
   with selectable text), PNG/JPEG, an animated GIF of the deck and outlines. Unsaved work is kept by AutoRecover.
 - **Automate**: 200+ commands with undo, all scriptable from the CLI, a JSON control channel and an
   MCP server for AI agents.
@@ -171,6 +172,32 @@ See [ROADMAP.md](ROADMAP.md) for the stage, numbers by dimension and what's next
 [docs/target-app-parity.md](docs/target-app-parity.md) for the full assessment,
 [docs/gaps.md](docs/gaps.md) for every known shortfall and
 [docs/parity-checklist.md](docs/parity-checklist.md) for the feature-by-feature checklist.
+
+## Nightly builds (not released yet)
+
+DeckCraft has a separate **DeckCraft Nightly** channel for Launcher-managed nightly builds beside
+the stable app: its own application ID, package identity, data folder, taskbar entry and window
+class, so it never reads or writes stable DeckCraft's settings, recovery autosaves, logs, user
+dictionary or single window state. The Nightly app is started only by ArtCraft Launcher
+(`--launch-profile nightly-v1 --profile-root <dir> -- <files>`); the profile root is validated and
+fenced against every stable data and install folder, so a Nightly window cannot fall back to
+stable state. Nightly is managed by the Launcher and does not self-update.
+
+On Linux, the plain nightly `.tar.gz` starts through the canonical shared launcher template
+(`packaging/linux/nightly-launch.sh`, rendered from `craft-common-actions`'s
+`scripts/nightly-launcher.sh.in`): `deckcraft` starts `deckcraft-bin` beside it on the nightly-v1
+profile under the Nightly package identity. The distro formats keep their own launcher
+(`packaging/linux/nightly-package-launch.sh`) and their own profile folder; the AppImage, the deb/rpm
+package, the Flatpak and the Arch handoff all pass `--launch-profile nightly-v1 --profile-root <dir>
+-- <files>` to the GUI, so an unpacked or distro-installed copy is isolated without the Launcher.
+
+The channel's packaging lives in `packaging/nightly-common.sh`, `packaging/{linux,macos,windows}/nightly*`
+and `.github/workflows/nightly*.yml`. The producer and signer workflows are registered and can be
+dispatched by the reviewed release managers only; there is no schedule or automatic dispatch yet.
+Read [`docs/nightly-release-preparation.md`](docs/nightly-release-preparation.md) before the first
+supervised run. The channel is compiled with `DECKCRAFT_BUILD_CHANNEL=nightly-v1`, which also
+selects the deeper-background icons recorded in
+[`assets/app-icon/nightly-provenance.json`](assets/app-icon/nightly-provenance.json).
 
 ## Downloads
 
