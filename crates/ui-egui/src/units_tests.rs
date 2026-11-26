@@ -12,7 +12,7 @@ use deckcraft_engine::Session;
 use deckcraft_geom::Unit;
 
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
-    Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

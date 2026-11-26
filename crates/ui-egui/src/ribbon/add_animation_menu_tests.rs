@@ -13,7 +13,7 @@ fn harness(size: egui::Vec2) -> Harness<'static, SlideApp> {
     session.execute("edit.select", &json!({"ids": [id]})).unwrap();
     let mut app = SlideApp::new(session, Services::default());
     app.ui.tab = "Animations".into();
-    let mut h = Harness::builder().with_size(size).with_step_dt(1.0 / 60.0).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(size).with_step_dt(1.0 / 60.0).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

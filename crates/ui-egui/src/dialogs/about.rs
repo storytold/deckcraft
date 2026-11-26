@@ -20,7 +20,7 @@ pub fn about(_app: &mut SlideApp, ui: &mut Ui) {
     ui.vertical_centered(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
         paint_logo(ui.painter(), r);
-        ui.label(egui::RichText::new("DeckCraft").font(theme::bold(22.0)));
+        ui.label(egui::RichText::new(crate::flavor::app_name()).font(theme::bold(22.0)));
         ui.label(egui::RichText::new(version_line()).color(t.text_dim));
         ui.add_space(6.0);
         ui.label("Presentations and slide shows, rebuilt from scratch in pure Rust.");
@@ -38,7 +38,7 @@ pub fn about(_app: &mut SlideApp, ui: &mut Ui) {
 /// from `[workspace.package] version` (the single source of truth, `cargo xtask version`); the
 /// release workflow sets `DECKCRAFT_BUILD_SHA` / `DECKCRAFT_BUILD_DATE` at build time.
 pub fn version_line() -> String {
-    let mut s = format!("Version {}", env!("CARGO_PKG_VERSION"));
+    let mut s = format!("Version {}", crate::flavor::version());
     let sha = option_env!("DECKCRAFT_BUILD_SHA").map(|s| s.get(..9).unwrap_or(s)).filter(|s| !s.is_empty());
     let date = option_env!("DECKCRAFT_BUILD_DATE").filter(|s| !s.is_empty());
     match (sha, date) {
@@ -85,13 +85,17 @@ mod about_credits_tests {
     fn about_dialog_tabs_keep_responding() {
         let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), Services::default());
         app.dialog = Some(Dialog::new("about"));
-        let mut h = Harness::builder().with_size(egui::vec2(1440.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-            |ui, app: &mut SlideApp| {
-                app.logic(ui.ctx());
-                app.ui(ui);
-            },
-            app,
-        );
+        let mut h = Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .with_size(egui::vec2(1440.0, 900.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                app,
+            );
         h.run_steps(4);
         assert_eq!(tab_of(&h), "about");
         for label in ["Contributors", "Models", "About", "Models", "Contributors"] {

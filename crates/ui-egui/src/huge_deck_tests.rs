@@ -13,7 +13,7 @@ fn harness(n: usize) -> egui_kittest::Harness<'static, SlideApp> {
     for _ in 1..n {
         s.execute("slide.new", &json!({})).unwrap();
     }
-    egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
