@@ -1859,13 +1859,13 @@ fn a_restored_frameless_window_resizes_from_its_top_right_corner_and_edges() {
     let sent = press_commands(&mut h, close);
     assert!(!sent.iter().any(|c| matches!(c, C::BeginResize(_))), "a caption button press starts no resize: {sent:?}");
     let mut h = frameless_windowed_show();
-    h.get_by_role_and_label(egui::accesskit::Role::Button, "Close").click();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Minimize").click();
     let mut sent = Vec::new();
     for _ in 0..3 {
         h.run_steps(1);
         sent.extend(h.output().viewport_output[&egui::ViewportId::ROOT].commands.clone());
     }
-    assert!(sent.iter().any(|c| matches!(c, C::Close)), "and still closes: {sent:?}");
+    assert!(sent.iter().any(|c| matches!(c, C::Minimized(true))), "and still acts: {sent:?}");
 }
 
 #[test]
