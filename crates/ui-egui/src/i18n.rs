@@ -6,18 +6,24 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
+/// User interface language selection.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Language {
+    /// Follow the host operating system or browser locale.
     #[default]
     System,
+    /// Brazilian Portuguese (`pt-BR`).
     PtBr,
+    /// English fallback (`en`).
     En,
 }
 
 impl Language {
+    /// All available language choices in presentation order.
     pub const ALL: [Self; 3] = [Self::System, Self::PtBr, Self::En];
 
+    /// Human-readable display label for preferences and menus.
     pub fn label(self) -> &'static str {
         match self {
             Self::System => tr("System language"),
@@ -26,6 +32,7 @@ impl Language {
         }
     }
 
+    /// Match a BCP 47 locale tag (e.g. `pt-BR`, `pt_PT`, `en-US`) to a supported language.
     pub fn from_locale(locale: &str) -> Self {
         let language = locale.split(['-', '_', '.', '@']).next().unwrap_or("");
         if language.eq_ignore_ascii_case("pt") {
@@ -35,6 +42,7 @@ impl Language {
         }
     }
 
+    /// Machine-readable language code for serialization or command options.
     pub fn code(self) -> &'static str {
         match self {
             Self::System => "system",
@@ -43,6 +51,7 @@ impl Language {
         }
     }
 
+    /// Parse a language code string into a [`Language`] option.
     pub fn from_code(code: &str) -> Option<Self> {
         match code.to_ascii_lowercase().as_str() {
             "system" | "auto" => Some(Self::System),
@@ -52,6 +61,7 @@ impl Language {
         }
     }
 
+    /// Resolve [`Language::System`] to a concrete language using the provided system locale.
     pub fn resolve(self, locale: Option<&str>) -> Self {
         if self == Self::System {
             Self::from_locale(locale.unwrap_or(""))
@@ -65,14 +75,17 @@ thread_local! {
     static CURRENT: Cell<Language> = const { Cell::new(Language::En) };
 }
 
+/// Returns the currently active user interface language for the current thread.
 pub fn current() -> Language {
     CURRENT.get()
 }
 
+/// Set the currently active user interface language for the current thread.
 pub fn set_current(language: Language) {
     CURRENT.set(language);
 }
 
+/// Convenience alias to set the active user interface language.
 pub fn set_language(language: Language) {
     set_current(language);
 }
@@ -132,7 +145,7 @@ pub fn format(source: &str, values: &[&str]) -> String {
     out
 }
 
-/// Integer count forms
+/// Substitute an integer count into singular/plural forms depending on the active language.
 pub fn count(n: usize, english: &str, singular: &str, plural: &str) -> String {
     let word = if CURRENT.get() == Language::PtBr {
         if n == 1 { singular } else { plural }
@@ -142,7 +155,7 @@ pub fn count(n: usize, english: &str, singular: &str, plural: &str) -> String {
     std::format!("{n} {word}")
 }
 
-/// Recovery notice
+/// Formats the AutoRecover startup notification with the number of recovered presentations.
 pub fn recovered(n: usize) -> String {
     let amount = count(
         n,
@@ -178,9 +191,15 @@ mod tests {
         assert_eq!(tr("Saved {path}").replace("{path}", "test.deckcraft"), "Salvo em test.deckcraft");
         assert_eq!(format("Still opening {0}", &["deck.pptx"]), "Ainda abrindo deck.pptx");
         assert_eq!(format("Stopped opening {0}", &["deck.pptx"]), "Cancelada a abertura de deck.pptx");
+        assert_eq!(tr("Inserted 1 slide"), "Inserido 1 slide");
         assert_eq!(format("Inserted {} slides", &["3"]), "Inseridos 3 slides");
         assert_eq!(tr("Couldn't save AutoRecover information: {e}").replace("{e}", "disk full"), "Não foi possível salvar informações de AutoRecuperação: disk full");
         assert_eq!(tr("Distribute Vertically"), "Distribuir Verticalmente");
+        assert_eq!(tr("File (Alt+F)"), "Arquivo (Alt+F)");
+        assert_eq!(tr("SmartArt Design"), "Design do SmartArt");
+        assert_eq!(tr("Zoom"), "Zoom");
+        assert_eq!(tr("Zoom…"), "Zoom…");
+        assert_eq!(tr("Zoom on"), "Zoom ativado");
     }
 
     #[test]
@@ -188,7 +207,11 @@ mod tests {
         set_current(Language::En);
         assert_eq!(tr("Cut"), "Cut");
         assert_eq!(tr("Home"), "Home");
+        assert_eq!(tr("Inserted 1 slide"), "Inserted 1 slide");
         assert_eq!(format("Inserted {} slides", &["3"]), "Inserted 3 slides");
+        assert_eq!(tr("File (Alt+F)"), "File (Alt+F)");
+        assert_eq!(tr("SmartArt Design"), "SmartArt Design");
+        assert_eq!(tr("Zoom on"), "Zoom on");
     }
 
     #[test]
