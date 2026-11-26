@@ -19,14 +19,16 @@ pub mod backstage;
 pub mod canvas;
 pub mod capture;
 pub mod control;
-pub mod desktop_theme;
 pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
+pub mod flavor;
+pub mod framework;
 pub mod icons;
 pub mod media;
 pub mod menus;
 pub mod opening;
+pub mod os_window;
 pub mod presenter;
 pub mod ribbon;
 pub mod settings;
@@ -73,7 +75,7 @@ pub use panels::notes;
 pub use panels::selpane;
 pub use panels::thumbs;
 pub use ribbon::qat;
-pub use services::{DownloadFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
+pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
 use state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp};
 pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
 
@@ -117,7 +119,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
-    ("view.theme", "Display theme", None, "{value?: system|light|dark}"),
+    ("view.theme", "Display theme", None, "{value: system|light|dark}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -145,7 +147,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
-    ("app.smartArtPictureDialog", "Insert Picture in SmartArt…", None, "{id?, index}"),
+    ("app.smartArtPictureDialog", "Insert Picture in Diagram…", None, "{id?, index}"),
     ("app.changePictureDialog", "Change Picture…", None, "{}"),
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
@@ -267,8 +269,11 @@ pub struct SlideApp {
     synthetic_generation: u64,
     /// Document/slide/canvas identity the queued/injected batch belongs to.
     synthetic_target: Option<InputTarget>,
-    /// Focus identity the pending batch was injected with; a focus change retracts it.
+    /// Focus identity the pending batch was injected with (the document window counts as none); a focus change
+    /// retracts it.
     synthetic_focus: Option<egui::Id>,
+    /// The document window as a Tab stop, and when it takes the keyboard focus.
+    document_focus: app::DocumentFocus,
     /// `RawInput::time` of the pass the batch was injected into. A logic-only callback leaves
     /// `InputState` from the previous pass; comparing this value keeps retraction from draining
     /// an unrelated batch out of that stale input.
@@ -278,7 +283,8 @@ pub struct SlideApp {
     ribbon_scroll: HashMap<String, u32>,
     /// Monotonic identity for a new slide show instance (`start_show`).
     show_instance: u64,
-    /// Monotonic identity for a new background-open attempt.
+    /// Monotonic identity for a new background-open attempt (the web build has no threads).
+    #[cfg(not(target_arch = "wasm32"))]
     opening_generation: u64,
     /// Canvas screen rect and points-per-slide-point scale (for control & tests).
     pub canvas_rect: Option<egui::Rect>,
@@ -299,15 +305,19 @@ pub struct SlideApp {
     print_previews: app::files::PrintPreviews,
     #[cfg(not(target_arch = "wasm32"))]
     updates_rt: updates_ui::Runtime,
+    /// The framework dialogs (the update prompt and check result), run once per pass after the
+    /// app's own UI.
+    pub framework_dialogs: craft_ui::dialog::DialogHost,
+    /// Who DeckCraft is to the framework's dialogs.
+    framework_host: std::sync::Arc<craft_host::Host>,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
     /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).
     capture: capture::Capture,
     styled: bool,
     restyle: bool,
-    desktop_theme: desktop_theme::DesktopTheme,
-    desktop_dark: Option<bool>,
-    last_system_dark: Option<bool>,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    desktop_theme: Option<craft_platform::appearance::SystemReader>,
     pub(crate) shown_brightness: theme::Brightness,
     fonts_ready: bool,
     last_time: f64,
@@ -341,6 +351,9 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// The empty presentation host mode starts with ([`SlideApp::start_for_host`]), until the
+    /// first file the page sends takes its place.
+    host_start: Option<u64>,
     /// Owner/generation/cause bookkeeping for the canvas text IME producer.
     ime_tracker: egui::ime_context::ImeContextTracker,
     /// Canvas IME geometry for this pass: the caret while editing, or the selected shape.
@@ -454,6 +467,8 @@ mod browsetheme_tests;
 #[cfg(test)]
 mod compare_tests;
 #[cfg(test)]
+mod document_focus_tests;
+#[cfg(test)]
 mod eyedropper_tests;
 #[cfg(test)]
 mod field_frame_tests;
@@ -492,6 +507,9 @@ mod datetime_tests;
 
 #[cfg(test)]
 mod inbox_tests;
+
+#[cfg(test)]
+mod host_save_tests;
 
 #[cfg(test)]
 mod tests;

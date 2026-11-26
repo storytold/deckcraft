@@ -6,14 +6,14 @@ use super::state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, Ime
 use super::updates_ui;
 use super::{
     AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
-    PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture, desktop_theme, dialogs,
-    doc_window, eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast,
-    uifonts,
+    PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture, dialogs, doc_window,
+    eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast, uifonts,
 };
 
 mod clipboard;
 mod commands;
 mod control;
+mod document_focus;
 pub(crate) mod files;
 mod frame;
 mod ime;
@@ -23,6 +23,7 @@ mod playback;
 
 #[cfg(test)]
 pub(crate) use clipboard::{OBJECTS_MARKER, system_clipboard_text};
+pub(crate) use document_focus::DocumentFocus;
 #[cfg(test)]
 pub(crate) use files::web_image_files;
 pub use keys::key_name;
@@ -70,9 +71,11 @@ impl SlideApp {
             synthetic_generation: 0,
             synthetic_target: None,
             synthetic_focus: None,
+            document_focus: DocumentFocus::default(),
             synthetic_injected_time: None,
             ribbon_scroll: HashMap::new(),
             show_instance: 0,
+            #[cfg(not(target_arch = "wasm32"))]
             opening_generation: 0,
             canvas_rect: None,
             eyedropper: None,
@@ -86,13 +89,14 @@ impl SlideApp {
             print_previews: files::PrintPreviews::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
+            framework_dialogs: craft_ui::dialog::DialogHost::new(),
+            framework_host: crate::framework::host(),
             pending_copy: None,
             capture: capture::Capture::default(),
             styled: false,
             restyle: true,
-            desktop_theme: desktop_theme::DesktopTheme::start(),
-            desktop_dark: None,
-            last_system_dark: None,
+            #[cfg(all(unix, not(target_os = "macos")))]
+            desktop_theme: None,
             shown_brightness: theme::Brightness::Light,
             fonts_ready: false,
             last_time: 0.0,
@@ -111,6 +115,7 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            host_start: None,
             ime_tracker: egui::ime_context::ImeContextTracker::new(),
             ime_pending: None,
             ime_frame_viewport: None,
@@ -139,6 +144,14 @@ impl SlideApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn enable_update_checks(&mut self) {
         updates_ui::enable(self);
+    }
+
+    /// Start the helper of an update that is ready, so that it installs once the process has
+    /// exited. The desktop shell calls it in `on_exit`, which ends the process on macOS before the
+    /// app is dropped. Later calls do nothing, and a Nightly launch never starts a stable update.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_pending_update(&mut self) {
+        updates_ui::start_pending_update(self);
     }
 
     /// A message that must be seen wherever the user is: a toast, which also shows over the start
@@ -242,14 +255,6 @@ impl SlideApp {
         if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();
         }
-        // Closing the window with unsaved changes asks first.
-        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed && self.session.documents().iter().any(|d| d.is_dirty()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.show = None;
-            if self.dialog.as_ref().is_none_or(|d| d.id != "quit") {
-                self.dialog = Some(dialogs::Dialog::new("quit"));
-            }
-        }
         self.autosave_if_due(ctx);
         self.tick_media_clock(ctx);
         self.note_settled_composition(ctx);
@@ -288,6 +293,7 @@ impl SlideApp {
         let ctx = ui.ctx().clone();
         self.ime_frame_viewport = Some(ctx.viewport_id());
         self.ime_pending = None;
+        let document_before = self.document_focus.drawn.take();
         if !self.ui_setup(&ctx) {
             // This pass is discarded for the new fonts. The input events were already consumed
             // by egui, so keep them queued for the next frame instead of silently losing them.
@@ -351,11 +357,13 @@ impl SlideApp {
                 }
             }
         });
+        self.finish_document(&ctx, document_before);
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);
+        self.framework_dialogs.run(ui);
         menus::palette(self, &ctx);
         for url in std::mem::take(&mut self.pending_urls) {
             ctx.open_url(egui::OpenUrl::new_tab(url));

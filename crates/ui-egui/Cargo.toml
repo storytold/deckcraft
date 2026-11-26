@@ -19,7 +19,12 @@ deckcraft-anim = { workspace = true }
 deckcraft-engine = { workspace = true }
 deckcraft-media = { workspace = true }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
+egui_extras = { workspace = true }
 craft-ui = { workspace = true }
+craft-host = { workspace = true }
+craft-keymap = { workspace = true }
+craft-theme = { workspace = true }
+craft-window = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
@@ -28,8 +33,8 @@ web-time = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 craft-update = { workspace = true }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+craft-platform = { workspace = true }
 
 [dev-dependencies]
 skrifa = { workspace = true }

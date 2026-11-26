@@ -20,6 +20,11 @@ impl SlideApp {
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
+        } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
+            // A page that keeps the files (`?host=parent`): Save by id (the command palette) goes
+            // to the page like Ctrl+S. The engine would write to the presentation's path, which a
+            // browser can't.
+            self.save_to_host(None).map(|name| json!({"path": name}))
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
         };
@@ -155,15 +160,10 @@ impl SlideApp {
                 self.restyle = true;
             }
             "view.theme" => {
-                if let Some(value) = p.get("value").and_then(Value::as_str) {
-                    self.ui.brightness = match value {
-                        "system" => None,
-                        "light" => Some(theme::Brightness::Light),
-                        "dark" => Some(theme::Brightness::Dark),
-                        other => return Err(format!("unknown theme `{other}`; use system, light or dark")),
-                    };
-                    self.restyle = true;
-                }
+                let value = p.get("value").and_then(Value::as_str).ok_or("expected `value`: system, light or dark")?;
+                let choice = theme::THEME_CHOICES.iter().find(|(id, _, _)| *id == value);
+                self.ui.brightness = choice.ok_or_else(|| format!("unknown theme `{value}`; use system, light or dark"))?.2;
+                self.restyle = true;
             }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),
             "view.newWindow" => return doc_window::command(self, p),
@@ -233,8 +233,9 @@ impl SlideApp {
             }
             "app.about" => self.dialog = Some(dialogs::Dialog::new("about")),
             "app.checkUpdates" => {
+                // Nightly is updated by ArtCraft Launcher; its stable updater must stay idle.
                 #[cfg(not(target_arch = "wasm32"))]
-                updates_ui::request_check(self);
+                updates_ui::request_check(self)?;
                 #[cfg(target_arch = "wasm32")]
                 return Err("updates are handled by the browser: reload the page".into());
             }
@@ -244,7 +245,7 @@ impl SlideApp {
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
             "app.smartArtPictureDialog" => {
                 if self.services.pick_open.is_none() {
-                    return Err("picking a SmartArt picture needs the desktop app".into());
+                    return Err("picking a Diagram picture needs the desktop app".into());
                 }
                 self.pick_and_run("picture", "smartArt.picture", p);
             }

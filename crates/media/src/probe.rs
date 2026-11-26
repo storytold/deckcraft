@@ -71,7 +71,8 @@ pub fn probe_headers(bytes: &Bytes) -> Result<MediaInfo> {
     };
     if info.audio.is_none() && info.video.is_none() || info.audio.as_ref().is_some_and(|a| a.sample_rate == 0) {
         // Plain audio files (and anything our demuxers didn't describe): symphonia's probe.
-        if c == Container::Mp4 && !crate::mp4guard::tables_fit(bytes) {
+        // Symphonia opens an MP4 wherever its probe finds an `ftyp` (after leading ID3v2 tags too); other known containers (a WAV's audio bytes can spell an `ftyp`) skip the check.
+        if matches!(c, Container::Mp4 | Container::Unknown | Container::Mp3) && !crate::mp4guard::probe_fits(bytes) {
             return Err(MediaError::Corrupt("the MP4's sample tables do not fit the file".into()));
         }
         let (codec, rate, channels, frames) = std::panic::catch_unwind(|| crate::audio::probe_symphonia(bytes, c.name()))
@@ -105,9 +106,9 @@ fn codec_label(short: &str) -> String {
 }
 
 fn probe_mp4(bytes: &Bytes) -> Result<MediaInfo> {
-    use deckcraft_isobmff::{CodecConfig, TrackKind};
+    use craft_media::isobmff::{CodecConfig, TrackKind};
     let src: &[u8] = bytes;
-    let f = deckcraft_isobmff::open(src).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+    let f = craft_media::isobmff::open(src).map_err(|e| MediaError::Corrupt(e.to_string()))?;
     let mut info = MediaInfo { container: if f.is_quicktime { "mov" } else { "mp4" }, ..Default::default() };
     let mut dur = if f.timescale > 0 { f.duration as f64 / f.timescale as f64 } else { 0.0 };
     if let Some(ti) = f.track_of_kind(TrackKind::Video) {
@@ -145,9 +146,9 @@ fn probe_mp4(bytes: &Bytes) -> Result<MediaInfo> {
 }
 
 fn probe_mkv(bytes: &Bytes) -> Result<MediaInfo> {
-    use deckcraft_matroska::{Codec, TrackKind};
+    use craft_media::matroska::{Codec, TrackKind};
     let src: &[u8] = bytes;
-    let f = deckcraft_matroska::open(src).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+    let f = craft_media::matroska::open(src).map_err(|e| MediaError::Corrupt(e.to_string()))?;
     let mut info = MediaInfo { container: if f.is_webm() { "webm" } else { "matroska" }, ..Default::default() };
     let dur = f.duration_ns().map(|n| n as f64 / 1e9).unwrap_or(0.0);
     info.duration_ms = ms(dur);
@@ -178,11 +179,11 @@ fn probe_mkv(bytes: &Bytes) -> Result<MediaInfo> {
 
 fn probe_ogg(bytes: &Bytes) -> Option<MediaInfo> {
     let src: &[u8] = bytes;
-    let f = deckcraft_ogg::open(src).ok()?;
-    let s = f.stream_of(deckcraft_ogg::Codec::Opus)?;
+    let f = craft_media::ogg::open(src).ok()?;
+    let s = f.stream_of(craft_media::ogg::Codec::Opus)?;
     let st = f.streams.get(s)?;
-    let head = deckcraft_opus::OpusHead::parse(st.headers.first()?).ok()?;
-    let timing = deckcraft_ogg::OpusTiming::of(st, head.pre_skip as u32).ok()?;
+    let head = craft_audio::opus::OpusHead::parse(st.headers.first()?).ok()?;
+    let timing = craft_media::ogg::OpusTiming::of(st, head.pre_skip as u32);
     Some(MediaInfo {
         container: "ogg",
         duration_ms: ms(timing.total as f64 / 48_000.0),

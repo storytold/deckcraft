@@ -2,7 +2,7 @@ use super::files::task;
 use super::{Backstage, Icon, Outcome, Page, RichText, Sense, SlideApp, Tokens, Ui, Value, dim, heading, json, theme, vec2};
 
 /// Save As and Change File Type: (id for [`SlideApp::export_as`], label, detail).
-pub const SAVE_TYPES: [(&str, &str, &str); 7] = [
+pub const SAVE_TYPES: [(&str, &str, &str); 9] = [
     ("pptx", "PowerPoint Presentation (*.pptx)", "Opens in PowerPoint and other presentation apps"),
     ("deckcraft", "DeckCraft Presentation (*.deckcraft)", "DeckCraft's own format: everything is kept"),
     ("pdf", "PDF (*.pdf)", "A fixed copy that keeps its layout on any device"),
@@ -10,6 +10,8 @@ pub const SAVE_TYPES: [(&str, &str, &str); 7] = [
     ("rtf", "Outline/RTF (*.rtf)", "The slide titles and bullet text for word processors"),
     ("png", "PNG Picture (*.png)", "The current slide as a picture"),
     ("jpeg", "JPEG Picture (*.jpg)", "The current slide as a compressed picture"),
+    ("pngAll", "PNG Pictures, all slides (*.png)", "Every slide as its own picture"),
+    ("jpegAll", "JPEG Pictures, all slides (*.jpg)", "Every slide as its own compressed picture"),
 ];
 
 /// Info page properties: (`file.properties` key, label, hint).
@@ -154,8 +156,10 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     ui.add_space(14.0);
     let current = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type).map_or(SAVE_TYPES[0].1, |s| s.1);
     ui.horizontal(|ui| {
-        craft_ui::ComboBox::from_id_salt("backstage_save_type")
+        egui::ComboBox::from_id_salt("backstage_save_type")
             .width(340.0)
+            // Every type in view: at the default height the last ones were behind a scroll.
+            .height(f32::INFINITY)
             .selected_text(current)
             .show_ui(ui, |ui| {
                 for (id, label, _) in SAVE_TYPES {
@@ -166,15 +170,28 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
             })
             .response
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Save as type"));
-        let web = app.services.pick_save.is_none();
+        // A page that keeps the files (`host_save`) saves; plain web downloads.
+        let web = app.services.pick_save.is_none() && app.services.host_save.is_none();
         let label = if web { "Download" } else { "Save" };
         let save = ui.add(egui::Button::new(RichText::new(label).color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 26.0)));
-        if save.on_hover_text(if web { "Download the file" } else { "Choose where to save" }).clicked() {
+        if save
+            .on_hover_text(if web {
+                "Download the file"
+            } else if app.services.host_save.is_some() {
+                "Save to the page"
+            } else {
+                "Choose where to save"
+            })
+            .clicked()
+        {
             let fmt = bs.file_type;
             let done = if matches!(fmt, "pptx" | "deckcraft") {
-                let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
+                // A save bumps the revision, also one under the same name that leaves the path
+                // and the dirty flag as they were; a cancelled dialog or a failed save doesn't.
+                let snapshot = |app: &SlideApp| app.session.active().map(|d| (d.path.clone(), d.is_dirty(), d.revision));
+                let before = snapshot(app);
                 app.save_as_dialog(fmt);
-                web || app.session.active().map(|d| (d.path.clone(), d.is_dirty())) != before
+                web || snapshot(app) != before
             } else {
                 app.export_as(fmt, json!({}))
             };
@@ -216,14 +233,20 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
         ui.vertical(|ui| {
             ui.set_width(340.0);
             heading(ui, "Appearance");
-            let dark = app.shown_brightness == theme::Brightness::Dark;
-            craft_ui::ComboBox::from_id_salt("backstage_appearance")
+            let selected = match (app.ui.brightness, app.shown_brightness) {
+                (None, theme::Brightness::Dark) => "Use system setting (Dark)",
+                (None, theme::Brightness::Light) => "Use system setting (Light)",
+                (Some(theme::Brightness::Dark), _) => "Dark",
+                (Some(theme::Brightness::Light), _) => "Light",
+            };
+            egui::ComboBox::from_id_salt("backstage_appearance")
                 .width(260.0)
-                .selected_text(if dark { "Dark" } else { "Light" })
+                .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    for (on, label) in [(false, "Light"), (true, "Dark")] {
-                        if ui.selectable_label(dark == on, label).clicked() {
-                            let _ = app.run("view.dark", json!({"on": on}));
+                    for (value, label, preference) in theme::THEME_CHOICES {
+                        if ui.selectable_label(app.ui.brightness == preference, label).clicked() {
+                            let _ = app.run("view.theme", json!({"value": value}));
+                            ui.close();
                         }
                     }
                 })

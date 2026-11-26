@@ -4,11 +4,11 @@ use super::{SlideApp, Tokens, Ui, Value, json, run};
 /// Shift+Tab demote and promote, Backspace in an empty line removes it.
 pub(super) fn smartart(app: &mut SlideApp, ui: &mut Ui) {
     let Some((gid, d)) = app.session.active().and_then(deckcraft_engine::cmd::smartart::selected) else {
-        ui.label("Select a SmartArt graphic to edit its text.");
+        ui.label("Select a Diagram graphic to edit its text.");
         return;
     };
     let texts: Vec<String> = d.nodes.iter().map(|n| n.text.clone()).collect();
-    let focused_any = ui.ctx().memory(|m| m.focused().is_some()) || app.ui.smartart_focus.is_some();
+    let focused_any = crate::framework::widget_has_keyboard(ui.ctx()) || app.ui.smartart_focus.is_some();
     if app.ui.smartart_drafts.0 != gid.0 || app.ui.smartart_drafts.1.len() != texts.len() || !focused_any {
         app.ui.smartart_drafts = (gid.0, texts.clone());
     }
@@ -24,7 +24,8 @@ pub(super) fn smartart(app: &mut SlideApp, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(16.0 * node.level as f32);
             ui.label("•");
-            let te = egui::TextEdit::singleline(draft).id(id).hint_text("SmartArt text").desired_width(f32::INFINITY);
+            // The line keeps Tab for its own command; Escape leaves it.
+            let te = egui::TextEdit::singleline(draft).id(id).hint_text("Diagram text").desired_width(f32::INFINITY).lock_focus(true);
             let r = ui.add(te);
             if app.ui.smartart_focus == Some(i) {
                 r.request_focus();
@@ -39,13 +40,15 @@ pub(super) fn smartart(app: &mut SlideApp, ui: &mut Ui) {
                     action = Some(("smartArt.removeNode", json!({"index": i})));
                     focus_row = Some(i.saturating_sub(1));
                 }
-            }
-            if r.lost_focus() {
                 let (tab, shift) = ui.input(|inp| (inp.key_pressed(egui::Key::Tab), inp.modifiers.shift));
                 if tab {
                     action = Some((if shift { "smartArt.promote" } else { "smartArt.demote" }, json!({"index": i})));
                     focus_row = Some(i);
-                } else if ui.input(|inp| inp.key_pressed(egui::Key::Enter)) {
+                    commit = Some(i);
+                }
+            }
+            if r.lost_focus() {
+                if ui.input(|inp| inp.key_pressed(egui::Key::Enter)) {
                     action = Some(("smartArt.addNode", json!({"index": i, "position": "after"})));
                     focus_row = Some(i + 1);
                 }

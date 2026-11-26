@@ -1,6 +1,24 @@
 use super::{SlideApp, json, media, monotonic_secs, theme};
 
 impl SlideApp {
+    /// The native root window owns the watcher; tests and secondary document windows do not poll.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub fn watch_desktop_theme(&mut self, ctx: &egui::Context) {
+        let viewport = ctx.viewport_id();
+        let ctx = ctx.clone();
+        self.desktop_theme = Some(craft_platform::appearance::SystemReader::start(move || ctx.request_repaint_of(viewport)));
+    }
+
+    pub(crate) fn display_brightness(&self, ctx: &egui::Context) -> theme::Brightness {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let desktop_dark =
+            self.desktop_theme.as_ref().and_then(|reader| reader.read().theme).map(|mode| mode == craft_platform::appearance::Theme::Dark);
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        let desktop_dark = None;
+        let system_dark = desktop_dark.or_else(|| ctx.system_theme().map(|mode| mode == egui::Theme::Dark));
+        theme::resolve_brightness(self.ui.brightness, system_dark)
+    }
+
     /// Style, fonts and zoom setup. Runs in a real UI pass, not from `run_logic`, because
     /// `set_fonts`/`set_visuals` only take effect for the pass that lays out the UI.
     pub(super) fn ui_setup(&mut self, ctx: &egui::Context) -> bool {
@@ -17,23 +35,12 @@ impl SlideApp {
             ctx.request_discard("install interface fonts before layout");
             return false;
         }
-        if let Some(answer) = self.desktop_theme.take_change() {
-            self.desktop_dark = Some(answer);
-            if self.ui.brightness.is_none() {
-                self.restyle = true;
-            }
-        }
-        let system_dark = ctx.system_theme().map(|theme| theme == egui::Theme::Dark).or(self.desktop_dark);
-        if self.last_system_dark != system_dark {
-            self.last_system_dark = system_dark;
-            if self.ui.brightness.is_none() {
-                self.restyle = true;
-            }
-        }
-        if self.restyle {
-            self.shown_brightness = theme::resolve_brightness(self.ui.brightness, system_dark, self.shown_brightness);
+        let brightness = self.display_brightness(ctx);
+        if self.restyle || self.shown_brightness != brightness {
+            self.shown_brightness = brightness;
             theme::apply(ctx, &theme::Tokens::for_brightness(self.shown_brightness));
             self.restyle = false;
+            ctx.request_repaint();
         }
         self.fonts_ready = true;
         true

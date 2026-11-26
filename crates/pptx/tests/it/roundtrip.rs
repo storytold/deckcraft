@@ -1396,6 +1396,45 @@ fn single_guide_names_follow_the_preset() {
     }
 }
 
+/// Large finite guides position a visible bend even when the connector is only one EMU wide.
+#[test]
+fn large_connector_adjustments_keep_their_elbows_through_two_saves() {
+    let cases = [
+        ("ordinary", 80.0, 50000.0),
+        ("near control", 1588.0 / 12700.0, -12800000.0),
+        ("near negative", 1.0 / 12700.0, -20320000000.0),
+        ("near positive", 1.0 / 12700.0, 20320000000.0),
+        ("zero width", 0.0, 20320000000.0),
+        ("ordinary negative", 80.0, -20000.0),
+    ];
+    let mut p = defaults::new_presentation(None);
+    p.slides.clear();
+    let mut s = new_slide(&mut p, "Connectors");
+    s.shapes.clear();
+    for (name, width, guide) in cases {
+        let mut sh = shape(&mut p, name, 100.0, 80.0, width, 140.0);
+        sh.kind = ShapeKind::Connector { start: None, end: None };
+        sh.geom = Geom::Preset { name: "bentConnector3".into(), adj: vec![guide] };
+        s.shapes.push(sh);
+    }
+    p.slides.push(Arc::new(s));
+    for generation in 1..=2 {
+        p = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("reopen");
+        for (name, width, guide) in cases {
+            let sh = p.slides[0].shapes.iter().find(|sh| sh.name == name).expect("connector");
+            let Geom::Preset { name: preset, adj } = &sh.geom else {
+                panic!("preset connector");
+            };
+            assert_eq!(adj, &[guide], "{name}, save {generation}");
+            let xfrm = sh.xfrm.expect("transform");
+            assert_eq!((xfrm.w, xfrm.h), (width, 140.0));
+            let expected = deckcraft_geom::preset::build("bentConnector3", width, 140.0, &[guide]).expect("expected geometry");
+            let actual = deckcraft_geom::preset::build(preset, xfrm.w, xfrm.h, adj).expect("reopened geometry");
+            assert_eq!(actual.outline(), expected.outline(), "{name}, save {generation}");
+        }
+    }
+}
+
 /// #147: PowerPoint's Float Down is preset 47 (Float Up is 42); it imported as a plain fade.
 #[test]
 fn float_down_is_preset_47_both_ways() {
@@ -2258,6 +2297,34 @@ fn default_durations_match_powerpoint() {
     }
 }
 
+/// Show media controls is PowerPoint's `p14:showMediaCtrls` extension inside `p:showPr`: off is
+/// written there, under its extension uri and with the p14 namespace declared on the element;
+/// on (the default) writes nothing.
+#[test]
+fn hidden_media_controls_survive_save_and_reopen() {
+    let props = |p: &Presentation| {
+        let bytes = deckcraft_pptx::export(p).expect("export");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+        let mut x = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("ppt/presProps.xml").expect("presProps"), &mut x).expect("read");
+        x
+    };
+    let mut p = Presentation::default();
+    p.show.show_media_controls = false;
+    let xml = props(&p);
+    let show = xml.split("<p:showPr").nth(1).and_then(|r| r.split("</p:showPr>").next()).expect("p:showPr");
+    assert!(
+        show.contains(
+            "<p:ext uri=\"{2FDB2607-1784-4EEB-B798-7EB5836EED8A}\"><p14:showMediaCtrls xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" val=\"0\"/></p:ext>"
+        ),
+        "{xml}"
+    );
+    assert!(!round(&p).show.show_media_controls);
+    let default = Presentation::default();
+    assert!(!props(&default).contains("showMediaCtrls"));
+    assert!(round(&default).show.show_media_controls);
+}
+
 #[test]
 fn reflection_angles_and_skews_out_of_range_are_written_inside_the_schema() {
     let mut p = Presentation::default();
@@ -2279,4 +2346,63 @@ fn reflection_angles_and_skews_out_of_range_are_written_inside_the_schema() {
 
     let r = round(&p).slides.last().and_then(|sl| by_name(sl, "Reflected").effects.clone()).and_then(|fx| fx.reflection).expect("reflection");
     assert_eq!((r.st_pos, r.dir, r.fade_dir, r.kx, r.ky), (Some(100_000), Some(21_599_995), Some(0), Some(5_399_999), Some(-5_399_999)));
+}
+
+#[test]
+fn pptx_potx_ppsx_export_parity_preserves_masters_charts_themes_and_timing() {
+    let mut p = rich_deck();
+    let m0 = Arc::make_mut(&mut p.masters[0]);
+    m0.theme.name = "ParityTheme".into();
+    m0.theme.colors.set(deckcraft_color::SchemeSlot::Accent1, deckcraft_color::Rgba::rgb(0x11, 0x22, 0x33));
+    p.notes_master = Some(Arc::new(deckcraft_model::Master { name: "NotesParity".into(), ..Default::default() }));
+    p.handout_master = Some(Arc::new(deckcraft_model::Master { name: "HandoutParity".into(), ..Default::default() }));
+
+    let audio = p.add_media("cue.m4a", "audio/mp4", b"audio-bytes".to_vec()).expect("media");
+    let aud_id = ShapeId(p.alloc_id().expect("id"));
+    Arc::make_mut(&mut p.slides[0]).shapes.push(Shape {
+        id: aud_id,
+        name: "Cue".into(),
+        xfrm: Some(Xfrm::new(20.0, 20.0, 40.0, 40.0)),
+        kind: ShapeKind::Media(deckcraft_model::MediaClip {
+            media: audio,
+            video: false,
+            autoplay: true,
+            loop_play: true,
+            volume: 0.5,
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+
+    let edited_values = vec![Some(111.5), Some(222.25), Some(333.75), Some(444.0)];
+    let chart_slide_idx = p.slides.iter().position(|sl| sl.shapes.iter().any(|s| s.name == "Chart 0")).expect("chart slide");
+    {
+        let ch_shape = Arc::make_mut(&mut p.slides[chart_slide_idx]).shapes.iter_mut().find(|s| s.name == "Chart 0").expect("Chart 0");
+        ch_shape.name = "Revenue Chart".into();
+        let ShapeKind::Chart(ch) = &mut ch_shape.kind else { panic!("expected chart") };
+        ch.series[0].values = edited_values.clone();
+    }
+
+    for (ext, expected_ct) in [
+        ("pptx", "presentationml.presentation.main+xml"),
+        ("potx", "presentationml.template.main+xml"),
+        ("POTX", "presentationml.template.main+xml"),
+        (".ppsx", "presentationml.slideshow.main+xml"),
+    ] {
+        let bytes = deckcraft_pptx::export_as(&p, ext).expect("export_as");
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip");
+        let ct = std::io::read_to_string(z.by_name("[Content_Types].xml").expect("content types")).expect("read");
+        assert!(ct.contains(expected_ct), "{ext}: {ct}");
+        let reopened = deckcraft_pptx::import(&bytes).expect("reopen");
+        assert_eq!(reopened.masters[0].theme.name, "ParityTheme");
+        assert_eq!(reopened.masters[0].theme.colors.get(deckcraft_color::SchemeSlot::Accent1), deckcraft_color::Rgba::rgb(0x11, 0x22, 0x33));
+        assert!(reopened.notes_master.is_some());
+        assert_eq!(reopened.handout_master.as_ref().map(|m| m.name.as_str()), Some("HandoutParity"));
+        let cue = reopened.slides[0].shapes.iter().find(|s| s.name == "Cue").expect("cue");
+        let ShapeKind::Media(clip) = &cue.kind else { panic!("expected media") };
+        assert!(clip.autoplay && clip.loop_play && (clip.volume - 0.5).abs() < 1e-3);
+        let chart_shape = reopened.slides[chart_slide_idx].shapes.iter().find(|s| s.name == "Revenue Chart").expect("named chart");
+        let ShapeKind::Chart(chart) = &chart_shape.kind else { panic!("expected chart") };
+        assert_eq!(chart.series[0].values, edited_values, "{ext}");
+    }
 }

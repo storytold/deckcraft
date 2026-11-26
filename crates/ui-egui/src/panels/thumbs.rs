@@ -219,7 +219,7 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         // Only rows in view (plus a little margin) ask for a thumbnail: with every row asking, a
         // deck bigger than the thumbnail cache evicts its own thumbnails and never settles (#969).
         let near = ui.clip_rect().expand2(vec2(0.0, 2.0 * row.height())).intersects(row);
-        let tex = if near { app.textures.thumb(ui.ctx(), &doc, i, wpx, &mut budget) } else { None };
+        let tex = if near { app.textures.thumb(ui.ctx(), &doc, i, wpx, app.ui.grayscale, &mut budget) } else { None };
         match tex {
             Some(tex) => {
                 p.image(
@@ -437,7 +437,7 @@ mod tests {
     use deckcraft_engine::Session;
 
     fn harness() -> Harness<'static, SlideApp> {
-        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());
                 app.ui(ui);
@@ -506,13 +506,17 @@ mod tests {
         while s.doc().unwrap().doc.slides.len() < slides {
             s.execute("slide.new", &json!({})).unwrap();
         }
-        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 1600.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-            |ui, app: &mut SlideApp| {
-                app.logic(ui.ctx());
-                app.ui(ui);
-            },
-            SlideApp::new(s, Services::default()),
-        );
+        let mut h = Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .with_size(egui::vec2(1200.0, 1600.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                SlideApp::new(s, Services::default()),
+            );
         h.run_steps(3);
         let ids = order(&h);
         (h, ids)

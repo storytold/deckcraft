@@ -18,7 +18,7 @@ fn interface_size<'a>(h: &'a Harness<'_, SlideApp>) -> Node<'a> {
 }
 
 fn harness() -> Harness<'static, SlideApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -37,6 +37,18 @@ fn open_options(h: &mut Harness<'_, SlideApp>) {
 
 fn dark(app: &SlideApp) -> bool {
     app.shown_brightness == Brightness::Dark
+}
+
+/// The interface size slider has a visible label, not just a bare "1.00" beside it.
+#[test]
+fn the_interface_size_slider_is_labelled_on_screen() {
+    let mut h = harness();
+    open_options(&mut h);
+    let label = h.query_by_label("Interface size:").expect("the slider's label is shown");
+    let slider = interface_size(&h);
+    let (label, slider) = (label.rect(), slider.rect());
+    assert!(label.max.x <= slider.min.x, "the label sits before the slider: {label:?}, {slider:?}");
+    assert!(label.center().y > slider.min.y && label.center().y < slider.max.y, "on the same row: {label:?}, {slider:?}");
 }
 
 /// A checkbox applies as it is toggled and Cancel puts the old value back.
@@ -99,14 +111,10 @@ fn options_cancel_puts_the_appearance_and_scale_back() {
     let (dark_before, scale_before) = (dark(h.state()), h.state().ui.ui_scale);
     open_options(&mut h);
 
-    let next_theme = if dark(h.state()) { "light" } else { "dark" };
-    h.state_mut().run("view.theme", json!({"value": next_theme})).expect("change display theme");
+    let (next_theme, label) = if dark(h.state()) { (Brightness::Light, "Light") } else { (Brightness::Dark, "Dark") };
+    crate::tests::pick_display_theme(&mut h, label);
     h.run_steps(2);
-    assert_eq!(
-        h.state().ui.brightness,
-        Some(if next_theme == "dark" { Brightness::Dark } else { Brightness::Light }),
-        "the appearance choice applies immediately"
-    );
+    assert_eq!(h.state().ui.brightness, Some(next_theme), "the appearance choice applies immediately");
 
     // Clicking the slider's middle sets it near the middle of its range, away from the default.
     interface_size(&h).click();
@@ -126,8 +134,11 @@ fn options_cancel_puts_the_appearance_and_scale_back() {
 fn options_close_button_restores_the_settings() {
     let mut h = harness();
     let was = h.state().session.prefs.smart_guides;
+    let appearance = h.state().ui.brightness;
     open_options(&mut h);
 
+    crate::tests::pick_display_theme(&mut h, "Dark");
+    assert_eq!(h.state().ui.brightness, Some(Brightness::Dark));
     h.query_by_label("Show smart guides").expect("the checkbox is there").click();
     h.run_steps(2);
     assert_eq!(h.state().session.prefs.smart_guides, !was, "the change applies as it is made");
@@ -135,5 +146,6 @@ fn options_close_button_restores_the_settings() {
     h.get_all_by_label("Close window").next().expect("the window's close button is there").click();
     h.run_steps(2);
     assert_eq!(h.state().session.prefs.smart_guides, was, "the close button restores the setting");
+    assert_eq!(h.state().ui.brightness, appearance, "the close button restores the theme choice");
     assert!(h.state().dialog.is_none(), "and the dialog closes");
 }
