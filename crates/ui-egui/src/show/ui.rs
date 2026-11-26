@@ -27,6 +27,8 @@ struct Fr<'a> {
     clicked: bool,
     secondary: bool,
     pointer: Option<Pos2>,
+    /// The pointer is over the slide area, not the window's own title strip (always true without chrome).
+    on_content: bool,
 }
 
 /// Whether the show goes on, and the steps input asked for.
@@ -142,7 +144,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     show.expire_goto(now);
     // The clock of the triggered animations runs before anything reacts to the pointer.
     show.tick_triggers(&doc, now);
-    let f = Fr { ctx: &ctx, doc: &doc, doc_uid, now, full, srect, clicked, secondary, pointer };
+    let f = Fr { ctx: &ctx, doc: &doc, doc_uid, now, full, srect, clicked, secondary, pointer, on_content };
     let pointing = handle_clicks(app, ui, &mut show, &f, &mut out);
     handle_wheel_and_swipe(&mut show, &f, &mut out);
     advance(app, &mut show, &f, &mut out);
@@ -243,7 +245,7 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
 }
 
 fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: &mut Out) -> bool {
-    let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer } = *f;
+    let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer, .. } = *f;
     let on_slide = !show.grid
         && !show.pen
         && !show.laser
@@ -315,7 +317,7 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
 }
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
-    let Fr { ctx, doc, now, srect, pointer, .. } = *f;
+    let Fr { ctx, doc, now, srect, pointer, on_content, .. } = *f;
     // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
     // keeps it out of `smooth_scroll_delta`, so it does not also turn the page below.
     let line_points = ctx.options(|o| o.input_options.line_scroll_speed);
@@ -328,8 +330,10 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
         show.wheel_zoom(srect, p, lines);
     }
     // A trackpad swipe (and the mouse wheel) turns the page. The pen is drawing, so a flick
-    // there stays on the slide. Pinch zoom is not a show gesture.
+    // there stays on the slide. Pinch zoom is not a show gesture. Over the window's own title
+    // strip a scroll is not a page turn.
     if !show.pen
+        && on_content
         && let Some(next) = crate::canvas::page_flick(ctx.input(|i| i.smooth_scroll_delta))
         && now - show.last_swipe > 0.35
     {

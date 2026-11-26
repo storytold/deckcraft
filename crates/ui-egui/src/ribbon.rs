@@ -163,13 +163,17 @@ pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
             for kind in ["minimize", "maximize", "close"] {
                 let (r, resp) = ui.allocate_exact_size(egui::vec2(CONTROL_W, TITLE_H), egui::Sense::click());
                 let close = kind == "close";
-                let hot = resp.hovered() || resp.is_pointer_button_down_on();
+                // The outer band of the window belongs to the resize, not to the button under it.
+                let on_band = |p: Option<egui::Pos2>| !maximized && p.is_some_and(|p| resize_hit(screen, p).is_some());
+                let hovered = resp.hovered() && !on_band(resp.hover_pos());
+                let pressed = resp.is_pointer_button_down_on() && !on_band(ctx.input(|i| i.pointer.press_origin()));
+                let hot = hovered || pressed;
                 let c = if close && hot {
                     ui.painter().rect_filled(r, 0.0, egui::Color32::from_rgb(0xC4, 0x2B, 0x1C));
                     egui::Color32::WHITE
                 } else {
                     if hot {
-                        ui.painter().rect_filled(r, 0.0, if resp.is_pointer_button_down_on() { t.pressed } else { t.hover });
+                        ui.painter().rect_filled(r, 0.0, if pressed { t.pressed } else { t.hover });
                     }
                     t.text
                 };
@@ -200,7 +204,8 @@ pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
                     }
                 };
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
-                if resp.on_hover_text(tip).clicked() {
+                let released_on_band = on_band(resp.interact_pointer_pos());
+                if resp.on_hover_text(tip).clicked() && !released_on_band {
                     ctx.send_viewport_cmd(match kind {
                         "minimize" => egui::ViewportCommand::Minimized(true),
                         "maximize" => egui::ViewportCommand::Maximized(!maximized),
@@ -233,8 +238,11 @@ pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
     }
 }
 
+/// The resize direction at `pos`: the outer band and corners of the window. It reaches into the
+/// caption buttons' rectangle too, so the top-right corner and the right and top edges resize like
+/// the rest; the buttons keep everything inside that band.
 fn resize_hit(screen: Rect, pos: egui::Pos2) -> Option<(egui::ResizeDirection, egui::CursorIcon)> {
-    if !screen.contains(pos) || caption_rect(screen).contains(pos) {
+    if !screen.contains(pos) {
         return None;
     }
     let near = |d: f32, band: f32| d < band;
