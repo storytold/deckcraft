@@ -42,13 +42,17 @@ fn play_on_the_editor_media_bar_plays_the_selected_clip() {
     let r = s.execute("insert.audio", &json!({"name": "tone.wav", "data": deckcraft_engine::cmd::base64_encode(&wav(2.0))})).unwrap();
     let id = ShapeId(r["id"].as_u64().unwrap() as u32);
     let app = SlideApp::new(s, Services::default());
-    let mut h = Harness::builder().with_size(vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     let d = h.state().session.active().unwrap();
     assert_eq!(d.selection.shapes, vec![id], "the inserted clip is selected");
@@ -88,13 +92,17 @@ fn the_media_bar_never_paints_or_clicks_into_the_notes_pane() {
     let mut app = SlideApp::new(s, Services::default());
     app.ui.notes = true;
     app.ui.notes_height = 140.0;
-    let mut h = Harness::builder().with_size(vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     let notes = h.query_all_by_role(Role::MultilineTextInput).next().map(|n| n.rect()).expect("the notes field");
     let canvas = h.state().canvas_rect.unwrap();

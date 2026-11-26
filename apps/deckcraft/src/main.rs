@@ -49,12 +49,16 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         apple_events::poll(&self.1, &mut self.0, ctx);
         self.0.logic(ctx);
+        self.0.close_path(ctx);
     }
-    /// Forward native raw input to the wrapped application once per pass.
+    /// Forward native raw input to the wrapped application once per frame, then hand the framework
+    /// runtime this frame's root values.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(ctx, raw);
+        self.0.before_input(ctx);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        deckcraft_ui_egui::framework::before_ui(ui.ctx(), &*frame);
         self.0.ui(ui);
     }
     fn on_exit(&mut self) {
@@ -361,6 +365,8 @@ fn main() -> eframe::Result {
         }
     };
     // `Default` lets winit choose, and winit takes Wayland whenever `WAYLAND_DISPLAY` is set.
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    let x11 = false;
     #[cfg(all(unix, not(target_os = "macos")))]
     let native_wayland = !x11 && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|w| !w.is_empty());
     #[cfg(not(all(unix, not(target_os = "macos"))))]
@@ -391,6 +397,7 @@ fn main() -> eframe::Result {
         deckcraft_ui_egui::os_window::name_for(deckcraft_ui_egui::os_window::identity()),
         options,
         Box::new(move |cc| {
+            deckcraft_ui_egui::framework::install(&cc.egui_ctx, x11)?;
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
             let mut app = SlideApp::new(Session::new(), services);
             // Presenter View asks winit how many displays there are when a show starts.
