@@ -83,6 +83,39 @@ fn filtered_fallback_loads_an_eligible_system_face_and_does_not_cache_policy_mis
     assert!(accepted.covers('A'));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn localized_aliases_do_not_change_system_fallback_order() {
+    let character = '\u{f9980}';
+    for preferred_covers in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let (preferred_char, alias_char) = if preferred_covers { (character, 'A') } else { ('A', character) };
+        let font = |family, aliases: &[&str], glyph| test_font::font_with_chars(family, "Regular", 400, aliases, (800, 200), false, &[glyph]);
+        let alias = font("DeckCraft Unrelated", &["Helvetica Neue"], alias_char);
+        std::fs::write(dir.path().join("preferred.ttf"), font("Helvetica Neue", &[], preferred_char)).unwrap();
+        std::fs::write(dir.path().join("next.ttf"), font("Arial", &[], character)).unwrap();
+        std::fs::write(dir.path().join("unrelated.ttf"), &alias).unwrap();
+        let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+        if preferred_covers {
+            assert_eq!(db.add_font(alias), 1);
+        }
+        let expected = if preferred_covers { "Helvetica Neue" } else { "Arial" };
+        assert_eq!(db.fallback_for(character, u32::MAX).unwrap().family, expected);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_loaded_alias_does_not_block_the_preferred_system_symbol_face() {
+    let character = '\u{f9981}';
+    let dir = tempfile::tempdir().unwrap();
+    let font = |family, aliases: &[&str]| test_font::font_with_chars(family, "Regular", 400, aliases, (800, 200), false, &[character]);
+    std::fs::write(dir.path().join("symbols.ttf"), font("Apple Symbols", &[])).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+    assert_eq!(db.add_font(font("DeckCraft Unrelated", &["Apple Symbols"])), 1);
+    assert_eq!(db.plain_face_for(character, &[character]).unwrap().family, "Apple Symbols");
+}
+
 #[test]
 fn concurrent_lookups_all_find_an_installed_family() {
     // Threads resolving an installed family nobody had loaded yet used to fall back to
@@ -175,6 +208,253 @@ fn variable_font_instances_answer_to_their_windows_names() {
     assert!(!db.has_family("Montserrat Regular"));
     assert!(!db.has_family("Montserrat Bold"));
     assert_eq!(db.face("Montserrat", "Bold").weight, 700.0);
+}
+
+#[test]
+fn localized_family_names_resolve_loaded_and_cataloged_faces() {
+    let check = |db: &FontDb| {
+        for alias in ["DeckCraft 测试字体", "DeckCraft Police locale"] {
+            assert!(db.has_family(alias), "{alias}");
+            assert_eq!(db.styles(alias), ["Regular", "Semibold", "Bold"]);
+            for style in ["Regular", "Bold", "Semibold"] {
+                let face = db.document_face(alias, style);
+                assert_eq!((face.family.as_str(), face.style.as_str()), ("DeckCraft Localized", style), "{alias}");
+                assert!(face.has_family_name(alias));
+                assert!(std::sync::Arc::ptr_eq(&face, &db.face("DeckCraft Localized", style)));
+            }
+        }
+        for alias in ["DeckCraft 测试字体 Semibold", "DeckCraft Police locale Semibold"] {
+            assert!(db.has_family(alias), "{alias}");
+            for style in ["Regular", "Bold"] {
+                assert_eq!(db.document_face(alias, style).style, "Semibold", "{alias}");
+            }
+        }
+        assert!(!db.families().iter().any(|f| f == "DeckCraft 测试字体"), "aliases do not duplicate the font menu");
+    };
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    let fonts = [("Regular", 400), ("Bold", 700), ("Semibold", 600)];
+    for (style, weight) in fonts {
+        assert_eq!(db.add_font(test_font::localized(style, weight)), 1);
+    }
+    let face = db.face("DeckCraft 测试字体", "Regular");
+    assert!(face.covers('字'));
+    assert!(!db.outline(&face, face.glyph_for('字')).elements().is_empty());
+    assert!((face.line_split - 0.9).abs() < 1e-6);
+    check(&db);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = tempfile::tempdir().unwrap();
+        for (style, weight) in fonts {
+            std::fs::write(dir.path().join(format!("{style}.ttf")), test_font::localized(style, weight)).unwrap();
+        }
+        let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+        db.set_system_fallback(false);
+        check(&db);
+    }
+}
+
+#[test]
+fn duplicate_faces_merge_names_without_replacing_existing_handles() {
+    for style in ["Semibold", "SEMIBOLD"] {
+        let db = FontDb::with_font_dirs(Vec::new());
+        assert_eq!(db.add_font(test_font::font("DeckCraft Duplicate", style, 600, &["First Alias"], (900, 100), false)), 1);
+        let original = db.face("DeckCraft Duplicate", style);
+        let handle = FaceRef::of(&original);
+        assert_eq!(original.legacy.is_none(), style == "SEMIBOLD");
+        assert_eq!(db.add_font(test_font::font("DeckCraft Duplicate", "Semibold", 600, &["Second Alias"], (800, 200), false)), 0);
+        for name in ["First Alias", "Second Alias", "second alias", "Second Alias Semibold", "DeckCraft Duplicate Semibold"] {
+            assert!(handle.has_family_name(name), "existing handle lost {name}, {style}");
+            assert!(std::sync::Arc::ptr_eq(&original, &db.face(name, "Regular")), "{name}, {style}");
+        }
+        assert_eq!(db.read_faces().iter().filter(|f| f.family == "DeckCraft Duplicate").count(), 1);
+        assert!((original.line_split - 0.9).abs() < 1e-6, "the first face's metrics are retained");
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn cataloged_duplicates_retain_aliases_in_both_load_orders() {
+    for reverse in [false, true] {
+        for preloaded in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let first = test_font::font("DeckCraft Duplicate", "Semibold", 600, &["First Alias"], (900, 100), false);
+            let second = test_font::font("DeckCraft Duplicate", "Semibold", 600, &["Second Alias"], (800, 200), false);
+            let fonts = if reverse { [second, first] } else { [first, second] };
+            for (i, data) in fonts.iter().enumerate() {
+                std::fs::write(dir.path().join(format!("{i}.ttf")), data).unwrap();
+            }
+            let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+            let original = preloaded.then(|| {
+                assert_eq!(db.add_font(fonts[0].clone()), 1);
+                db.read_faces().iter().find(|f| f.family == "DeckCraft Duplicate").unwrap().clone()
+            });
+            let face = db.face("DeckCraft Duplicate", "Semibold");
+            if let Some(original) = original {
+                assert!(std::sync::Arc::ptr_eq(&face, &original));
+            }
+            for name in ["First Alias", "Second Alias", "First Alias Semibold", "Second Alias Semibold"] {
+                assert!(std::sync::Arc::ptr_eq(&face, &db.face(name, "Regular")), "{name}, {reverse}, {preloaded}");
+            }
+            assert_eq!(db.styles("DeckCraft Duplicate"), ["Semibold"]);
+            assert_eq!(db.read_faces().iter().filter(|f| f.family == "DeckCraft Duplicate").count(), 1);
+        }
+    }
+}
+
+#[test]
+fn duplicate_aliases_reach_cached_and_future_variable_instances() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    assert_eq!(db.add_font(test_font::font("DeckCraft Duplicate Variable", "Regular", 400, &["First Alias"], (900, 100), true)), 1);
+    let cached = db.face("DeckCraft Duplicate Variable", "Regular {wght:650}");
+    let handle = FaceRef::of(&cached);
+    assert_eq!(db.add_font(test_font::font("DeckCraft Duplicate Variable", "Regular", 400, &["Second Alias"], (800, 200), true)), 0);
+    assert!(handle.has_family_name("Second Alias"));
+    assert!(std::sync::Arc::ptr_eq(&cached, &db.face("Second Alias", "Regular {wght:650}")));
+    let future = db.face("Second Alias", "Regular {wght:750}");
+    assert_eq!(future.coords, [(*b"wght", 750.0)]);
+    assert!(future.has_family_name("First Alias"));
+    assert!(std::sync::Arc::ptr_eq(&future, &db.face("DeckCraft Duplicate Variable", "Regular {wght:750}")));
+    assert!((future.line_split - 0.9).abs() < 1e-6);
+}
+
+#[test]
+fn merged_windows_families_keep_their_own_gdi_styles() {
+    fn font(style: &str, windows_family: &str, windows_style: &str) -> Vec<u8> {
+        let mut data = test_font::font("DeckCraft GDI", style, 600, &[], (900, 100), false);
+        let tables = u16::from_be_bytes(data[4..6].try_into().unwrap()) as usize;
+        let record = (0..tables).map(|i| 12 + 16 * i).find(|&r| &data[r..r + 4] == b"name").unwrap();
+        let table = u32::from_be_bytes(data[record + 8..record + 12].try_into().unwrap()) as usize;
+        let count = u16::from_be_bytes(data[table + 2..table + 4].try_into().unwrap()) as usize;
+        let strings = table + u16::from_be_bytes(data[table + 4..table + 6].try_into().unwrap()) as usize;
+        for r in (0..count).map(|i| table + 6 + 12 * i) {
+            let id = u16::from_be_bytes(data[r + 6..r + 8].try_into().unwrap());
+            let text = match id {
+                1 => windows_family,
+                2 => windows_style,
+                _ => continue,
+            };
+            let replacement: Vec<_> = text.encode_utf16().flat_map(u16::to_be_bytes).collect();
+            let capacity = u16::from_be_bytes(data[r + 8..r + 10].try_into().unwrap()) as usize;
+            assert!(replacement.len() <= capacity);
+            let offset = strings + u16::from_be_bytes(data[r + 10..r + 12].try_into().unwrap()) as usize;
+            data[offset..offset + replacement.len()].copy_from_slice(&replacement);
+            data[r + 8..r + 10].copy_from_slice(&(replacement.len() as u16).to_be_bytes());
+        }
+        data
+    }
+    let db = FontDb::with_font_dirs(Vec::new());
+    assert_eq!(db.add_font(font("Semibold", "Windows A", "Regular")), 1);
+    assert_eq!(db.add_font(font("Regular", "Windows B", "Regular")), 1);
+    let retained = db.face("DeckCraft GDI", "Semibold");
+    assert_eq!(db.add_font(font("Semibold", "Windows B", "Bold")), 0);
+    assert_eq!(db.face("Windows B", "Regular").style, "Regular");
+    assert!(std::sync::Arc::ptr_eq(&retained, &db.face("Windows B", "bOlD")));
+    assert!(std::sync::Arc::ptr_eq(&retained, &db.face("Windows A", "Bold")));
+}
+
+#[test]
+fn canonical_family_wins_same_style_alias_collisions_in_both_load_orders() {
+    for alias_first in [false, true] {
+        let db = FontDb::with_font_dirs(Vec::new());
+        let canonical = test_font::font("DeckCraft Exact", "Regular", 400, &["DeckCraft Exact Local"], (900, 100), false);
+        let alias = test_font::font("DeckCraft Other", "Regular", 400, &["DeckCraft Exact"], (800, 200), false);
+        for font in if alias_first { [alias, canonical] } else { [canonical, alias] } {
+            assert_eq!(db.add_font(font), 1);
+        }
+        for name in ["DeckCraft Exact", "deckcraft exact", "DeckCraft Exact Local"] {
+            assert_eq!(db.face(name, "Regular").family, "DeckCraft Exact", "{alias_first}, {name}");
+        }
+        assert_eq!(db.face("DeckCraft Other", "Regular").family, "DeckCraft Other");
+    }
+}
+
+#[test]
+fn canonical_family_is_chosen_before_exact_or_nearest_style() {
+    for alias_first in [false, true] {
+        let db = FontDb::with_font_dirs(Vec::new());
+        let regular = test_font::font("DeckCraft Exact", "Regular", 400, &[], (900, 100), false);
+        let black = test_font::font("DeckCraft Exact", "Black", 900, &[], (900, 100), false);
+        let alias = test_font::font("DeckCraft Other", "Bold", 700, &["DeckCraft Exact"], (800, 200), false);
+        for font in if alias_first { [alias, regular, black] } else { [regular, black, alias] } {
+            assert_eq!(db.add_font(font), 1);
+        }
+        assert_eq!(db.styles("DeckCraft Exact"), ["Regular", "Black"], "{alias_first}");
+        assert_eq!(db.styles("DeckCraft Other"), ["Bold"]);
+        for (requested, expected) in [("Bold", "Black"), ("Medium", "Regular"), ("Semibold", "Regular")] {
+            let face = db.face("DeckCraft Exact", requested);
+            assert_eq!((face.family.as_str(), face.style.as_str()), ("DeckCraft Exact", expected), "{alias_first}, {requested}");
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn cataloged_canonical_family_wins_an_already_loaded_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("canonical.ttf"), test_font::font("DeckCraft Exact", "Regular", 400, &[], (900, 100), false)).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+    db.add_font(test_font::font("DeckCraft Other", "Bold", 700, &["DeckCraft Exact"], (800, 200), false));
+    assert_eq!(db.styles("DeckCraft Exact"), ["Regular"], "a cataloged canonical family excludes loaded alias styles");
+    let face = db.face("DeckCraft Exact", "Bold");
+    assert_eq!((face.family.as_str(), face.style.as_str()), ("DeckCraft Exact", "Regular"));
+    // Conversely, a loaded canonical face excludes an alias-only catalog style.
+    let alias_dir = tempfile::tempdir().unwrap();
+    std::fs::write(alias_dir.path().join("alias.ttf"), test_font::font("DeckCraft Other", "Bold", 700, &["DeckCraft Exact"], (800, 200), false))
+        .unwrap();
+    let db = FontDb::with_font_dirs(vec![alias_dir.path().into()]);
+    db.add_font(test_font::font("DeckCraft Exact", "Regular", 400, &[], (900, 100), false));
+    assert_eq!(db.styles("DeckCraft Exact"), ["Regular"]);
+    assert_eq!(db.styles("DeckCraft Other"), ["Bold"]);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn canonical_styles_exclude_an_installed_windows_family_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    let windows = test_font::font("DeckCraft Other", "Semibold", 600, &[], (900, 100), false);
+    std::fs::write(dir.path().join("windows.ttf"), windows).unwrap();
+    let family = "DeckCraft Other Semibold";
+    let canonical = test_font::font(family, "Bold", 700, &[], (900, 100), false);
+
+    let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+    assert_eq!(db.styles(family), ["Regular"]);
+    assert_eq!(db.face(family, "Regular").family, "DeckCraft Other");
+    assert_eq!(db.add_font(canonical.clone()), 1);
+    assert_eq!(db.styles(family), ["Bold"]);
+
+    std::fs::write(dir.path().join("canonical.ttf"), canonical).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir.path().into()]);
+    assert_eq!(db.styles(family), ["Bold"]);
+    let face = db.face(family, "Regular");
+    assert_eq!((face.family.as_str(), face.style.as_str()), (family, "Bold"));
+}
+
+#[test]
+fn cached_alias_variable_instances_do_not_shadow_a_canonical_family() {
+    for canonical_variable in [false, true] {
+        for alias_first in [false, true] {
+            let db = FontDb::with_font_dirs(Vec::new());
+            let canonical = test_font::font("DeckCraft Exact", "Regular", 400, &["DeckCraft Exact Local"], (900, 100), canonical_variable);
+            let alias = test_font::font("DeckCraft Other", "Regular", 400, &["DeckCraft Exact"], (800, 200), true);
+            if !alias_first {
+                assert_eq!(db.add_font(canonical.clone()), 1);
+            }
+            assert_eq!(db.add_font(alias), 1);
+            let style = "Regular {wght:650}";
+            let other = db.face("DeckCraft Other", style);
+            assert_eq!(other.coords, [(*b"wght", 650.0)]);
+            if alias_first {
+                assert_eq!(db.add_font(canonical), 1);
+            }
+            let face = db.face("DeckCraft Exact", style);
+            assert_eq!(face.family, "DeckCraft Exact", "{canonical_variable}, {alias_first}");
+            assert_eq!(face.is_variable(), canonical_variable);
+            assert!(std::sync::Arc::ptr_eq(&face, &db.face("DeckCraft Exact", style)));
+            assert!(std::sync::Arc::ptr_eq(&face, &db.face("DeckCraft Exact Local", style)));
+            assert!(std::sync::Arc::ptr_eq(&other, &db.face("DeckCraft Other", style)));
+        }
+    }
 }
 
 #[test]
