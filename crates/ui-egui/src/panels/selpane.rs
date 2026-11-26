@@ -216,7 +216,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 }
                 app.selpane.rename_started = true;
             }
-            let (enter, esc) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+            let (enter, esc) = (ui.input(|i| i.key_pressed(egui::Key::Enter)), crate::framework::escape_pressed(ui.ctx()));
             if out.lost_focus() || enter || esc {
                 app.selpane.renaming = None;
                 app.selpane.rename_started = false;
@@ -342,16 +342,16 @@ fn click(app: &mut SlideApp, rows: &[Row], k: usize, ctrl: bool, shift: bool) {
 }
 
 fn keys(app: &mut SlideApp, ui: &Ui, rows: &[Row], selected: &[u32], focused: u32) {
-    let (up, down, home, end, f2, esc) = ui.input(|i| {
+    let (up, down, home, end, f2) = ui.input(|i| {
         (
             i.key_pressed(egui::Key::ArrowUp),
             i.key_pressed(egui::Key::ArrowDown),
             i.key_pressed(egui::Key::Home),
             i.key_pressed(egui::Key::End),
             i.key_pressed(egui::Key::F2),
-            i.key_pressed(egui::Key::Escape),
         )
     });
+    let esc = crate::framework::escape_pressed(ui.ctx());
     let cur = selected.last().and_then(|id| rows.iter().position(|r| r.id == *id));
     let to = if up {
         Some(cur.map(|c| c.saturating_sub(1)).unwrap_or(0))

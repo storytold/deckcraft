@@ -169,13 +169,16 @@ mod tests {
             let mut app = crate::SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
             // The second case is not sanitized: the canvas keeps a stray zoom in range itself.
             app.ui = ui;
-            let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-                |ui, app: &mut crate::SlideApp| {
-                    app.logic(ui.ctx());
-                    app.ui(ui);
-                },
-                app,
-            );
+            let mut h = egui_kittest::Harness::builder()
+                .with_context_setup(crate::framework::install_headless)
+                .with_size(egui::vec2(1200.0, 800.0))
+                .build_ui_state(
+                    |ui, app: &mut crate::SlideApp| {
+                        app.logic(ui.ctx());
+                        app.ui(ui);
+                    },
+                    app,
+                );
             h.run_steps(4);
             assert!(h.state().canvas_scale <= *crate::ZOOM_RANGE.end() + 1e-3, "{}", h.state().canvas_scale);
         }
