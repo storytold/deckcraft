@@ -72,28 +72,40 @@ pub(super) fn shown_slide_rect(ui: &Ui, show: &Show, doc: &Presentation) -> Rect
 }
 
 /// Playback bar for one clip: centred along the bottom inside a large shape, just under a small
-/// icon. Where it would meet the show's tool bar (a clip filling the slide), it sits above it.
-fn media_bar_rect(shape: Rect, full: Rect) -> Rect {
+/// icon, and kept on screen. Where it would meet the show's tool bar (a clip filling the slide),
+/// it sits above it; reading view draws no tool bar.
+fn media_bar_rect(shape: Rect, full: Rect, reading: bool) -> Rect {
     let h = 26.0f32;
     let w = shape.width().clamp(160.0, 420.0);
-    let bar = if shape.height() >= h + 16.0 && shape.width() >= 160.0 {
-        let w = (shape.width() - 8.0).min(w);
-        Rect::from_min_size(pos2(shape.center().x - w / 2.0, shape.max.y - h - 4.0), vec2(w, h))
+    let (w, y) = if shape.height() >= h + 16.0 && shape.width() >= 160.0 {
+        ((shape.width() - 8.0).min(w), shape.max.y - h - 4.0)
     } else {
-        Rect::from_min_size(pos2(shape.center().x - w / 2.0, shape.max.y + 4.0), vec2(w, h))
+        (w, shape.max.y + 4.0)
     };
+    // Not `clamp`: it panics when the window is narrower than the bar.
+    let x = (shape.center().x - w / 2.0).min(full.max.x - w - 4.0).max(full.min.x + 4.0);
+    let bar = Rect::from_min_size(pos2(x, y), vec2(w, h));
+    if reading {
+        return bar;
+    }
     // The tool bar takes clicks 8 px around it (`reading_bar_hit`).
     let tool = tool_bar_rect(full).expand(8.0);
     if bar.intersects(tool) { bar.translate(vec2(0.0, tool.min.y - 4.0 - bar.max.y)) } else { bar }
 }
 
-pub(super) fn slide_media_bars(srect: Rect, full: Rect, doc: &Presentation, slide: usize) -> Vec<(ShapeId, deckcraft_model::MediaClip, Rect, Rect)> {
+pub(super) fn slide_media_bars(
+    srect: Rect,
+    full: Rect,
+    reading: bool,
+    doc: &Presentation,
+    slide: usize,
+) -> Vec<(ShapeId, deckcraft_model::MediaClip, Rect, Rect)> {
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
     crate::media::slide_media(doc, slide)
         .into_iter()
         .map(|(id, x, clip)| {
             let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
-            let bar = media_bar_rect(r, full);
+            let bar = media_bar_rect(r, full, reading);
             (id, clip, r, bar)
         })
         .collect()
@@ -111,7 +123,7 @@ pub(super) fn media_bar_target(
         return None;
     }
     let p = ctx.input(|i| i.pointer.hover_pos())?;
-    let items = slide_media_bars(srect, full, doc, show.state.slide);
+    let items = slide_media_bars(srect, full, show.reading, doc, show.state.slide);
     if let Some((id, clip, _, bar)) = items.iter().rev().find(|(_, _, _, bar)| bar.contains(p)) {
         return Some((*id, clip.clone(), *bar));
     }
@@ -126,7 +138,7 @@ pub(super) fn pointer_on_media_bar(ctx: &egui::Context, ui: &Ui, doc: &Presentat
     }
     let Some(p) = ctx.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos())) else { return false };
     let srect = shown_slide_rect(ui, show, doc);
-    slide_media_bars(srect, ui.max_rect(), doc, show.state.slide).iter().any(|(_, _, _, bar)| bar.contains(p))
+    slide_media_bars(srect, ui.max_rect(), show.reading, doc, show.state.slide).iter().any(|(_, _, _, bar)| bar.contains(p))
 }
 
 /// The media shape under the pointer on the shown slide.
@@ -289,13 +301,22 @@ mod hit_tests {
     fn media_bar_keeps_clear_of_the_tool_bar() {
         for (w, h) in [(800.0, 600.0), (1280.0, 720.0), (1366.0, 768.0), (2560.0, 1440.0)] {
             let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(w, h));
-            let bar = media_bar_rect(full, full);
+            let bar = media_bar_rect(full, full, false);
             assert!(!bar.intersects(tool_bar_rect(full).expand(8.0)), "{w}x{h}: {bar:?}");
             assert!((bar.center().x - full.center().x).abs() < 0.5, "{w}x{h}: centred");
         }
         // Wide enough to clear it by centring alone: the bar stays at the bottom of the clip.
         let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(2560.0, 1440.0));
-        assert_eq!(media_bar_rect(full, full).max.y, full.max.y - 4.0);
+        assert_eq!(media_bar_rect(full, full, false).max.y, full.max.y - 4.0);
+        // Reading view draws no tool bar: the bar stays at the bottom of the clip.
+        let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 720.0));
+        assert_eq!(media_bar_rect(full, full, true).max.y, full.max.y - 4.0);
+        // A clip running past the screen keeps its bar on screen, also in a window narrower than the bar.
+        for w in [800.0, 300.0] {
+            let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(w, 600.0));
+            let wide = Rect::from_min_max(pos2(0.0, 0.0), pos2(2400.0, 600.0));
+            assert!(media_bar_rect(wide, full, false).min.x < full.max.x, "{w}: on screen");
+        }
     }
 
     #[test]
