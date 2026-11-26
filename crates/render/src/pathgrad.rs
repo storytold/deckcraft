@@ -66,6 +66,8 @@ pub fn position(kind: &str, bounds: Rect, focus: [f64; 4], outline: &[Vec<Point>
     position_in_tile(kind, bounds, bounds, focus, outline, p)
 }
 
+/// [`position`] with the `rect` ramp ending on the edges of `tile` instead of `bounds`; the focus
+/// rect is still measured in `bounds`.
 fn position_in_tile(kind: &str, bounds: Rect, tile: Rect, focus: [f64; 4], outline: &[Vec<Point>], p: Point) -> f64 {
     let f = Rect::new(
         bounds.x0 + bounds.width() * focus[0].clamp(0.0, 1.0),
@@ -295,6 +297,9 @@ pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64,
     fill_tiled(ctx, kind, focus, stops, bounds, bounds, path, m, alpha);
 }
 
+/// [`fill`] with the gradient laid out in `tile` (the `a:tileRect` box in path units) and
+/// repeated across the shape where `tile` does not cover it; a `tile` equal to `bounds` draws
+/// as [`fill`] does.
 #[allow(clippy::too_many_arguments)]
 pub fn fill_tiled(
     ctx: &mut RenderContext,
