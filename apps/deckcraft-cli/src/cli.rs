@@ -1,4 +1,4 @@
-//! The command line as clap derive types (RFC-0012): `--help` is these doc comments, and the
+//! The command line as clap derive types (RFC-0018): `--help` is these doc comments, and the
 //! values reach the commands already typed.
 
 use std::ffi::OsStr;

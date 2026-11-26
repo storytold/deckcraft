@@ -1,4 +1,4 @@
-//! Errors of the CLI (RFC-0012): usage errors exit 2, failures exit 1.
+//! Errors of the CLI (RFC-0018): usage errors exit 2, failures exit 1.
 
 use std::path::PathBuf;
 

@@ -1,6 +1,6 @@
 //! Headless DeckCraft: `deckcraft-cli help` explains each subcommand.
 //!
-//! Follows RFC-0012 (command-line conventions): the command line is the clap derive types in
+//! Follows RFC-0018 (command-line conventions): the command line is the clap derive types in
 //! [`cli`], errors are the thiserror enums in [`error`], and `main` only wires the process to
 //! [`run`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]

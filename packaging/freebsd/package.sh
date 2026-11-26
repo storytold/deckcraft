@@ -40,6 +40,12 @@ fi
 
 if [[ "${1:-}" != "--skip-build" ]]; then
   (cd "$ROOT" && cargo build --release --locked "${TARGET_ARGS[@]}" -p deckcraft -p deckcraft-cli)
+  # The generate example writes deckcraft-cli's man pages and shell completions below; a cross build
+  # can't run it. It is built in its own cargo run so its dev-dependencies' features aren't unified
+  # into the binaries.
+  if [[ -z "${CARGO_BUILD_TARGET:-}" || "$CARGO_BUILD_TARGET" == "$(rustc -vV | sed -n 's/^host: //p')" ]]; then
+    (cd "$ROOT" && cargo build --release --locked "${TARGET_ARGS[@]}" -p deckcraft-cli --example generate)
+  fi
 fi
 
 # Refuse placeholder, wrong-arch or non-FreeBSD binaries (also with --skip-build). Bytes: ELF magic,
@@ -72,6 +78,23 @@ sed -e "s/@VERSION@/$VERSION/g" -e "s/@DATE@/$DECKCRAFT_BUILD_DATE/g" \
   "$LINUX/$APP_ID.metainfo.xml.in" >"$STAGE/share/metainfo/$APP_ID.metainfo.xml"
 cp -R "$ROOT/assets/app-icon/hicolor" "$STAGE/share/icons/"
 copy_docs "$STAGE/share/doc/deckcraft"
+# deckcraft-cli's man pages and shell completions, from its clap definition. A cross build can't run
+# the example, and a --skip-build run whose prebuilt binaries came without it has none: both leave
+# them out.
+CLI_DOCS="$BIN/examples/generate"
+if [[ -n "${CARGO_BUILD_TARGET:-}" && "$CARGO_BUILD_TARGET" != "$(rustc -vV | sed -n 's/^host: //p')" ]]; then
+  warn "cross-building $ARCH, so deckcraft-cli's man pages and completions are left out"
+elif [[ ! -x "$CLI_DOCS" ]]; then
+  warn "$CLI_DOCS is not built, so deckcraft-cli's man pages and completions are left out"
+else
+  "$CLI_DOCS" "$WORK/cli-docs"
+  mkdir -p "$STAGE/man/man1" "$STAGE/share/bash-completion/completions" \
+    "$STAGE/share/zsh/site-functions" "$STAGE/share/fish/vendor_completions.d"
+  install -m 644 "$WORK"/cli-docs/man/*.1 "$STAGE/man/man1/"
+  install -m 644 "$WORK/cli-docs/completions/deckcraft-cli.bash" "$STAGE/share/bash-completion/completions/deckcraft-cli"
+  install -m 644 "$WORK/cli-docs/completions/_deckcraft-cli" "$STAGE/share/zsh/site-functions/_deckcraft-cli"
+  install -m 644 "$WORK/cli-docs/completions/deckcraft-cli.fish" "$STAGE/share/fish/vendor_completions.d/deckcraft-cli.fish"
+fi
 
 tar -C "$WORK" -czf "$DIST/$NAME.tar.gz" "$NAME"
 if [[ -z "${CARGO_BUILD_TARGET:-}" || "$CARGO_BUILD_TARGET" == "$(rustc -vV | sed -n 's/^host: //p')" ]]; then "$STAGE/bin/deckcraft-cli" --version; fi # a cross-built binary cannot run on the build host

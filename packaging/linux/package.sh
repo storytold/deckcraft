@@ -68,8 +68,10 @@ echo "==> DeckCraft $VERSION for Linux $ARCH ($FORMATS, channel=${DECKCRAFT_BUIL
 if [[ "$SKIP_BUILD" = 0 ]]; then
   if [[ -n "${CROSS_TARGET:-}" ]]; then
     (cd "$ROOT" && cargo build --release --locked -p deckcraft -p deckcraft-cli --target "$CROSS_TARGET")
+    (cd "$ROOT" && cargo build --release --locked -p deckcraft-cli --example generate --target "$CROSS_TARGET")
   else
     (cd "$ROOT" && cargo build --release --locked -p deckcraft -p deckcraft-cli)
+    (cd "$ROOT" && cargo build --release --locked -p deckcraft-cli --example generate)
   fi
 fi
 BIN="$CARGO_TARGET_DIR/${CROSS_TARGET:+$CROSS_TARGET/}release"
@@ -95,6 +97,31 @@ mkdir -p "$STAGE/usr/share/icons"
 cp -R "$ROOT/assets/app-icon/hicolor" "$STAGE/usr/share/icons/"
 mkdir -p "$STAGE/usr/share/doc/deckcraft"
 copy_docs "$STAGE/usr/share/doc/deckcraft"
+# deckcraft-cli's man pages and shell completions, from its clap definition, written by the
+# generate example built above (its own cargo run, so its dev-dependencies' features aren't unified
+# into the binaries). A cross build runs it through $EMULATOR, like the --version check at the end,
+# and leaves them out without one, as does a --skip-build run whose prebuilt binaries came without
+# the example. A Nightly leaves them out: its CLI is installed as deckcraft-nightly-cli, so the
+# stable names would clash with the stable package's files. zsh reads site-functions on Fedora and
+# openSUSE; the deb also links the completion into Debian's vendor-completions (nfpm.yaml).
+CLI_DOCS="$BIN/examples/generate"
+if [[ "$IS_NIGHTLY" = 1 ]]; then
+  :
+elif [[ -n "${CROSS_TARGET:-}" ]] && [[ -z "${EMULATOR:-}" ]]; then
+  warn "no EMULATOR to run the $CROSS_TARGET build, so deckcraft-cli's man pages and completions are left out"
+elif [[ ! -x "$CLI_DOCS" ]]; then
+  warn "$CLI_DOCS is not built, so deckcraft-cli's man pages and completions are left out"
+else
+  if [[ -n "${CROSS_TARGET:-}" ]]; then
+    "$EMULATOR" "$CLI_DOCS" "$WORK/cli-docs"
+  else
+    "$CLI_DOCS" "$WORK/cli-docs"
+  fi
+  install -Dm644 -t "$STAGE/usr/share/man/man1" "$WORK"/cli-docs/man/*.1
+  install -Dm644 "$WORK/cli-docs/completions/deckcraft-cli.bash" "$STAGE/usr/share/bash-completion/completions/deckcraft-cli"
+  install -Dm644 "$WORK/cli-docs/completions/_deckcraft-cli" "$STAGE/usr/share/zsh/site-functions/_deckcraft-cli"
+  install -Dm644 "$WORK/cli-docs/completions/deckcraft-cli.fish" "$STAGE/usr/share/fish/vendor_completions.d/deckcraft-cli.fish"
+fi
 
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$STAGE/usr/share/applications/$APP_ID.desktop"
@@ -193,7 +220,11 @@ if has deb || has rpm; then
   # shellcheck disable=SC2016
   [[ -d "$NFPM_STAGE/usr/lib" ]] || DROP_LIB_TREE='\|^  - src: \${STAGE}/usr/lib/|,+2d;'
   # shellcheck disable=SC2016
-  sed "${DROP_LIB_TREE}s|\${STAGE}|$NFPM_STAGE|g;s|\${NFPM_BIN}|$NFPM_BIN|g;s|\${NFPM_CLI}|$NFPM_CLI|g" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
+  # Without the completions (a Nightly, or a cross build with no EMULATOR) the deb's zsh symlink
+  # would dangle, so its entry is dropped too.
+  DROP_ZSH_LINK=
+  [[ -f "$NFPM_STAGE/usr/share/zsh/site-functions/_deckcraft-cli" ]] || DROP_ZSH_LINK='\|^  - src: /usr/share/zsh/site-functions/|,/packager: deb/d;'
+  sed "${DROP_ZSH_LINK}${DROP_LIB_TREE}s|\${STAGE}|$NFPM_STAGE|g;s|\${NFPM_BIN}|$NFPM_BIN|g;s|\${NFPM_CLI}|$NFPM_CLI|g" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
   for fmt in deb rpm; do
     if has "$fmt"; then (cd "$ROOT" && nfpm package -f "$WORK/nfpm.yaml" -p "$fmt" -t "$DIST/$BASENAME.$fmt"); fi
   done
