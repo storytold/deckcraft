@@ -168,25 +168,25 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                 t.text_dim,
             );
             resp.context_menu(|ui| {
-                if ui.button("Rename Section…").clicked() {
+                if ui.button(crate::i18n::tr("Rename Section…")).clicked() {
                     let mut d = crate::dialogs::Dialog::new("renameSection");
                     d.params = json!({"index": si, "name": sec.name});
                     app.dialog = Some(d);
                     ui.close();
                 }
-                if ui.button("Remove Section").clicked() {
+                if ui.button(crate::i18n::tr("Remove Section")).clicked() {
                     let _ = app.run("section.remove", json!({"index": si}));
                     ui.close();
                 }
-                if ui.button("Remove Section & Slides").clicked() {
+                if ui.button(crate::i18n::tr("Remove Section & Slides")).clicked() {
                     let _ = app.run("section.remove", json!({"index": si, "slides": true}));
                     ui.close();
                 }
-                if ui.button("Move Section Up").clicked() {
+                if ui.button(crate::i18n::tr("Move Section Up")).clicked() {
                     let _ = app.run("section.move", json!({"index": si, "to": si.saturating_sub(1)}));
                     ui.close();
                 }
-                if ui.button("Move Section Down").clicked() {
+                if ui.button(crate::i18n::tr("Move Section Down")).clicked() {
                     let _ = app.run("section.move", json!({"index": si, "to": si + 1}));
                     ui.close();
                 }
