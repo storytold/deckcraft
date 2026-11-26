@@ -53,6 +53,43 @@ fn doc_revision(app: &SlideApp) -> u64 {
     app.session.active().map_or(0, |d| d.revision)
 }
 
+/// The note Format Shape ▸ Line shows next to a disabled Transparency row.
+const LINE_TRANSPARENCY_SOLID_ONLY: &str = "Transparency applies to solid lines";
+
+/// Format Shape ▸ Line's Transparency row. `shape.line {transparency}` changes a solid line (an
+/// automatic one through its effective color); a gradient, pattern or picture line shows the row
+/// disabled.
+fn line_transparency_row(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, effective_line: Option<&Fill>, revision: u64) {
+    let line_fill = sh.line.as_ref().and_then(|l| l.fill.as_ref());
+    let Some(seed) = line_transparency_percent(line_fill, effective_line) else {
+        if matches!(line_fill.or(effective_line), Some(Fill::Gradient(_) | Fill::Pattern(_) | Fill::Picture(_))) {
+            ui.horizontal(|ui| {
+                let label = ui.label("Transparency");
+                let mut v = 0.0_f32;
+                ui.add_enabled(false, egui::Slider::new(&mut v, 0.0..=100.0).suffix("%"))
+                    .labelled_by(label.id)
+                    .on_disabled_hover_text(LINE_TRANSPARENCY_SOLID_ONLY);
+            });
+            ui.weak(LINE_TRANSPARENCY_SOLID_ONLY);
+        }
+        return;
+    };
+    ui.horizontal(|ui| {
+        let label = ui.label("Transparency");
+        let id = ui.scope_id().with(("ltr", sh.id.0));
+        let mut v = held_value(ui, id, revision, seed);
+        let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix("%")).labelled_by(label.id);
+        if r.drag_stopped() || r.lost_focus() {
+            if let Some(t) = fill_transparency_to_apply(v, seed) {
+                run(app, "shape.line", json!({"transparency": t}));
+            }
+            ui.data_mut(|d| d.remove::<(u64, f32)>(id));
+        } else if r.dragged() || r.changed() {
+            ui.data_mut(|d| d.insert_temp(id, (revision, v)));
+        }
+    });
+}
+
 /// Fraction to pass to `shape.fill` when the slider moved. An unchanged value (a focus
 /// loss, or switching to another shape) is `None`, so the pane does not rewrite the fill.
 pub(super) fn fill_transparency_to_apply(shown_percent: f32, seed_percent: f32) -> Option<f64> {
@@ -553,24 +590,7 @@ fn line_fill_options(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shap
     {
         run(app, "shape.line", json!({"gradient": crate::fillui::gradient_json(&ng)}));
     }
-    // `shape.line {transparency}` changes a solid line (an automatic one through its
-    // effective color).
-    if let Some(seed) = line_transparency_percent(line_fill, effective) {
-        ui.horizontal(|ui| {
-            let label = ui.label("Transparency");
-            let id = ui.scope_id().with(("ltr", sh.id.0));
-            let mut v = held_value(ui, id, revision, seed);
-            let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix("%")).labelled_by(label.id);
-            if r.drag_stopped() || r.lost_focus() {
-                if let Some(t) = fill_transparency_to_apply(v, seed) {
-                    run(app, "shape.line", json!({"transparency": t}));
-                }
-                ui.data_mut(|d| d.remove::<(u64, f32)>(id));
-            } else if r.dragged() || r.changed() {
-                ui.data_mut(|d| d.insert_temp(id, (revision, v)));
-            }
-        });
-    }
+    line_transparency_row(app, ui, sh, effective, revision);
 }
 
 /// A labelled drop-down on the Format Shape pane: picks one of `items` (label, value) and runs
@@ -669,13 +689,13 @@ fn fx_slider(
         // must not commit its stale value: only an edit the user made is committed on losing focus.
         let edited_id = sid.with("edited");
         if shown_changed {
-            ui.data_mut(|d| d.insert_temp(edited_id, true));
+            ui.data_mut(|d| d.insert_temp(edited_id, revision));
         }
-        let edited = ui.data_mut(|d| d.get_temp::<bool>(edited_id)).unwrap_or(false);
+        let edited = ui.data_mut(|d| d.get_temp::<u64>(edited_id)) == Some(revision);
         if r.drag_stopped() || (r.lost_focus() && edited) || (shown_changed && !r.dragged()) {
             ui.data_mut(|d| {
                 d.remove::<(u64, f64)>(sid);
-                d.remove::<bool>(edited_id);
+                d.remove::<u64>(edited_id);
             });
             run(app, "shape.effects", json!({key: {prop: v * scale}}));
         }

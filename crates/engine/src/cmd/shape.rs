@@ -521,6 +521,14 @@ mod tests {
         // A call that changes nothing (no end arrow to size) leaves the line automatic.
         s.execute("shape.line", &json!({"ids": [auto], "tailSize": "lg"})).unwrap();
         assert_eq!(line(&s, auto), None);
+        // 0% on an opaque inherited line leaves its color inherited; other parameters still apply.
+        s.execute("shape.line", &json!({"ids": [auto], "transparency": 0.0})).unwrap();
+        assert_eq!(line(&s, auto), None);
+        s.execute("shape.line", &json!({"ids": [auto], "transparency": 0.0, "cap": "round"})).unwrap();
+        let capped = line(&s, auto).unwrap();
+        assert!(capped.fill.is_none() && capped.cap.is_some(), "{capped:?}");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(line(&s, auto), None);
         let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
 
         s.execute("shape.line", &json!({"ids": [auto, solid, none], "transparency": 0.4})).unwrap();
@@ -599,6 +607,99 @@ mod tests {
         // A gradient with fewer than two stops is refused and changes nothing.
         assert!(s.execute("shape.line", &json!({"ids": [id], "gradient": {"stops": [[0, "accent1"]]}})).is_err());
         assert_eq!(line(&s), l);
+    }
+
+    /// 100% makes a line fully transparent, and a theme color keeps its other modifiers next to
+    /// the new alpha, also after a PPTX save and reopen.
+    #[test]
+    fn line_transparency_at_100_percent_keeps_a_theme_colors_other_modifiers() {
+        let mut s = Session::with_new();
+        let rect = |s: &mut Session, x: i32| {
+            ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32)
+        };
+        let (red, themed) = (rect(&mut s, 40), rect(&mut s, 140));
+        s.execute("shape.line", &json!({"ids": [red], "color": "#ff0000"})).unwrap();
+        s.execute("shape.line", &json!({"ids": [themed], "color": {"scheme": "accent2", "lumMod": 75_000, "lumOff": 10_000}})).unwrap();
+        s.execute("shape.line", &json!({"ids": [red], "transparency": 1.0})).unwrap();
+        s.execute("shape.line", &json!({"ids": [themed], "transparency": 0.25})).unwrap();
+        let line = |doc: &deckcraft_model::Presentation, id: ShapeId| doc.slides[0].shape(id).and_then(|sh| sh.line.clone()).and_then(|l| l.fill);
+        let clear = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 0, 0)).with(ColorTransform::Alpha(0))));
+        let accent = Some(Fill::solid(
+            ColorRef::scheme(SchemeSlot::Accent2)
+                .with(ColorTransform::LumMod(75_000))
+                .with(ColorTransform::LumOff(10_000))
+                .with(ColorTransform::Alpha(75_000)),
+        ));
+        assert_eq!(line(&s.doc().unwrap().doc, red), clear);
+        assert_eq!(line(&s.doc().unwrap().doc, themed), accent);
+
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let back = deckcraft_pptx::import(&bytes).unwrap();
+        assert_eq!(line(&back, red), clear);
+        assert_eq!(line(&back, themed), accent);
+    }
+
+    #[test]
+    fn line_width_and_transparency_together_keep_an_automatic_lines_color() {
+        let mut s = Session::with_new();
+        let auto = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
+        let boxed = ShapeId(s.execute("insert.textBox", &json!({"rect": [200, 100, 80, 60], "text": "x"})).unwrap()["id"].as_u64().unwrap() as u32);
+        let (auto_color, boxed_line) = {
+            let st = s.doc().unwrap();
+            let Some(Fill::Solid { color }) = effective_line_fill(&st.doc, &st.selection, st.shape(auto).unwrap()) else {
+                panic!("solid theme line")
+            };
+            let ColorBase::Rgb { rgb } = color.base else { panic!("resolved color, got {color:?}") };
+            (rgb, effective_line_fill(&st.doc, &st.selection, st.shape(boxed).unwrap()))
+        };
+        assert!(!matches!(boxed_line, Some(Fill::Solid { .. })), "{boxed_line:?}");
+        let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        s.execute("shape.line", &json!({"ids": [auto], "width": 3, "transparency": 0.4})).unwrap();
+        let l = s.doc().unwrap().shape(auto).unwrap().line.clone().unwrap();
+        assert_eq!(l.fill, Some(Fill::solid(ColorRef::rgb(auto_color).with(ColorTransform::Alpha(60_000)))));
+        assert_eq!(l.width, Some(3.0));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), before);
+        // A shape that inherits no solid line still gets Text 1, now with the transparency.
+        s.execute("shape.line", &json!({"ids": [boxed], "width": 3, "transparency": 0.4})).unwrap();
+        let l = s.doc().unwrap().shape(boxed).unwrap().line.clone().unwrap();
+        assert_eq!(l.fill, Some(Fill::solid(ColorRef::scheme(SchemeSlot::Tx1).with(ColorTransform::Alpha(60_000)))));
+        assert_eq!(l.width, Some(3.0));
+    }
+
+    #[test]
+    fn line_width_with_zero_transparency_leaves_an_opaque_automatic_line_inherited() {
+        let mut s = Session::with_new();
+        let auto = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
+        s.execute("shape.line", &json!({"ids": [auto], "width": 2, "transparency": 0.0})).unwrap();
+        let l = s.doc().unwrap().shape(auto).unwrap().line.clone().unwrap();
+        assert_eq!(l.fill, None, "{l:?}");
+        assert_eq!(l.width, Some(2.0));
+    }
+
+    #[test]
+    fn line_transparency_that_changes_nothing_records_no_undo_step() {
+        let mut s = Session::with_new();
+        let auto = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
+        let boxed = ShapeId(s.execute("insert.textBox", &json!({"rect": [200, 100, 80, 60], "text": "x"})).unwrap()["id"].as_u64().unwrap() as u32);
+        // 0% on an opaque automatic line, and any transparency on a shape with no solid line.
+        assert_eq!(s.execute("shape.line", &json!({"ids": [auto], "transparency": 0.0})).unwrap(), json!(1));
+        assert_eq!(s.execute("shape.line", &json!({"ids": [boxed], "transparency": 0.4})).unwrap(), json!(1));
+        // Undo goes straight back to before the text box was inserted.
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(s.doc().unwrap().shape(boxed).is_none());
+        assert!(s.doc().unwrap().shape(auto).is_some());
+    }
+
+    #[test]
+    fn line_transparency_outside_zero_to_one_or_not_a_number_is_rejected() {
+        let mut s = Session::with_new();
+        let auto = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
+        let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        for bad in [json!(-0.1), json!(1.5), json!("0.4"), json!(true), json!(null)] {
+            assert!(s.execute("shape.line", &json!({"ids": [auto], "width": 2, "transparency": bad})).is_err(), "{bad}");
+        }
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), before);
     }
 
     #[test]

@@ -130,19 +130,39 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
 /// Fill and outline apply to a group's visible members as well as its container. Other edits
 /// (notably geometry) still target only the selected shape. The whole traversal stays in one edit.
 fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
-    fn apply(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
-        if depth > 64 {
-            return Ok(());
-        }
-        f(sh)?;
-        if let Some(children) = sh.children_mut() {
-            for child in children {
-                apply(child, depth + 1, f)?;
-            }
-        }
-        Ok(())
+    edit_shapes(s, p, cmd, |sh| apply_to_group(sh, 0, &f))
+}
+
+fn apply_to_group(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
+    if depth > 64 {
+        return Ok(());
     }
-    edit_shapes(s, p, cmd, |sh| apply(sh, 0, &f))
+    f(sh)?;
+    if let Some(children) = sh.children_mut() {
+        for child in children {
+            apply_to_group(child, depth + 1, f)?;
+        }
+    }
+    Ok(())
+}
+
+/// How many target shapes [`edit_group_appearance`] would edit, or `None` when `f` would change
+/// at least one of them (or no target is found, so the edit reports the error).
+fn unchanged_appearance(s: &Session, p: &Value, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Option<usize>> {
+    let ids = targets(s, p)?;
+    let st = s.doc()?;
+    let mut seen = std::collections::HashSet::new();
+    let mut n = 0;
+    for id in ids.into_iter().filter(|id| seen.insert(*id)) {
+        let Some(sh) = st.shape(id) else { continue };
+        let mut copy = sh.clone();
+        apply_to_group(&mut copy, 0, f)?;
+        if copy != *sh {
+            return Ok(None);
+        }
+        n += 1;
+    }
+    Ok((n > 0).then_some(n))
 }
 
 pub(super) fn fill(s: &mut Session, p: &Value) -> Result<Value> {
@@ -288,7 +308,13 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         "miter" => deckcraft_model::style::LineJoin::Miter,
         _ => deckcraft_model::style::LineJoin::Round,
     });
-    let transparency = f64_param(p, "transparency");
+    let transparency = match p.get("transparency") {
+        None => None,
+        Some(v) => match v.as_f64() {
+            Some(t) if (0.0..=1.0).contains(&t) => Some(t),
+            _ => return Err(bad("shape.line", "`transparency` must be a number from 0 to 1")),
+        },
+    };
     // Transparency on an inherited (style) line needs the effective color.
     let ctx_line = match transparency {
         None => HashMap::new(),
@@ -305,7 +331,7 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
             lines
         }
     };
-    edit_group_appearance(s, p, "shape.line", |sh| {
+    let edit = |sh: &mut deckcraft_model::Shape| -> Result<()> {
         if reset {
             sh.line = None;
             return Ok(());
@@ -321,10 +347,11 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(g) = &gradient {
             l.fill = Some(Fill::Gradient(g.clone()));
         }
-        let inherited_fill = l.fill.is_none();
+        // With a transparency, an inherited solid line keeps its effective color instead of Text 1.
+        let inherits_solid = transparency.is_some() && matches!(ctx_line.get(&sh.id), Some(Some(Fill::Solid { .. })));
         if width.is_some() {
             l.width = width;
-            if l.fill.is_none() || matches!(l.fill, Some(Fill::None)) && !none {
+            if (l.fill.is_none() && !inherits_solid) || matches!(l.fill, Some(Fill::None)) && !none {
                 l.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Tx1)));
             }
         }
@@ -364,11 +391,10 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         }
         // Format Shape ▸ Line ▸ Transparency: only a solid line has one.
         if let Some(t) = transparency {
-            // A width given in the same call gives an automatic line a fill of its own, so the
-            // inherited color comes first.
-            let inherited = if inherited_fill { ctx_line.get(&sh.id).cloned().flatten() } else { None };
-            let base = inherited.or_else(|| l.fill.clone());
-            if let Some(Fill::Solid { mut color }) = base {
+            let inherited = l.fill.is_none();
+            let base = l.fill.clone().or_else(|| ctx_line.get(&sh.id).cloned().flatten());
+            if let Some(Fill::Solid { color: before }) = base {
+                let mut color = before.clone();
                 // The new transparency replaces any alpha: the alpha transforms, and the alpha an
                 // inherited color carries in its resolved RGBA. A theme, preset or system color
                 // (`phClr` included) resolves to an RGBA that can carry an alpha of its own, so 0%
@@ -380,7 +406,10 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
                 if t > 0.0 || !matches!(color.base, ColorBase::Rgb { .. }) {
                     color.mods.push(ColorTransform::Alpha(((1.0 - t.clamp(0.0, 1.0)) * 100_000.0).round() as i32));
                 }
-                l.fill = Some(Fill::Solid { color });
+                // An inherited color that already has this transparency stays inherited.
+                if !(inherited && color == before) {
+                    l.fill = Some(Fill::Solid { color });
+                }
             }
         }
         // A parameter that changed nothing leaves an automatic line automatic.
@@ -388,7 +417,12 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
             sh.line = None;
         }
         Ok(())
-    })
+    };
+    // A call that changes no line records no undo step.
+    if let Some(n) = unchanged_appearance(s, p, &edit)? {
+        return Ok(Value::from(n));
+    }
+    edit_group_appearance(s, p, "shape.line", edit)
 }
 
 fn shadow_preset(v: &Value) -> Option<Option<Shadow>> {

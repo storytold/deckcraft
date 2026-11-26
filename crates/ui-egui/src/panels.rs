@@ -256,6 +256,51 @@ mod tests {
         assert_eq!(h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count(), 0, "No line");
     }
 
+    /// A line that changes from solid to a gradient keeps its Transparency row, disabled, with a
+    /// note that the setting applies to solid lines; a click on it changes nothing.
+    #[test]
+    fn line_transparency_slider_is_disabled_for_a_gradient_line() {
+        let mut h = fill_pane(Some(json!({"none": true})));
+        h.state_mut().session.execute("shape.line", &json!({"color": "#ff0000", "transparency": 0.4})).unwrap();
+        h.run_steps(3);
+        let note = "Transparency applies to solid lines";
+        let disabled = |h: &Harness<'_, SlideApp>| {
+            h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").map(|n| n.accesskit_node().is_disabled()).collect::<Vec<_>>()
+        };
+        assert_eq!(disabled(&h), [false], "a solid line has an enabled Transparency row");
+        assert!(h.query_by_label(note).is_none(), "no note for a solid line");
+
+        let gradient = deckcraft_model::style::Gradient {
+            stops: vec![
+                deckcraft_model::style::GradientStop { pos: 0.0, color: ColorRef::scheme(SchemeSlot::Accent1) },
+                deckcraft_model::style::GradientStop { pos: 1.0, color: ColorRef::scheme(SchemeSlot::Accent2) },
+            ],
+            shape: deckcraft_model::style::GradientShape::Linear { angle: 90.0, scaled: false },
+            flip: None,
+            rotate_with_shape: true,
+            tile: [0.0; 4],
+        };
+        h.state_mut()
+            .session
+            .edit(|doc, sel| {
+                if let Some(sh) = std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).shape_mut(sel.shapes[0])
+                    && let Some(l) = sh.line.as_mut()
+                {
+                    l.fill = Some(Fill::Gradient(gradient.clone()));
+                }
+                Ok(())
+            })
+            .unwrap();
+        h.run_steps(3);
+        // The gradient editor's stop Transparency slider comes first and stays enabled; the line's own row follows it.
+        assert_eq!(disabled(&h), [false, true], "a gradient line shows the line's Transparency row disabled");
+        assert!(h.query_by_label(note).is_some(), "the row says the setting applies to solid lines");
+        let before = h.state().session.active().unwrap().selected_shapes()[0].line.clone();
+        h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").find(|n| n.accesskit_node().is_disabled()).unwrap().click();
+        h.run_steps(2);
+        assert_eq!(h.state().session.active().unwrap().selected_shapes()[0].line, before, "the disabled row changes nothing");
+    }
+
     /// A Transparency slider changed from the keyboard holds its value until it loses the focus.
     /// When an undo or a command run outside the pane changes the shape first, the slider shows
     /// the new value, and leaving it does not write the held one back.
@@ -320,6 +365,10 @@ mod tests {
         h.get_by_role_and_label(egui::accesskit::Role::Slider, "Blur").focus();
         h.run_steps(2);
         assert!((value(&h) - 4.0).abs() < 0.5, "the slider shows 4 pt, got {}", value(&h));
+        h.key_press(egui::Key::ArrowRight);
+        h.run_steps(2);
+        assert!(value(&h) > 4.5, "the arrow key moves the slider, got {}", value(&h));
+        assert_eq!(blur(&h), Some(5.0), "the keyboard edit is committed immediately");
 
         h.state_mut().session.execute("shape.effects", &json!({"shadowProps": {"blur": 10.0}})).unwrap();
         h.run_steps(3);
@@ -535,7 +584,7 @@ mod tests {
     }
 
     /// Slide background fill is one of the Fill options. It has no Color button or Transparency
-    /// slider of its own.
+    /// slider of its own; the line keeps its Transparency slider.
     #[test]
     fn slide_background_fill_is_a_fill_option() {
         let mut h = fill_pane(None);
@@ -547,7 +596,7 @@ mod tests {
         assert_eq!(h.state().session.active().unwrap().history.undo.len(), undo + 1, "one undo step");
         assert_eq!(h.get_by_label("Slide background fill").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
         assert_eq!(color_buttons(&h), 1, "only the line's Color button");
-        assert_eq!(h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count(), 1, "only the line's Transparency slider");
+        assert_eq!(h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count(), 1);
         // A shape that already has the background fill shows this option chosen, not Automatic.
         let h = fill_pane(Some(json!({"background": true})));
         assert_eq!(h.get_by_label("Slide background fill").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
