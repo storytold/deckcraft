@@ -100,7 +100,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Drag the frame of a text box being edited to move it | yes | yes |
 | Click the frame of a text box or placeholder to select it whole (then move, duplicate or delete it) | yes | yes; a click inside takes the caret |
 | Table cells: caret and selection in the cell, click into another cell, drag row and column borders, drag across cells to select a range | yes | yes: a drag from the cell being edited into another cell selects the range (merged cells whole), Shift+arrow grows or shrinks it, formatting and Delete act on the selected cells |
-| Context menus on shapes, slides, text, thumbnails | yes | yes, shorter; a right click selects the shape under the pointer first |
+| Context menus on shapes, slides, text, thumbnails | yes | yes, shorter; a right click selects the shape under the pointer first. On a picture, Change Picture offers From File… and From Clipboard… |
 | Group fill and outline | formats the members | Shape Fill and Shape Outline reach nested members in one undo step; a transparency-only fill edit retains each member's colour (#1079) |
 | WordArt transform | Transform gallery | Shape Format ▸ Text Effects ▸ Transform (`format.textWarp`): No Transform, Follow Path and the other 36 presets. Adjust handles: see WordArt adjust handles |
 | Rulers with indent markers and tab stops | yes | yes: indent markers and tab stops drag on the ruler (a click adds a tab, the corner selector picks its kind); Tabs dialog from Home › Paragraph and the Paragraph dialog |
