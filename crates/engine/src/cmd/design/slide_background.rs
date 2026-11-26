@@ -31,7 +31,8 @@ pub(super) fn background(s: &mut Session, p: &Value) -> Result<Value> {
             color: deckcraft_model::ColorRef::scheme(slots.get(i % 4).copied().unwrap_or(deckcraft_color::SchemeSlot::Bg1)),
         }))
     } else if let Some(g) = p.get("gradient") {
-        let mut g = crate::cmd::shape::gradient_param(g).ok_or_else(|| bad("design.background", "gradient needs two or more `stops`"))?;
+        let mut g = crate::cmd::shape::gradient_param(g)
+            .ok_or_else(|| bad("design.background", "gradient needs two or more `stops`, and a `tile` of four numbers when given"))?;
         g.rotate_with_shape = false;
         BgOp::Set(Some(Background::Fill { fill: Fill::Gradient(g) }))
     } else if let Some(pt) = p.get("pattern") {

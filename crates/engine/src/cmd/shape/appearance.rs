@@ -110,14 +110,15 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
             scaled: v.get("scaled").and_then(Value::as_bool).unwrap_or(false),
         },
     };
-    let tile = v
-        .get("tile")
-        .and_then(Value::as_array)
-        .and_then(|a| {
+    // An omitted tile is the shape's own box; a tile that is not four finite numbers is refused.
+    let tile = match v.get("tile") {
+        None => [0.0; 4],
+        Some(t) => {
+            let a = t.as_array().filter(|a| a.len() == 4)?;
             let f = |i: usize| a.get(i).and_then(Value::as_f64).filter(|x| x.is_finite()).map(|x| x.clamp(-10.0, 10.0));
-            Some([f(0)?, f(1)?, f(2)?, f(3)?])
-        })
-        .unwrap_or([0.0; 4]);
+            [f(0)?, f(1)?, f(2)?, f(3)?]
+        }
+    };
     Some(Gradient {
         tile,
         stops,
@@ -282,7 +283,9 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
     let none = bool_or(p, "none", false);
     let color = color_param(p, "color");
     let gradient = match p.get("gradient") {
-        Some(g) => Some(gradient_param(g).ok_or_else(|| bad("shape.line", "gradient needs at least two `stops`: [[0, \"#fff\"], [1, \"#000\"]]"))?),
+        Some(g) => Some(gradient_param(g).ok_or_else(|| {
+            bad("shape.line", "gradient needs at least two `stops`: [[0, \"#fff\"], [1, \"#000\"]], and a `tile` of four numbers when given")
+        })?),
         None => None,
     };
     let width = f64_param(p, "width").map(|w| w.clamp(0.0, 1584.0));
@@ -679,6 +682,16 @@ pub(super) fn quick_style(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_malformed_gradient_tile_is_refused_not_reset() {
+        let stops = json!([[0, "#ff0000"], [1, "#0000ff"]]);
+        assert_eq!(gradient_param(&json!({"stops": stops})).expect("omitted tile").tile, [0.0; 4]);
+        assert_eq!(gradient_param(&json!({"stops": stops, "tile": [0.1, 0.2, 0.3, 0.4]})).expect("tile").tile, [0.1, 0.2, 0.3, 0.4]);
+        for tile in [json!([0.1, 0.2]), json!([0.1, 0.2, 0.3, 0.4, 0.5]), json!([0.1, 0.2, "x", 0.4]), json!("none"), json!([0.1, 0.2, 0.3, null])] {
+            assert!(gradient_param(&json!({"stops": stops, "tile": tile})).is_none(), "{tile}");
+        }
+    }
 
     #[test]
     fn gradient_parameters_keep_flip_mode() {

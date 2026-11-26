@@ -268,7 +268,9 @@ fn requested_fill(s: &mut Session, p: &Value) -> Result<Option<Option<Fill>>> {
         return Ok(Some(Some(Fill::solid(c))));
     }
     if let Some(g) = p.get("gradient") {
-        let gradient = gradient_param(g).ok_or_else(|| bad("shape.fill", "gradient needs at least two `stops`: [[0, \"#fff\"], [1, \"#000\"]]"))?;
+        let gradient = gradient_param(g).ok_or_else(|| {
+            bad("shape.fill", "gradient needs at least two `stops`: [[0, \"#fff\"], [1, \"#000\"]], and a `tile` of four numbers when given")
+        })?;
         return Ok(Some(Some(Fill::Gradient(gradient))));
     }
     if let Some(pt) = p.get("pattern") {
