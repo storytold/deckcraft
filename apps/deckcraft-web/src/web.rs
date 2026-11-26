@@ -4,7 +4,7 @@ use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Inbox, InboxEvent, InboxFile, Services, SlideApp};
 use wasm_bindgen::JsCast as _;
 
-const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
+const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "ppt", "pot", "pps", "txt", "md"];
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff"];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
@@ -49,10 +49,13 @@ pub fn start() {
                         log::info!("deckcraft-web {}: wgpu backend {:?}", env!("CARGO_PKG_VERSION"), rs.adapter.get_info().backend);
                     }
                     deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
+                    // The presenter popup draws DeckCraft's presenter view only, with no framework component, so
+                    // it runs without the framework runtime.
                     if let Some(token) = crate::presenter::token() {
                         let presenter = crate::presenter::Popup::new(token, cc.egui_ctx.clone()).map_err(std::io::Error::other)?;
                         return Ok(Box::new(presenter) as Box<dyn eframe::App>);
                     }
+                    deckcraft_ui_egui::framework::install_headless(&cc.egui_ctx);
                     let inbox: Inbox = Inbox::default();
                     let mut services = services(inbox.clone(), cc.egui_ctx.clone());
                     if let Some(bridge) = &app_bridge {
@@ -131,6 +134,7 @@ impl eframe::App for WebShell {
             bridge.open_files(&mut self.app);
         }
         self.app.logic(ctx);
+        self.app.close_path(ctx);
         if let Some(bridge) = &self.bridge {
             bridge.report_dirty(&self.app);
         }
@@ -166,6 +170,7 @@ impl eframe::App for WebShell {
             });
         }
         self.app.raw_input_hook(ctx, raw);
+        self.app.before_input(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

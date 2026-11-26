@@ -12,6 +12,36 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 fn main() {
+    // The compiled channel and the version the binary was built as. The desktop crate's build
+    // script reads the same two variables, so the About dialog, the window name and the version
+    // query agree in one build.
+    println!("cargo::rerun-if-env-changed=DECKCRAFT_BUILD_CHANNEL");
+    println!("cargo::rerun-if-env-changed=DECKCRAFT_VERSION");
+    println!("cargo::rustc-check-cfg=cfg(deckcraft_nightly_v1)");
+    let nightly = match std::env::var("DECKCRAFT_BUILD_CHANNEL").as_deref() {
+        Ok("nightly-v1") => {
+            println!("cargo::rustc-cfg=deckcraft_nightly_v1");
+            true
+        }
+        Ok("stable" | "") | Err(std::env::VarError::NotPresent) => false,
+        _ => {
+            println!("cargo::error=unsupported DECKCRAFT_BUILD_CHANNEL (expected stable or nightly-v1)");
+            std::process::exit(1);
+        }
+    };
+    let version = if nightly {
+        match std::env::var("DECKCRAFT_VERSION") {
+            Ok(version) if version.contains("-nightly.") => version,
+            _ => {
+                println!("cargo::error=nightly-v1 requires an explicit DECKCRAFT_VERSION feed identity");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        std::env::var("CARGO_PKG_VERSION").unwrap_or_default()
+    };
+    println!("cargo::rustc-env=DECKCRAFT_BUILT_VERSION={version}");
+
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contributors");
     let json = read(&dir.join("contributors.json"), "the About window shows no contributors", |t| {
         serde_json::from_str::<Value>(t).map_err(|e| e.to_string())
