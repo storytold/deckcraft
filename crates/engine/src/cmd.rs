@@ -444,6 +444,8 @@ pub fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
     use deckcraft_model::ColorBase;
     let mut o = serde_json::Map::new();
     // An ordered list, so the order of the transforms and repeated ones such as `[inv, inv]` are kept.
+    // Every transform is written. A color with more than `MAX_COLOR_MODS` is rejected by `color_value`
+    // with an error, so a command never applies it with transforms silently dropped.
     if !c.mods.is_empty() {
         o.insert("mods".into(), serde_json::json!(c.mods));
     }
@@ -887,5 +889,16 @@ mod tests {
         let mixed = mixed.unwrap_or_else(|| panic!("a color at the cap is valid"));
         assert_eq!(mixed.mods, vec![ColorTransform::Inv; MAX_COLOR_MODS]);
         assert_eq!(color_value(&color_command_value(&mixed)), Some(mixed));
+    }
+
+    #[test]
+    fn color_command_value_keeps_every_transform_so_an_over_cap_color_is_rejected_not_truncated() {
+        use deckcraft_color::ColorTransform;
+        use deckcraft_model::{ColorBase, ColorRef};
+        let at_cap = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![ColorTransform::Inv; MAX_COLOR_MODS] };
+        assert_eq!(color_value(&color_command_value(&at_cap)), Some(at_cap));
+        let over = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![ColorTransform::Inv; MAX_COLOR_MODS + 1] };
+        assert_eq!(color_command_value(&over)["mods"].as_array().map(Vec::len), Some(MAX_COLOR_MODS + 1));
+        assert_eq!(color_value(&color_command_value(&over)), None);
     }
 }
