@@ -23,7 +23,7 @@ fn reflection_none_clears_after_a_second_preset() {
     let mut app = SlideApp::new(s, Services::default());
     app.ui.pane = Some("format".into());
     app.ui.format_tab = "effects".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -51,7 +51,7 @@ fn reflection_none_stays_cleared_when_a_slider_only_had_focus() {
     let mut app = SlideApp::new(s, Services::default());
     app.ui.pane = Some("format".into());
     app.ui.format_tab = "effects".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

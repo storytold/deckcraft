@@ -16,7 +16,7 @@ use crate::backstage::{Backstage, NAV_W, Nav, Page, PrintScope, entries, format_
 use crate::{Services, SlideApp};
 
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -184,7 +184,7 @@ fn every_page_renders() {
 /// In a window narrower than the page's maximum width the New tiles stay inside the right margin (#1421).
 #[test]
 fn new_tiles_keep_the_right_margin_in_a_narrow_window() {
-    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1000.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -847,7 +847,7 @@ fn about_has_product_links_and_credits_without_account_controls() {
 /// At the 900-point minimum window width the About columns stack and Appearance stays on the page.
 #[test]
 fn about_appearance_stays_on_the_page_at_minimum_width() {
-    let mut h = Harness::builder().with_size(egui::vec2(900.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(900.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

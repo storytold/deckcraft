@@ -218,7 +218,7 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
         ui.horizontal(|ui| {
             ui.add_sized(vec2(90.0, 20.0), egui::Label::new("From"));
             let combo =
-                craft_ui::ComboBox::from_id_salt("fmt-origin").selected_text(if center { "Center" } else { "Top Left Corner" }).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("fmt-origin").selected_text(if center { "Center" } else { "Top Left Corner" }).show_ui(ui, |ui| {
                     ui.selectable_value(&mut center, false, "Top Left Corner");
                     ui.selectable_value(&mut center, true, "Center");
                 });
@@ -496,7 +496,7 @@ fn line_choice(app: &mut SlideApp, ui: &mut Ui, label: &str, key: &str, current:
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
         let shown = items.iter().find(|(_, v)| *v == current).map_or(current, |(l, _)| *l);
-        let combo = craft_ui::ComboBox::from_id_salt(("fmt-line", key)).selected_text(shown).width(120.0).show_ui(ui, |ui| {
+        let combo = egui::ComboBox::from_id_salt(("fmt-line", key)).selected_text(shown).width(120.0).show_ui(ui, |ui| {
             for (l, v) in items {
                 if ui.selectable_label(*v == current, *l).clicked() {
                     run(app, "shape.line", json!({key: v}));
@@ -656,7 +656,7 @@ fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft
                 ui.horizontal(|ui| {
                     let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
                     let shown = opts.iter().find(|(k, _)| k == cur).map_or(opts[0].1, |(_, l)| *l);
-                    let combo = craft_ui::ComboBox::from_id_salt(("picfill", id, key)).selected_text(shown).show_ui(ui, |ui| {
+                    let combo = egui::ComboBox::from_id_salt(("picfill", id, key)).selected_text(shown).show_ui(ui, |ui| {
                         for (k, l) in opts {
                             if ui.selectable_label(*k == cur.as_str(), *l).clicked() {
                                 run(app, "shape.fill", json!({"pictureProps": {key: k}}));
@@ -708,7 +708,7 @@ fn preset_label(name: &str) -> String {
 fn three_d_combo(app: &mut SlideApp, ui: &mut Ui, id: u32, label: &str, key: &str, cur: &str, options: &[&str]) {
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
-        let combo = craft_ui::ComboBox::from_id_salt(("3d", id, key)).selected_text(preset_label(cur)).width(170.0).show_ui(ui, |ui| {
+        let combo = egui::ComboBox::from_id_salt(("3d", id, key)).selected_text(preset_label(cur)).width(170.0).show_ui(ui, |ui| {
             for o in options {
                 if ui.selectable_label(*o == cur, preset_label(o)).clicked() {
                     run(app, "shape.effects", json!({"threeD": {key: o}}));
