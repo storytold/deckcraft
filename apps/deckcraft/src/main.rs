@@ -145,6 +145,7 @@ fn services(native_wayland: bool) -> Services {
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
+        system_locale: sys_locale::get_locale(),
         ..Default::default()
     }
 }
@@ -414,6 +415,8 @@ fn main() -> eframe::Result {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
             }
             load_prefs(&mut app);
+            let active_lang = app.ui.interface_language.resolve(app.services.system_locale.as_deref());
+            deckcraft_ui_egui::i18n::set_language(active_lang);
             if !nightly {
                 // Nightly is managed by ArtCraft Launcher: no self-update prompt or stable feed.
                 app.enable_update_checks();
@@ -424,7 +427,7 @@ fn main() -> eframe::Result {
                 if let Ok(v) = app.session.execute("file.recovery.open", &serde_json::json!({}))
                     && let Some(n) = v.get("opened").and_then(|o| o.as_array()).map(Vec::len).filter(|n| *n > 0)
                 {
-                    app.set_status(format!("Recovered {n} unsaved presentation{} from the last session", if n == 1 { "" } else { "s" }));
+                    app.set_status(deckcraft_ui_egui::i18n::recovered(n));
                 }
             }
             if let Some(dictionary) = app_dirs::user_dictionary() {

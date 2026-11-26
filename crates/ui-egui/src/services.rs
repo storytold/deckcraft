@@ -76,4 +76,6 @@ pub struct Services {
     /// Work that must finish on a clean quit. `eframe::App::on_exit` takes and runs it once: on
     /// macOS ⌘Q ends the process inside AppKit's terminate, so nothing after `run_native` runs.
     pub at_exit: Option<Box<dyn FnOnce()>>,
+    /// System BCP 47 locale tag detected at startup for `Language::System` resolution.
+    pub system_locale: Option<String>,
 }

@@ -25,6 +25,7 @@ pub mod eyedropper;
 pub mod flavor;
 pub mod framework;
 pub mod icons;
+pub mod i18n;
 pub mod media;
 pub mod menus;
 pub mod opening;
@@ -144,6 +145,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.checkUpdates", "Check for Updates…", None, "{}"),
     ("app.palette", "Command Palette", Some("Cmd+Shift+P"), "{}"),
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
+    ("app.language", "Language", None, "{code}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
     ("app.smartArtPictureDialog", "Insert Picture in Diagram…", None, "{id?, index}"),

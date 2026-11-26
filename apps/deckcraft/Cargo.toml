@@ -22,6 +22,7 @@ serde_json = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
+sys-locale = "0.3"
 
 [build-dependencies]
 # Icon + VERSIONINFO for deckcraft.exe; build.rs only uses it when the target is Windows.
