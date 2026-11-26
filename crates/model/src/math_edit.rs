@@ -981,21 +981,154 @@ fn unbalanced(nodes: &[MNode], depth: usize) -> bool {
     })
 }
 
+/// Attaches limits typed at the start of an enclosing `Nary` or `Func` operand (`_...`, `^...`,
+/// `┴...`, `┬...`) directly onto the operator, preserving any existing operand content and the
+/// other limit. Returns `Some(Ok(pos))` when limits were attached, `Some(Err(()))` when the text
+/// belongs to the operator's limits but is still incomplete (e.g. unclosed braces/parentheses),
+/// and `None` when not at the start of a limit-bearing operator's operand.
+fn build_enclosing_limits(root: &mut Arg, path: &[(usize, usize)], at: usize, run_text: &str, latex: bool) -> Option<Result<MathPos, ()>> {
+    if !run_text.starts_with(['_', '^', '┴', '┬']) {
+        return None;
+    }
+    let (&(parent_idx, child_idx), parent_path) = path.split_last()?;
+    let parent = arg_at_mut(root, parent_path)?.get_mut(parent_idx)?;
+    match (parent, child_idx) {
+        (MNode::Nary { chr, sub, sup, sub_hide, sup_hide, e, .. }, 2) => {
+            let trimmed = run_text.trim();
+            if matches!(trimmed, "_" | "┬") {
+                e.drain(0..at);
+                *sub_hide = false;
+                let mut target = parent_path.to_vec();
+                target.push((parent_idx, 0));
+                return Some(Ok(MathPos { path: target, off: units(sub) }));
+            }
+            if matches!(trimmed, "^" | "┴") {
+                e.drain(0..at);
+                *sup_hide = false;
+                let mut target = parent_path.to_vec();
+                target.push((parent_idx, 1));
+                return Some(Ok(MathPos { path: target, off: units(sup) }));
+            }
+            if matches!(trimmed, "_^" | "^_" | "┬┴" | "┴┬") {
+                e.drain(0..at);
+                *sub_hide = false;
+                *sup_hide = false;
+                let mut target = parent_path.to_vec();
+                target.push((parent_idx, 0));
+                return Some(Ok(MathPos { path: target, off: units(sub) }));
+            }
+            if latex && run_text.matches('{').count() != run_text.matches('}').count() {
+                return Some(Err(()));
+            }
+            let syn = if latex { format!("\\sum{run_text}") } else { format!("{chr}{run_text}") };
+            let parsed = if latex { crate::math_latex::parse_latex(&syn) } else { crate::math_linear::parse(&syn) };
+            if !latex && unbalanced(&parsed, 0) {
+                return Some(Err(()));
+            }
+            let mut it = parsed.into_iter();
+            if let Some(MNode::Nary { sub: p_sub, sup: p_sup, sub_hide: p_sub_hide, sup_hide: p_sup_hide, e: p_e, .. }) = it.next()
+                && (!p_sub_hide || !p_sup_hide)
+            {
+                if !p_sub_hide {
+                    *sub = merge_runs(p_sub);
+                    *sub_hide = false;
+                }
+                if !p_sup_hide {
+                    *sup = merge_runs(p_sup);
+                    *sup_hide = false;
+                }
+                let mut prepend = p_e;
+                prepend.extend(it);
+                let prepend = merge_runs(prepend);
+                let new_off = units(&prepend);
+                e.splice(0..at, prepend);
+                return Some(Ok(MathPos { path: path.to_vec(), off: new_off }));
+            }
+            Some(Err(()))
+        }
+        (MNode::Func { name, e }, 1) => {
+            let trimmed = run_text.trim();
+            if matches!(trimmed, "_" | "┬" | "^" | "┴") {
+                let upper = matches!(trimmed, "^" | "┴");
+                e.drain(0..at);
+                let off = match name.as_mut_slice() {
+                    [MNode::Lim { lim, upper: cur_upper, .. }] if *cur_upper == upper => units(lim),
+                    _ => {
+                        let base = std::mem::take(name);
+                        *name = vec![MNode::Lim { e: base, lim: Vec::new(), upper }];
+                        0
+                    }
+                };
+                let mut target = parent_path.to_vec();
+                target.push((parent_idx, 0));
+                target.push((0, 1));
+                return Some(Ok(MathPos { path: target, off }));
+            }
+            if latex && run_text.matches('{').count() != run_text.matches('}').count() {
+                return Some(Err(()));
+            }
+            let syn = if latex { format!("\\lim{run_text}") } else { format!("lim{run_text}▒") };
+            let parsed = if latex { crate::math_latex::parse_latex(&syn) } else { crate::math_linear::parse(&syn) };
+            if !latex && unbalanced(&parsed, 0) {
+                return Some(Err(()));
+            }
+            let mut it = parsed.into_iter();
+            let extracted = match it.next() {
+                Some(MNode::Func { name: p_name, e: p_e }) => match p_name.into_iter().next() {
+                    Some(MNode::Lim { lim: p_lim, upper, .. }) => Some((p_lim, upper, p_e)),
+                    _ => None,
+                },
+                Some(MNode::Lim { lim: p_lim, upper, .. }) => Some((p_lim, upper, Vec::new())),
+                _ => None,
+            };
+            if let Some((p_lim, upper, p_e)) = extracted {
+                let new_lim = merge_runs(p_lim);
+                match name.as_mut_slice() {
+                    [MNode::Lim { lim, upper: cur_upper, .. }] if *cur_upper == upper => *lim = new_lim,
+                    _ => {
+                        let base = std::mem::take(name);
+                        *name = vec![MNode::Lim { e: base, lim: new_lim, upper }];
+                    }
+                }
+                let mut prepend = p_e;
+                prepend.extend(it);
+                let prepend = merge_runs(prepend);
+                let new_off = units(&prepend);
+                e.splice(0..at, prepend);
+                return Some(Ok(MathPos { path: path.to_vec(), off: new_off }));
+            }
+            Some(Err(()))
+        }
+        _ => None,
+    }
+}
+
 /// Build up the linear text before the caret in its argument (`latex`: read it as LaTeX).
 /// Returns the new caret when the structure changed.
 pub fn build_up(root: &mut Arg, pos: &MathPos, latex: bool) -> Option<MathPos> {
     let pos = clamp(root, pos);
-    let a = arg_at_mut(root, &pos.path)?;
-    let at = split_at(a, pos.off);
-    if at == 0 || !matches!(a.get(at - 1), Some(MNode::Run(r)) if plain_run(r)) {
+    let (at, run_start, run_text) = {
+        let a = arg_at_mut(root, &pos.path)?;
+        let at = split_at(a, pos.off);
+        if at == 0 || !matches!(a.get(at - 1), Some(MNode::Run(r)) if plain_run(r)) {
+            tidy(root);
+            return None;
+        }
+        let mut run_start = at - 1;
+        while run_start > 0 && matches!(a.get(run_start - 1), Some(MNode::Run(r)) if plain_run(r)) {
+            run_start -= 1;
+        }
+        let run_text: String =
+            a.get(run_start..at)?.iter().filter_map(|n| if let MNode::Run(r) = n { Some(r.text.as_str()) } else { None }).collect();
+        (at, run_start, run_text)
+    };
+    if run_start == 0
+        && let Some(res) = build_enclosing_limits(root, &pos.path, at, &run_text, latex)
+    {
         tidy(root);
-        return None;
+        return res.ok().map(|out| clamp(root, &out));
     }
-    let mut run_start = at - 1;
-    while run_start > 0 && matches!(a.get(run_start - 1), Some(MNode::Run(r)) if plain_run(r)) {
-        run_start -= 1;
-    }
-    let run_text: String = a.get(run_start..at)?.iter().filter_map(|n| if let MNode::Run(r) = n { Some(r.text.as_str()) } else { None }).collect();
+    let a = arg_at_mut(root, &pos.path)?;
     let prev_empty_op = run_start > 0
         && a.get(run_start - 1).is_some_and(|p| matches!(p, MNode::Nary { e, .. } | MNode::Func { e, .. } if e.is_empty()))
         && !run_text.trim().is_empty()
@@ -1557,5 +1690,76 @@ mod tests {
         let p = delete_back(&mut eq, &MathPos::new(vec![(0, 1)], 0));
         assert_eq!(lin(&eq), "█(a+bc+d)");
         assert_eq!(p, MathPos::new(vec![(0, 0)], 3));
+    }
+
+    #[test]
+    fn add_limits_at_start_of_operator_operand() {
+        // 1. Existing integral with content: place cursor before operand, add lower limit, then later add upper limit.
+        let mut eq = parse_linear("∫▒f(x)");
+        let mut p = MathPos::new(vec![(0, 2)], 0);
+        p = insert_text(&mut eq, &p, "_a", TypeStyle::default());
+        let p = build_up(&mut eq, &p, false);
+        assert_eq!(p, Some(MathPos::new(vec![(0, 2)], 0)));
+        assert!(matches!(
+            eq.as_slice(),
+            [MNode::Nary { chr: '∫', sub_hide: false, sup_hide: true, sub, e, .. }]
+                if lin(sub) == "a" && lin(e) == "f(x)"
+        ));
+
+        let p = insert_text(&mut eq, &MathPos::new(vec![(0, 2)], 0), "^b", TypeStyle::default());
+        let p = build_up(&mut eq, &p, false);
+        assert_eq!(p, Some(MathPos::new(vec![(0, 2)], 0)));
+        assert!(matches!(
+            eq.as_slice(),
+            [MNode::Nary { chr: '∫', sub_hide: false, sup_hide: false, sub, sup, e, .. }]
+                if lin(sub) == "a" && lin(sup) == "b" && lin(e) == "f(x)"
+        ));
+
+        // 2. Empty sum: cursor before content box, typing both limits at once in LaTeX mode.
+        let mut eq = parse_linear("∑");
+        let p = insert_text(&mut eq, &MathPos::new(vec![(0, 2)], 0), "_{k=0}^{n}", TypeStyle::default());
+        let p = build_up(&mut eq, &p, true);
+        assert_eq!(p, Some(MathPos::new(vec![(0, 2)], 0)));
+        assert!(matches!(
+            eq.as_slice(),
+            [MNode::Nary { chr: '∑', sub_hide: false, sup_hide: false, sub, sup, e, .. }]
+                if lin(sub) == "k=0" && lin(sup) == "n" && e.is_empty()
+        ));
+
+        // 3. Unclosed group waits instead of corrupting the operand.
+        let mut eq = parse_linear("∑▒x^2");
+        let p = insert_text(&mut eq, &MathPos::new(vec![(0, 2)], 0), "_{k=0", TypeStyle::default());
+        assert!(build_up(&mut eq, &p, true).is_none());
+        let p = insert_text(&mut eq, &p, "}", TypeStyle::default());
+        let p = build_up(&mut eq, &p, true);
+        assert_eq!(p, Some(MathPos::new(vec![(0, 2)], 0)));
+        assert!(matches!(
+            eq.as_slice(),
+            [MNode::Nary { chr: '∑', sub_hide: false, sup_hide: true, sub, e, .. }]
+                if lin(sub) == "k=0" && lin(e) == "x^2"
+        ));
+
+        // 4. Typing bare `_` or `^` opens the limit slot and moves the caret into it.
+        let mut eq = parse_linear("∑▒x");
+        let p = insert_text(&mut eq, &MathPos::new(vec![(0, 2)], 0), "_", TypeStyle::default());
+        let p = build_up(&mut eq, &p, false);
+        assert_eq!(p, Some(MathPos::new(vec![(0, 0)], 0)));
+        assert!(matches!(
+            eq.as_slice(),
+            [MNode::Nary { chr: '∑', sub_hide: false, sup_hide: true, sub, e, .. }]
+                if sub.is_empty() && lin(e) == "x"
+        ));
+
+        // 5. Limit-bearing function (`lim`) at start of its operand.
+        let mut eq = parse_linear("lim▒f(x)");
+        let p = insert_text(&mut eq, &MathPos::new(vec![(0, 1)], 0), "_(x→0)", TypeStyle::default());
+        let p = build_up(&mut eq, &p, false);
+        assert_eq!(p, Some(MathPos::new(vec![(0, 1)], 0)));
+        assert!(matches!(
+            eq.as_slice(),
+            [MNode::Func { name, e }]
+                if matches!(name.as_slice(), [MNode::Lim { lim, upper: false, .. }] if lin(lim) == "x→0")
+                    && lin(e) == "f(x)"
+        ));
     }
 }
