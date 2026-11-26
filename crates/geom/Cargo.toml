@@ -9,5 +9,6 @@ description = "DeckCraft geometry: units (EMU/pt), transforms, preset shape gene
 workspace = true
 
 [dependencies]
+craft-drawingml = { workspace = true }
 kurbo = { workspace = true }
 serde = { workspace = true }
