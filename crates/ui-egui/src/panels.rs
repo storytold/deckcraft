@@ -91,21 +91,27 @@ fn scheme(app: &SlideApp) -> deckcraft_color::ColorScheme {
 
 /// The color scheme of the page being edited: the scheme of the master a slide uses, with its
 /// color map, or of the master or layout open in Slide Master view. Falls back to [`scheme`].
-fn edited_scheme(app: &SlideApp) -> deckcraft_color::ColorScheme {
+/// The map stays separate from the theme colors, so only `bg1`, `tx1`, `bg2` and `tx2` follow it.
+fn edited_scheme(app: &SlideApp) -> fillui::EditedScheme {
     use deckcraft_engine::Target;
     use deckcraft_model::resolve::Ctx;
+    let of_master = |m: &deckcraft_model::Master| fillui::EditedScheme { shown: m.scheme(), raw: m.theme.colors.clone(), map: m.color_map.clone() };
+    let of_ctx = |c: Ctx| fillui::EditedScheme { shown: c.scheme, raw: c.master.theme.colors.clone(), map: c.color_map };
     let edited = app.session.active().and_then(|d| {
         let doc = &d.doc;
         match d.selection.target {
-            Target::Slides => doc.slides.get(d.selection.slide).and_then(|s| Ctx::for_slide(doc, s)).map(|c| c.scheme),
-            Target::Master { master } => doc.masters.get(master).map(|m| m.scheme()),
+            Target::Slides => doc.slides.get(d.selection.slide).and_then(|s| Ctx::for_slide(doc, s)).map(of_ctx),
+            Target::Master { master } => doc.masters.get(master).map(|m| of_master(m)),
             Target::Layout { master, layout } => {
-                doc.masters.get(master).and_then(|m| m.layouts.get(layout).map(|l| Ctx::for_layout(doc, m, l).scheme))
+                doc.masters.get(master).and_then(|m| m.layouts.get(layout).map(|l| of_ctx(Ctx::for_layout(doc, m, l))))
             }
-            t @ (Target::Handout | Target::NotesMaster) => deckcraft_engine::page_master(doc, t).map(|m| m.scheme()),
+            t @ (Target::Handout | Target::NotesMaster) => deckcraft_engine::page_master(doc, t).map(|m| of_master(m)),
         }
     });
-    edited.unwrap_or_else(|| scheme(app))
+    edited.unwrap_or_else(|| match app.session.active().and_then(|d| d.doc.masters.first()) {
+        Some(m) => of_master(m),
+        None => fillui::EditedScheme::plain(deckcraft_model::Theme::default().colors),
+    })
 }
 
 fn color_button(
@@ -184,7 +190,17 @@ mod tests {
         .unwrap();
         let app = SlideApp::new(s, Services::default());
         assert_ne!(super::scheme(&app).get(SchemeSlot::Accent1), half_red);
-        assert_eq!(super::edited_scheme(&app).get(SchemeSlot::Accent1), half_red);
+        assert_eq!(super::edited_scheme(&app).raw.get(SchemeSlot::Accent1), half_red);
+    }
+
+    /// An automatic fill that inherits a picture starts the slider at the picture's transparency.
+    #[test]
+    fn an_inherited_picture_fill_seeds_the_transparency_slider() {
+        use super::format_shape::fill_transparency_seed;
+        let pic = Fill::Picture(deckcraft_model::style::PictureFill { alpha: Some(0.6), ..Default::default() });
+        assert!((fill_transparency_seed(None, Some(&pic)) - 40.0).abs() < 0.01);
+        assert!((fill_transparency_seed(Some(&pic), None) - 40.0).abs() < 0.01);
+        assert_eq!(fill_transparency_seed(None, None), 0.0);
     }
 
     #[test]

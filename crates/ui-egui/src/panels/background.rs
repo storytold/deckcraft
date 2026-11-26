@@ -53,7 +53,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
                 ui.label("Color");
                 let r = widgets::drop_button(ui, "Color", vec2(70.0, 20.0), true);
                 widgets::color_popup(&r).show(|ui| {
-                    if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
+                    if let Some(Some(c)) = widgets::color_grid(ui, &sc.shown, None) {
                         run(app, "design.background", json!({"color": cref_param(&c)}));
                     }
                 });
@@ -71,7 +71,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
         }
         Some(Fill::Pattern(pt)) => {
             current = Some(json!({"pattern": crate::fillui::pattern_json(pt)}));
-            if let Some(np) = crate::fillui::pattern_editor(ui, pt, &sc) {
+            if let Some(np) = crate::fillui::pattern_editor(ui, pt, &sc.shown) {
                 run(app, "design.background", json!({"pattern": crate::fillui::pattern_json(&np)}));
             }
         }
