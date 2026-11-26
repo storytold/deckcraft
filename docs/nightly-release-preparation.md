@@ -38,14 +38,16 @@ branch, so nightly signer files never need a stable release sync. The policy's `
 names it and the signer's guard requires it; this app has no automatic dispatch transport, so
 nothing else targets the branch. The branch only fast-forwards to reviewed main commits, through the
 settings script's `advance` (no queued signer run, a trust-closure scan, then the full diff of
-`.github/` and `packaging/`), and the existing `release` environment trusts it alongside `release`.
+`.github/` and `packaging/`), and the existing `release` environment must admit `nightly-signer`
+alongside `release` before the first dispatch (a repository settings change, not a workflow one).
 Its trust closure is all of `.github/` and `packaging/`, including `packaging/common.sh` (this app
-ships no `packaging/env.sh`), which `import-cert.sh` sources with the Apple keys. On that branch only the pinned `nightly-sign.yml`
-caller may reach an environment: no app workflow binds one, and the only caller of the shared stable
-`release.yml` is `release.yml`, whose callee must carry the stable-only environment guard. The
-contract tests check the in-repo part on every main PR; the settings scan also resolves the callee.
-Stable releases still come only from `refs/heads/release`. History does not carry over a switch
-between `release` and `nightly-signer`, so the switch happens before the first publication.
+ships no `packaging/env.sh`), which `import-cert.sh` sources with the Apple keys. On that branch
+only the pinned `nightly-sign.yml` caller may reach an environment: no app workflow binds one, and
+the only caller of the shared stable `release.yml` is `release.yml`, whose callee must carry the
+stable-only environment guard. The contract tests check the in-repo part on every main PR; the
+settings scan also resolves the callee. Stable releases still come only from `refs/heads/release`.
+History does not carry over a switch between `release` and `nightly-signer`, so the switch happens
+before the first publication.
 
 **Manual actors.** `bflatastic`, `dylanmtaylor`, `echelon`, `FredApps` and `skylartaylor`, in the
 producer's `manual-actors` and the policy's `manual_actors`. The list mirrors the release-managers
