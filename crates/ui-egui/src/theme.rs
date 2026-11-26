@@ -179,7 +179,7 @@ pub fn install_fonts(ctx: &egui::Context) {
 /// installed or embedded faces that draw text the interface faces lack (Hangul, Simplified
 /// Chinese, Devanagari…, #101). See [`crate::uifonts`].
 pub fn install_fonts_with(ctx: &egui::Context, extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) {
-    ctx.set_fonts(font_definitions(extra));
+    craft_ui::fonts::load(ctx, font_definitions(extra));
 }
 
 /// The interface font definitions; see [`install_fonts_with`].
@@ -213,6 +213,10 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
     // A bold family for headings and selected tabs.
     let mut bold: Vec<String> = names.iter().filter(|(fam, st, _)| *fam == "Inter" && *st == "SemiBold").map(|(_, _, n)| n.clone()).collect();
     bold.extend(defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
+    // The framework's dialogs draw their titles in the semibold family and signatures in the
+    // signature family; DeckCraft's SemiBold chain and its proportional chain are those.
+    defs.families.insert(FontFamily::Name(craft_ui::fonts::SEMIBOLD.into()), bold.clone());
+    defs.families.insert(craft_ui::fonts::FontRef::signature().family(), defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
     defs.families.insert(FontFamily::Name("bold".into()), bold);
     // Hack is already bundled for Monospace and covers the interface's arrows and triangles.
     // Keep it after every proportional face so ordinary text metrics stay unchanged.

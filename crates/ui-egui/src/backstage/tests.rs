@@ -16,7 +16,7 @@ use crate::backstage::{Backstage, NAV_W, Nav, Page, PrintScope, entries, format_
 use crate::{Services, SlideApp};
 
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -184,7 +184,7 @@ fn every_page_renders() {
 /// In a window narrower than the page's maximum width the New tiles stay inside the right margin (#1421).
 #[test]
 fn new_tiles_keep_the_right_margin_in_a_narrow_window() {
-    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1000.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -347,6 +347,64 @@ fn change_file_type_png_can_leave_the_background_transparent() {
     let img = deckcraft_render::decode_image(&png).unwrap();
     assert_eq!(img.get_pixel(2, 2).0[3], 0, "the background is left out");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Export › Change File Type exports every slide as its own picture, PNG or JPEG (#2019).
+#[test]
+fn change_file_type_exports_all_slides_as_pictures() {
+    let dir = temp_dir("all-slides");
+    let (services, asked) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    let title = h.state().session.active().unwrap().title();
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Change File Type");
+    h.run_steps(3);
+    click_on_page(&h, "JPEG Pictures, all slides (*.jpg)");
+    h.run_steps(2);
+    assert!(h.query_by_label("Transparent background").is_none(), "JPEG has no transparency");
+    click_on_page(&h, "Save As");
+    h.run_steps(3);
+    for k in 1..=3 {
+        let jpg = std::fs::read(dir.join(format!("{title}{k}.jpg"))).unwrap();
+        assert!(jpg.starts_with(&[0xFF, 0xD8]), "slide {k} is a JPEG");
+    }
+    assert!(!dir.join(format!("{title}4.jpg")).exists(), "one picture per slide");
+
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Change File Type");
+    h.run_steps(3);
+    click_on_page(&h, "PNG Pictures, all slides (*.png)");
+    h.run_steps(2);
+    h.get_by_label("Transparent background").click();
+    h.run_steps(2);
+    click_on_page(&h, "Save As");
+    h.run_steps(3);
+    for k in 1..=3 {
+        let png = std::fs::read(dir.join(format!("{title}{k}.png"))).unwrap();
+        let img = deckcraft_render::decode_image(&png).unwrap();
+        assert_eq!(img.get_pixel(2, 2).0[3], 0, "slide {k} leaves the background out");
+    }
+    assert_eq!(*asked.borrow(), vec![format!("{title}.jpg"), format!("{title}.png")]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Save As shows every type in its open list: the last one is picked by a click, not hidden
+/// below the list's default height (#2019).
+#[test]
+fn save_as_type_list_shows_every_type() {
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Save as type").click();
+    h.run_steps(3);
+    let (last, label, _) = crate::backstage::SAVE_TYPES[crate::backstage::SAVE_TYPES.len() - 1];
+    h.get_by_label(label).click();
+    h.run_steps(3);
+    assert_eq!(h.state().backstage.as_ref().map(|b| b.file_type), Some(last));
 }
 
 /// Close closes a saved presentation at once and asks about unsaved changes first.
@@ -789,7 +847,7 @@ fn about_has_product_links_and_credits_without_account_controls() {
 /// At the 900-point minimum window width the About columns stack and Appearance stays on the page.
 #[test]
 fn about_appearance_stays_on_the_page_at_minimum_width() {
-    let mut h = Harness::builder().with_size(egui::vec2(900.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(900.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

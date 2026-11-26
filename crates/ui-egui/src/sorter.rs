@@ -84,7 +84,7 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
             }
             app.sorter.rename_started = true;
         }
-        let (enter, esc) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+        let (enter, esc) = (ui.input(|i| i.key_pressed(egui::Key::Enter)), crate::framework::escape_pressed(ui.ctx()));
         // The frame that asks for focus has not had it yet; committing then would cancel the rename.
         if already && (out.lost_focus() || enter || esc) {
             app.sorter.renaming = None;
@@ -252,6 +252,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let multi = st.selection.slides.clone();
     let zoom = app.ui.sorter_zoom.clamp(0.5, 3.0);
     let grouped = groups(&doc);
+    // Behind the thumbnails, which take the presses: the document's Tab stop and key target.
+    app.document_behind(ui, ui.available_rect_before_wrap());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
@@ -337,6 +339,9 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let avail = ui.available_rect_before_wrap();
     ui.painter().rect_filled(avail, CornerRadius::ZERO, t.canvas);
+    if app.session.active().is_some() {
+        app.document_widget(ui, avail, Sense::click());
+    }
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
     let idx = st.selection.slide;

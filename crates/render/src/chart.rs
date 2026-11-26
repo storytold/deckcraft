@@ -49,6 +49,8 @@ enum Paint {
     Pattern(String, Rgba, Rgba),
     /// `a:noFill`: only the outline, if any, shows.
     Nothing,
+    /// A line series' legend key: its colour and width, and whether it carries a marker.
+    Line(Rgba, f64, bool),
 }
 
 /// The paint of fill `f` as a bar or legend key draws it; the palette's `fallback` when the file
@@ -72,6 +74,20 @@ fn fill_with(ctx: &mut RenderContext, p: &Paint, r: Rect, m: Affine) {
         }
         Paint::Pattern(name, fg, bg) => crate::pattern::fill(ctx, name, *fg, *bg, 1.0, &r.to_path(0.1), m),
         Paint::Nothing => {}
+        Paint::Line(c, width, marker) => {
+            // A short stretch of the series' line through the key's middle, with the marker on it.
+            let mid = (r.y0 + r.y1) / 2.0;
+            let mut p = BezPath::new();
+            p.move_to((r.x0, mid));
+            p.line_to((r.x1, mid));
+            ctx.set_transform(m);
+            ctx.set_paint(color(*c, 1.0));
+            ctx.set_stroke(kurbo::Stroke::new(width.min(r.height() * 0.4)));
+            ctx.stroke_path(&p);
+            if *marker {
+                ctx.fill_path(&kurbo::Circle::new(((r.x0 + r.x1) / 2.0, mid), r.height() * 0.3).to_path(0.1));
+            }
+        }
     }
 }
 
@@ -95,6 +111,13 @@ fn bar_paint(ctx: &Ctx, c: &Chart, si: usize, pi: usize, s: &deckcraft_model::ch
         return Paint::Color(series_color(ctx, c, pi));
     }
     paint_of(ctx, s.fill.as_ref(), series_color(ctx, c, si))
+}
+
+/// Colour of pie slice `i`: its `<c:dPt>` solid fill, else the palette's. Slices and legend keys share it.
+fn pie_slice_color(ctx: &Ctx, c: &Chart, s: Option<&deckcraft_model::chart::Series>, i: usize) -> Rgba {
+    s.and_then(|s| s.point_fills.iter().find(|(k, _)| *k == i))
+        .and_then(|(_, f)| if let Fill::Solid { color: cc } = f { Some(ctx.color(cc, None)) } else { None })
+        .unwrap_or_else(|| series_color(ctx, c, i))
 }
 
 fn polyline(pts: &[Point]) -> BezPath {
@@ -494,6 +517,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
             to_axis: &to_axis,
             zero,
             base,
+            text_color: text_col,
             error_marks: &mut err_marks,
         },
     );
@@ -612,7 +636,7 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
         // A map draws its own colour scale.
         vec![]
     } else if pie {
-        c.categories.iter().enumerate().map(|(i, n)| (n.clone(), Paint::Color(series_color(rctx, c, i)), None)).collect()
+        c.categories.iter().enumerate().map(|(i, n)| (n.clone(), Paint::Color(pie_slice_color(rctx, c, c.series.first(), i)), None)).collect()
     } else {
         c.series
             .iter()
@@ -620,7 +644,14 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
             .map(|(i, s)| {
                 let k = c.series_kind(s);
                 let line = !k.is_bar_like() && !matches!(k, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
-                if line {
+                if matches!(k, ChartType::Line | ChartType::LineMarkers | ChartType::StackedLine | ChartType::Radar) {
+                    let lw = s.line.as_ref().and_then(|l| l.width).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(2.25).clamp(0.25, 20.0);
+                    (
+                        s.name.clone(),
+                        Paint::Line(series_line(rctx, c, i, s), lw, k == ChartType::LineMarkers || (k == ChartType::Radar && s.marker.is_some())),
+                        None,
+                    )
+                } else if line {
                     (s.name.clone(), Paint::Color(series_line(rctx, c, i, s)), None)
                 } else if k.is_bar_like() {
                     let paint = if c.vary_colors && c.series.len() == 1 && s.fill.is_none() {
@@ -886,6 +917,7 @@ struct LineDrawing<'a, 'ctx> {
     to_axis: &'a dyn Fn(bool, f64) -> f64,
     zero: f64,
     base: f64,
+    text_color: Rgba,
     error_marks: &'a mut Vec<(f64, f64, f64, f64, bool)>,
 }
 
@@ -914,10 +946,13 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
         let series_stats = s.error_bars.as_ref().map(|_| deckcraft_model::chart::SeriesStats::of(&s.values));
         let mut pts = vec![];
+        // Each point's own value (not the stacked total), for its data label.
+        let mut values = vec![];
         // Whether the series has any x value, found once rather than per point.
         let any_x = s.x_values.iter().flatten().next().is_some();
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
+            let own = v;
             let v = if stacked {
                 let base_v = acc.get(i).copied().unwrap_or(0.0);
                 if let Some(a) = acc.get_mut(i) {
@@ -942,6 +977,7 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
                 err_marks.push((x, to_axis(sec, lo), to_axis(sec, hi), base * 0.4, s.error_bars.as_ref().is_some_and(|e| e.end_cap)));
             }
             pts.push(Point::new(x, to_axis(sec, v)));
+            values.push(own);
         }
         if pts.is_empty() {
             continue;
@@ -967,6 +1003,22 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
             ctx.set_paint(color(col, 1.0));
             for q in &pts {
                 ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
+            }
+        }
+        // A line series that asks for value labels (`c:dLbls/c:showVal`) shows each point's value
+        // just above it, as bars do theirs (#2066). Area series keep none (theirs sit inside the
+        // area), and scatter and bubble series, which also come here, are left as they were.
+        if matches!(kind, ChartType::Line | ChartType::LineMarkers | ChartType::StackedLine) && c.series_data_labels(s) {
+            let gap = base * 0.3 + 3.5;
+            for (q, v) in pts.iter().zip(&values) {
+                label(
+                    ctx,
+                    rctx,
+                    m,
+                    &c.data_label(s, *v),
+                    Rect::new(q.x - 40.0, q.y - gap - base * 1.4, q.x + 40.0, q.y - gap),
+                    LabelStyle { size: base * 0.9, align: Align::Center, anchor: Anchor::Bottom, col: draw.text_color, bold: false },
+                );
             }
         }
     }
@@ -1157,12 +1209,7 @@ fn draw_pie(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
         p.extend(arc.append_iter(0.1));
         p.close_path();
         ctx.set_transform(m);
-        let col = s
-            .point_fills
-            .iter()
-            .find(|(k, _)| *k == i)
-            .and_then(|(_, f)| if let Fill::Solid { color: cc } = f { Some(rctx.color(cc, None)) } else { None })
-            .unwrap_or_else(|| series_color(rctx, c, i));
+        let col = pie_slice_color(rctx, c, Some(s), i);
         ctx.set_paint(color(col, 1.0));
         ctx.fill_path(&p);
         ctx.set_paint(color(Rgba::WHITE, 1.0));

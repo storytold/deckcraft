@@ -67,13 +67,17 @@ fn a_still_cursor_hides_over_a_clickable_shape() {
     let r = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, size.width, size.height]})).unwrap();
     session.execute("insert.hyperlink", &json!({"url": "https://example.org", "ids": [r["id"]]})).unwrap();
     let app = SlideApp::new(session, crate::Services::default());
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(0.25).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness = egui_kittest::Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(vec2(1000.0, 700.0))
+        .with_step_dt(0.25)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     harness.run_steps(3);
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
@@ -97,13 +101,17 @@ fn keep_cursor_visible_leaves_a_still_cursor_over_a_link() {
     let mut app = SlideApp::new(session, crate::Services::default());
     app.ui.presenter_view = false;
     app.run("show.keepCursor", json!({"on": true})).unwrap();
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(0.25).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness = egui_kittest::Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(vec2(1000.0, 700.0))
+        .with_step_dt(0.25)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     harness.run_steps(3);
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
@@ -122,13 +130,14 @@ fn set_up_slide_show_keeps_the_cursor_visible() {
     use egui_kittest::kittest::Queryable;
 
     let app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     for on in [true, false] {
         harness.state_mut().run("app.dialog", json!({"id": "setupShow"})).unwrap();
         harness.run_steps(6);
@@ -236,18 +245,19 @@ fn show_with_clip() -> (egui_kittest::Harness<'static, SlideApp>, ShapeId, Pos2,
     // Presenter view opens an embedded window over the whole screen here, which takes the clicks.
     let mut app = SlideApp::new(session, crate::Services::default());
     app.ui.presenter_view = false;
-    let mut harness = egui_kittest::Harness::builder().with_size(size).with_step_dt(0.25).build_ui_state(
-        move |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            if let (Some(show), Some(d)) = (app.show.as_ref(), app.session.active()) {
-                let now = ui.input(|i| i.time);
-                seen.set(pointer_on_media_bar(ui.ctx(), ui, &d.doc, show, now));
-                slide_seen.set(shown_slide_rect(ui, show, &d.doc));
-            }
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(size).with_step_dt(0.25).build_ui_state(
+            move |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                if let (Some(show), Some(d)) = (app.show.as_ref(), app.session.active()) {
+                    let now = ui.input(|i| i.time);
+                    seen.set(pointer_on_media_bar(ui.ctx(), ui, &d.doc, show, now));
+                    slide_seen.set(shown_slide_rect(ui, show, &d.doc));
+                }
+                app.ui(ui);
+            },
+            app,
+        );
     harness.run_steps(3);
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
@@ -336,16 +346,20 @@ fn show_with_gif() -> (egui_kittest::Harness<'static, SlideApp>, ShapeId, Pos2) 
     let slide_seen = slide.clone();
     let mut app = SlideApp::new(session, crate::Services::default());
     app.ui.presenter_view = false;
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(0.25).build_ui_state(
-        move |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            if let (Some(show), Some(d)) = (app.show.as_ref(), app.session.active()) {
-                slide_seen.set(shown_slide_rect(ui, show, &d.doc));
-            }
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness = egui_kittest::Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(vec2(1000.0, 700.0))
+        .with_step_dt(0.25)
+        .build_ui_state(
+            move |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                if let (Some(show), Some(d)) = (app.show.as_ref(), app.session.active()) {
+                    slide_seen.set(shown_slide_rect(ui, show, &d.doc));
+                }
+                app.ui(ui);
+            },
+            app,
+        );
     harness.run_steps(3);
     harness.state_mut().start_show(1, false);
     harness.run_steps(2);
@@ -447,13 +461,14 @@ fn slideshow_navigation_advances_once_with_presenter_view() {
     session.execute("slide.new", &json!({})).unwrap();
     let mut app = SlideApp::new(session, crate::Services::default());
     app.ui.presenter_view = true;
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     harness.run_steps(3);
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
@@ -1004,13 +1019,17 @@ fn show_of_three() -> egui_kittest::Harness<'static, SlideApp> {
     session.execute("slide.new", &json!({})).unwrap();
     let mut app = SlideApp::new(session, crate::Services::default());
     app.ui.presenter_view = false;
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness = egui_kittest::Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(vec2(1000.0, 700.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     harness.run_steps(3);
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
@@ -1283,13 +1302,14 @@ fn back_leaves_a_slide_whose_first_animation_is_with_previous() {
         .execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "withPrevious", "duration": 500}))
         .unwrap();
     let app = SlideApp::new(session, crate::Services::default());
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     harness.run_steps(3);
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
@@ -1396,13 +1416,14 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
     let services = crate::Services { presenter: Some(Box::new(Mock(bridge.clone()))), ..Default::default() };
     let mut app = SlideApp::new(session, services);
     app.ui.presenter_view = true;
-    let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     h.state_mut().start_show(0, false);
     h.run_steps(2);
