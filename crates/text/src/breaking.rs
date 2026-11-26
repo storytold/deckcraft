@@ -329,7 +329,11 @@ pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f6
         let d = if default_tab > 1.0 { default_tab } else { 72.0 };
         let default_next = ((x / d).floor() + 1.0) * d;
         let explicit_wins = match explicit {
-            Some(s) => s.pos < h - 0.5 || (s.pos - h).abs() <= 0.5,
+            // Compared where the stop takes effect: one past the line's edge ends there (below).
+            Some(s) => {
+                let pos = if right.is_finite() && right > 0.0 { s.pos.min(right) } else { s.pos };
+                pos < h - 0.5 || (pos - h).abs() <= 0.5
+            }
             None => h >= default_next - 0.5,
         };
         if !explicit_wins {
@@ -360,6 +364,14 @@ mod tab_tests {
         let stops = [Tab { pos: 100.0, align: TabAlign::Left }];
         assert!(tab_advance(f64::NAN, &stops, 72.0, (0.0, 0.0), None, 600.0).is_finite());
         assert_eq!(tab_advance(10.0, &stops, 72.0, (0.0, 0.0), None, 600.0), 90.0);
+    }
+
+    #[test]
+    fn a_stop_past_the_edge_is_compared_with_the_hang_at_the_edge() {
+        // The 700 pt stop takes effect at the 60 pt edge, which comes before the 80 pt hang: it
+        // wins, and right-aligned text after it ends at the edge (60 - 20), not at the hang.
+        let stops = [Tab { pos: 700.0, align: TabAlign::Right }];
+        assert_eq!(tab_advance(0.0, &stops, 72.0, (20.0, 20.0), Some(80.0), 60.0), 40.0);
     }
 
     #[test]
