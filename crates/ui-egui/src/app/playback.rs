@@ -1,8 +1,8 @@
 use super::{AnimPreview, SlideApp, Value, ViewMode, json, media, preview, show};
 
 impl SlideApp {
-    /// Whether ⌘A should act on the slide list: always in the sorter, in Normal view once the
-    /// thumbnail pane has been clicked.
+    /// Whether ⌘A, ⌘D and Delete should act on the slide list: always in the sorter, in Normal
+    /// view once the thumbnail pane has been clicked.
     pub(crate) fn slides_list_focused(&self) -> bool {
         self.ui.view == ViewMode::Sorter || (self.ui.view == ViewMode::Normal && self.slides_focused)
     }

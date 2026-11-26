@@ -21,8 +21,8 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             new
         ),
-        cmd!("slide.duplicate", "Duplicate Slide", ["Insert"], None, "{index?}", has_slide, duplicate),
-        cmd!("slide.delete", "Delete Slide", ["Edit"], None, "{index?, ids?: [slide id]}", has_slide, delete),
+        cmd!("slide.duplicate", "Duplicate Slides", ["Insert"], None, "{index?}", has_slide, duplicate),
+        cmd!("slide.delete", "Delete Slides", ["Edit"], None, "{index?, ids?: [slide id]}", has_slide, delete),
         cmd!(
             "slide.move",
             "Move Slide",
