@@ -387,7 +387,7 @@ fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
 /// `hang` is the implicit first-line stop, or `None` on later lines: they already start at the
 /// margin, and negative character spacing can dip `x` below it, which would wrongly re-trigger
 /// the stop.
-fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64, hang: Option<f64>) -> (Vec<f64>, f64) {
+fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64, hang: Option<f64>, avail: f64) -> (Vec<f64>, f64) {
     let p = env.p;
     let line_cells = p.cells.get(rl.start..rl.end).unwrap_or(&[]);
     let n = rl.end.saturating_sub(rl.start);
@@ -399,7 +399,7 @@ fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64, hang: Opti
         let a = if shy_end && k + 1 == n {
             p.faces.get(c.face).zip(p.styles.get(c.style)).map(|(f, st)| measure_str(f, st.size, "-").0).unwrap_or(0.0)
         } else if c.ch == '\t' {
-            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k), hang)
+            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k), hang, x0 + avail)
         } else {
             c.adv
         };
@@ -531,7 +531,7 @@ fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, 
     let avail = (g.col_w - x0 - env.mr).max(0.0);
     let n = rl.end.saturating_sub(rl.start);
     let line_cells = p.cells.get(rl.start..rl.end).unwrap_or(&[]);
-    let (mut adv, width) = line_advances(env, rl, is_last, x0, if li == 0 { env.hang } else { None });
+    let (mut adv, width) = line_advances(env, rl, is_last, x0, if li == 0 { env.hang } else { None }, avail);
     let align = props.align.unwrap_or(Align::Left);
     let slack = (avail - width).max(0.0);
     let stretch = !is_last && g.wrap && slack > 0.0;

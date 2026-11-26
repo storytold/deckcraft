@@ -1,7 +1,7 @@
 use super::{
-    ColorRef, Fill, LayoutType, Paragraph, PhType, Placeholder, Presentation, Run, RunProps, SchemeSlot, Shape, ShapeId, ShapeKind, ShapeStyle,
-    Slide, Table, TextBody, Theme, Xfrm, defaults, ink_pressure_is_legacy, ink_sample_width, parent_of, resolve, sibling_list_mut, style, text,
-    theme, walk,
+    ColorRef, Fill, LayoutType, MediaClip, Paragraph, PhType, Placeholder, Presentation, Run, RunProps, SchemeSlot, Shape, ShapeId, ShapeKind,
+    ShapeStyle, Slide, Table, TextBody, Theme, Xfrm, defaults, ink_pressure_is_legacy, ink_sample_width, parent_of, resolve, sibling_list_mut, style,
+    text, theme, walk,
 };
 use crate::resolve::Ctx;
 
@@ -338,4 +338,20 @@ fn colour_alpha_follows_alpha_mod_and_off() {
     assert!((off.alpha() - 0.5).abs() < 1e-9, "{}", off.alpha());
     let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
     assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
+}
+
+#[test]
+fn hide_during_show_keeps_audio_hidden_while_playing() {
+    let clip = |video: bool, hide_while_not_playing: bool| MediaClip { video, hide_while_not_playing, ..Default::default() };
+    // Audio with the flag set stays hidden both idle and playing (#1659).
+    assert!(clip(false, true).hidden_during_show(false), "audio, flagged, idle");
+    assert!(clip(false, true).hidden_during_show(true), "audio, flagged, playing");
+    // Video with the flag set hides only while not playing.
+    assert!(clip(true, true).hidden_during_show(false), "video, flagged, idle");
+    assert!(!clip(true, true).hidden_during_show(true), "video, flagged, playing");
+    // Without the flag nothing is hidden.
+    assert!(!clip(false, false).hidden_during_show(false), "audio, unflagged, idle");
+    assert!(!clip(false, false).hidden_during_show(true), "audio, unflagged, playing");
+    assert!(!clip(true, false).hidden_during_show(false), "video, unflagged, idle");
+    assert!(!clip(true, false).hidden_during_show(true), "video, unflagged, playing");
 }

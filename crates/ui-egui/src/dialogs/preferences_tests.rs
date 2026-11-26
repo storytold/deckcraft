@@ -18,7 +18,7 @@ fn interface_size<'a>(h: &'a Harness<'_, SlideApp>) -> Node<'a> {
 }
 
 fn harness() -> Harness<'static, SlideApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -37,6 +37,18 @@ fn open_options(h: &mut Harness<'_, SlideApp>) {
 
 fn dark(app: &SlideApp) -> bool {
     app.ui.brightness == Brightness::Dark
+}
+
+/// The interface size slider has a visible label, not just a bare "1.00" beside it.
+#[test]
+fn the_interface_size_slider_is_labelled_on_screen() {
+    let mut h = harness();
+    open_options(&mut h);
+    let label = h.query_by_label("Interface size:").expect("the slider's label is shown");
+    let slider = interface_size(&h);
+    let (label, slider) = (label.rect(), slider.rect());
+    assert!(label.max.x <= slider.min.x, "the label sits before the slider: {label:?}, {slider:?}");
+    assert!(label.center().y > slider.min.y && label.center().y < slider.max.y, "on the same row: {label:?}, {slider:?}");
 }
 
 /// A checkbox applies as it is toggled and Cancel puts the old value back.
