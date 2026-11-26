@@ -18,13 +18,17 @@ fn thesaurus_pane_swaps_the_word_at_the_caret() {
     s.execute("text.edit", &json!({"id": id, "at": [0, 6]})).unwrap();
     let mut app = SlideApp::new(s, Services::default());
     app.ui.tab = "Review".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     h.get_by_label("Thesaurus").click();
     h.run_steps(3);

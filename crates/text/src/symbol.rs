@@ -312,6 +312,9 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
             0x6e => '■',
             0x6c => '●',
             0xa8 => '◆',
+            // The diamonds: black lozenges and diamonds of several sizes.
+            0x73..=0x75 | 0x77 => '◆',
+            0x6f => '□',
             0xb7 => '•',
             0x2d => '–',
             _ => '•',
