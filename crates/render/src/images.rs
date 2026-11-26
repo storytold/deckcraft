@@ -1,6 +1,10 @@
 //! Decoded pictures shared by every render on this process, keyed by the media bytes' address and
 //! the requested size level and adjustments, so each picture is decoded once per size.
 
+use craft_image_codecs::{
+    ChannelLayout, DecodeOptions, Format as CodecFormat, Image as CodecImage, Limits as CodecLimits, SampleType, convert_samples, decode_as_with,
+    detect, inspect_raster, jpeg_worst_case_coefficients, png_probe, webp_probe,
+};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -162,20 +166,110 @@ fn fits(w: u32, h: u32, max: u64) -> bool {
     w > 0 && h > 0 && (w as u64) * (h as u64) * 4 <= max
 }
 
-/// Decode a raster picture to RGBA, refusing (before decoding, by its header, and again before
-/// the RGBA conversion) any whose RGBA would exceed `max` bytes.
-fn decode_raster(bytes: &[u8], max: u64) -> Option<image::RgbaImage> {
-    let reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
-    if let Ok((w, h)) = reader.into_dimensions()
-        && !fits(w, h, max)
-    {
+/// Supported flat raster formats decoded by `craft-image-codecs`.
+fn supported_raster_format(bytes: &[u8]) -> Option<CodecFormat> {
+    match detect(bytes)? {
+        f @ (CodecFormat::Png | CodecFormat::Jpeg | CodecFormat::Gif | CodecFormat::WebP | CodecFormat::Bmp | CodecFormat::Tiff) => Some(f),
+        _ => None,
+    }
+}
+
+/// Stored pixel dimensions of a supported raster image, read from its header without allocating
+/// pixels. Returns `None` for non-raster inputs (metafiles, SVG, unknown) or malformed headers.
+pub fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    let fmt = supported_raster_format(bytes)?;
+    let (w, h) = match fmt {
+        CodecFormat::Png => png_probe::pixel_model(bytes).ok().map(|m| (m.width, m.height))?,
+        CodecFormat::Jpeg | CodecFormat::Tiff | CodecFormat::Gif | CodecFormat::Bmp => {
+            inspect_raster(bytes).ok().flatten().map(|i| (i.width, i.height))?
+        }
+        CodecFormat::WebP => webp_probe::header(bytes).ok().map(|(w, h, _)| (w, h))?,
+        _ => return None,
+    };
+    (w > 0 && h > 0).then_some((w, h))
+}
+
+/// Whether `data` is a format DeckCraft can display if restored as a picture's media: either a
+/// supported raster with a valid header, or a WMF/EMF metafile.
+pub fn is_restorable_image(data: &[u8]) -> bool {
+    image_dimensions(data).is_some() || crate::metafile::is_metafile(data)
+}
+
+/// Convert a decoded [`CodecImage`] to tightly-packed straight RGBA8. Direct U8 RGBA moves without
+/// copying; direct U8 Gray/GrayA/RGB expands in one pass without float scratch; CMYK/CmykA/Lab/LabA
+/// and non-U8 (16-bit/float) images convert in 16K-pixel bands via `craft_image_codecs::convert_samples`
+/// so transient `f32` scratch stays within ~640 KiB instead of allocating ~36–40 bytes/pixel across
+/// the full image.
+fn to_rgba8_banded(img: CodecImage) -> Option<image::RgbaImage> {
+    const BAND_PIXELS: usize = 16_384;
+    let (w, h) = (img.width(), img.height());
+    let layout = img.layout();
+    let st = img.sample_type();
+    let pixels = u64::from(w).checked_mul(u64::from(h)).and_then(|p| usize::try_from(p).ok())?;
+    let src_stride = layout.channels().checked_mul(st.bytes())?;
+    let expected_src = pixels.checked_mul(src_stride)?;
+    if img.data().len() != expected_src {
         return None;
     }
-    let img = image::load_from_memory(bytes).ok()?;
+    if st == SampleType::U8 && layout == ChannelLayout::Rgba {
+        return image::RgbaImage::from_raw(w, h, img.into_data());
+    }
+    let out_bytes = pixels.checked_mul(4)?;
+    let mut out = Vec::new();
+    out.try_reserve_exact(out_bytes).ok()?;
+    let data = img.data();
+    if st == SampleType::U8 {
+        match layout {
+            ChannelLayout::Gray => {
+                for &g in data {
+                    out.extend_from_slice(&[g, g, g, 255]);
+                }
+                return image::RgbaImage::from_raw(w, h, out);
+            }
+            ChannelLayout::GrayA => {
+                for px in data.as_chunks::<2>().0 {
+                    out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
+                }
+                return image::RgbaImage::from_raw(w, h, out);
+            }
+            ChannelLayout::Rgb => {
+                for px in data.as_chunks::<3>().0 {
+                    out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+                }
+                return image::RgbaImage::from_raw(w, h, out);
+            }
+            ChannelLayout::Rgba | ChannelLayout::Cmyk | ChannelLayout::CmykA | ChannelLayout::Lab | ChannelLayout::LabA => {}
+        }
+    }
+    let band_src_bytes = BAND_PIXELS.checked_mul(src_stride)?;
+    for chunk in data.chunks(band_src_bytes) {
+        let band_px = u32::try_from(chunk.len() / src_stride).ok()?;
+        let converted = convert_samples(chunk, band_px, 1, (layout, st), (ChannelLayout::Rgba, SampleType::U8)).ok()?;
+        out.extend_from_slice(&converted);
+    }
+    image::RgbaImage::from_raw(w, h, out)
+}
+
+/// Decode a raster picture to RGBA, refusing (before decoding, by its header and progressive JPEG
+/// coefficient budget, and again before RGBA conversion) any whose output would exceed `max` bytes.
+fn decode_raster(bytes: &[u8], max: u64) -> Option<image::RgbaImage> {
+    let fmt = supported_raster_format(bytes)?;
+    let (w, h) = image_dimensions(bytes)?;
+    if !fits(w, h, max) {
+        return None;
+    }
+    if fmt == CodecFormat::Jpeg {
+        let rgba_bytes = u64::from(w).checked_mul(u64::from(h))?.checked_mul(4)?;
+        if rgba_bytes.saturating_add(jpeg_worst_case_coefficients(bytes)) > max {
+            return None;
+        }
+    }
+    let limits = CodecLimits::new(w, h, u64::from(w).saturating_mul(u64::from(h)), max);
+    let img = decode_as_with(fmt, bytes, &DecodeOptions { limits, keep_orientation: true }).ok()?;
     if !fits(img.width(), img.height(), max) {
         return None;
     }
-    Some(img.to_rgba8())
+    to_rgba8_banded(img)
 }
 
 /// A raster picture's own size in 96-dpi pixels (so 0.75 pt each), read from its header: its
@@ -185,10 +279,7 @@ pub fn natural_size(bytes: &[u8]) -> Option<(f64, f64)> {
     if crate::metafile::is_metafile(bytes) {
         return None;
     }
-    let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()?;
-    if w == 0 || h == 0 {
-        return None;
-    }
+    let (w, h) = image_dimensions(bytes)?;
     let (dx, dy) = dpi(bytes).unwrap_or((96.0, 96.0));
     Some((w as f64 * 96.0 / dx, h as f64 * 96.0 / dy))
 }
@@ -709,5 +800,227 @@ mod tests {
         let a = decode_anim(&out, &PictureAdjust::default()).expect("animated");
         assert_eq!(a.frames.len(), GIF_MAX_FRAMES);
         assert_eq!(a.ends.len(), GIF_MAX_FRAMES);
+    }
+
+    /// Minimal uncompressed RGBA classic TIFF with `ExtraSamples = 1` (associated/premultiplied
+    /// alpha) whose IFD0 sits at the *end* of the file after the strip pixel data.
+    fn trailing_ifd_assoc_alpha_tiff(big_endian: bool, pixel: [u8; 4]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let push_u16 = |b: &mut Vec<u8>, v: u16| {
+            b.extend_from_slice(&if big_endian { v.to_be_bytes() } else { v.to_le_bytes() });
+        };
+        let push_u32 = |b: &mut Vec<u8>, v: u32| {
+            b.extend_from_slice(&if big_endian { v.to_be_bytes() } else { v.to_le_bytes() });
+        };
+        let push_short_val = |b: &mut Vec<u8>, v: u16| {
+            if big_endian {
+                b.extend_from_slice(&v.to_be_bytes());
+                b.extend_from_slice(&[0, 0]);
+            } else {
+                b.extend_from_slice(&v.to_le_bytes());
+                b.extend_from_slice(&[0, 0]);
+            }
+        };
+        // Header (8 bytes); IFD0 offset patched below.
+        out.extend_from_slice(if big_endian { b"MM\x00*" } else { b"II*\x00" });
+        out.extend_from_slice(&[0u8; 4]);
+        // 2x2 RGBA strip starting at offset 8 (16 bytes), followed by BitsPerSample [8,8,8,8] (8 bytes).
+        let strip_off = out.len() as u32;
+        for _ in 0..4 {
+            out.extend_from_slice(&pixel);
+        }
+        let bps_off = out.len() as u32;
+        for _ in 0..4 {
+            push_u16(&mut out, 8);
+        }
+        // Trailing IFD0 placed after all pixel and tag data.
+        let ifd_off = out.len() as u32;
+        out[4..8].copy_from_slice(&if big_endian { ifd_off.to_be_bytes() } else { ifd_off.to_le_bytes() });
+        let entries: [(u16, u16, u32, bool, u32); 11] = [
+            (256, 3, 1, true, 2),          // ImageWidth = 2
+            (257, 3, 1, true, 2),          // ImageLength = 2
+            (258, 3, 4, false, bps_off),   // BitsPerSample = [8,8,8,8]
+            (259, 3, 1, true, 1),          // Compression = None
+            (262, 3, 1, true, 2),          // Photometric = RGB
+            (273, 4, 1, false, strip_off), // StripOffsets
+            (277, 3, 1, true, 4),          // SamplesPerPixel = 4
+            (278, 3, 1, true, 2),          // RowsPerStrip = 2
+            (279, 4, 1, false, 16),        // StripByteCounts = 16
+            (284, 3, 1, true, 1),          // PlanarConfiguration = Chunky
+            (338, 3, 1, true, 1),          // ExtraSamples = AssociatedAlpha
+        ];
+        push_u16(&mut out, entries.len() as u16);
+        for (tag, typ, cnt, is_short, val) in entries {
+            push_u16(&mut out, tag);
+            push_u16(&mut out, typ);
+            push_u32(&mut out, cnt);
+            if is_short {
+                push_short_val(&mut out, val as u16);
+            } else {
+                push_u32(&mut out, val);
+            }
+        }
+        push_u32(&mut out, 0); // next IFD = 0
+        out
+    }
+
+    #[test]
+    fn cmyk_and_lab_images_decode_to_rgba8_within_budget() {
+        use craft_image_codecs::{EncodeOptions, encode as codec_encode};
+        // Pure cyan ink [255, 0, 0, 0] -> RGB [0, 255, 255]; pure black [0, 0, 0, 255] -> [0, 0, 0].
+        let mut cmyk_px = Vec::with_capacity(8 * 8 * 4);
+        for y in 0..8 {
+            for x in 0..8 {
+                if y < 4 && x < 4 {
+                    cmyk_px.extend_from_slice(&[255, 0, 0, 0]);
+                } else {
+                    cmyk_px.extend_from_slice(&[0, 0, 0, 255]);
+                }
+            }
+        }
+        let cmyk_img = CodecImage::from_u8(8, 8, ChannelLayout::Cmyk, cmyk_px).expect("cmyk image");
+        let direct = to_rgba8_banded(cmyk_img.clone()).expect("banded direct");
+        assert_eq!(direct.get_pixel(0, 0).0, [0, 255, 255, 255]);
+        assert_eq!(direct.get_pixel(7, 7).0, [0, 0, 0, 255]);
+
+        // Round-trip through encoded CMYK JPEG and CMYK TIFF via image_dimensions / natural_size / decode_raster.
+        for fmt in [CodecFormat::Jpeg, CodecFormat::Tiff] {
+            let bytes = codec_encode(&cmyk_img, fmt, &EncodeOptions::default()).expect("encode");
+            assert_eq!(image_dimensions(&bytes), Some((8, 8)));
+            assert_eq!(natural_size(&bytes), Some((8.0, 8.0)));
+            let dec = decode_raster(&bytes, MAX_RGBA).expect("decode cmyk");
+            assert_eq!(dec.dimensions(), (8, 8));
+            let [cr, cg, cb, ca] = dec.get_pixel(1, 1).0;
+            assert!(cr < cg && cr < cb && cr < 40 && cg > 200 && cb > 200 && ca == 255, "{fmt:?} cyan decoded as [{cr}, {cg}, {cb}, {ca}]");
+            let [kr, kg, kb, ka] = dec.get_pixel(6, 6).0;
+            assert!(kr < 40 && kg < 40 && kb < 40 && ka == 255, "{fmt:?} black decoded as [{kr}, {kg}, {kb}, {ka}]");
+        }
+
+        // CmykA, Lab, and LabA U8 layouts convert cleanly to RGBA8.
+        for (layout, px) in [
+            (ChannelLayout::CmykA, vec![0u8, 0, 0, 0, 128]),
+            (ChannelLayout::Lab, vec![255u8, 128, 128]),
+            (ChannelLayout::LabA, vec![255u8, 128, 128, 200]),
+        ] {
+            let img = CodecImage::from_u8(1, 1, layout, px).expect("layout image");
+            let expected = img.to_rgba8();
+            let dec = to_rgba8_banded(img).expect("decode layout");
+            assert_eq!(dec.into_raw(), expected);
+        }
+
+        // Multi-band parity (> BAND_PIXELS = 16,384) for U8 CMYK and U16 Lab matches CodecImage::to_rgba8 bit-for-bit.
+        let (bw, bh) = (200u32, 100u32);
+        let mut big_cmyk = Vec::with_capacity((bw * bh * 4) as usize);
+        for i in 0..(bw * bh) {
+            big_cmyk.extend_from_slice(&[(i & 0xFF) as u8, ((i >> 3) & 0xFF) as u8, ((i >> 6) & 0xFF) as u8, ((i >> 9) & 0xFF) as u8]);
+        }
+        let big_cmyk_img = CodecImage::from_u8(bw, bh, ChannelLayout::Cmyk, big_cmyk).expect("big cmyk");
+        let expected_cmyk = big_cmyk_img.to_rgba8();
+        assert_eq!(to_rgba8_banded(big_cmyk_img).expect("banded cmyk").into_raw(), expected_cmyk);
+
+        let mut big_lab16 = Vec::with_capacity((bw * bh * 3) as usize);
+        for i in 0..(bw * bh) {
+            big_lab16.extend_from_slice(&[((i * 257) & 0xFFFF) as u16, 32_768u16, 32_768u16]);
+        }
+        let big_lab_img = CodecImage::from_u16(bw, bh, ChannelLayout::Lab, &big_lab16).expect("big lab16");
+        let expected_lab = big_lab_img.to_rgba8();
+        assert_eq!(to_rgba8_banded(big_lab_img).expect("banded lab16").into_raw(), expected_lab);
+
+        // Huge CMYK JPEG header (16,000 x 16,000 x 4 -> 1 GiB > MAX_RGBA) must be refused before pixel allocation.
+        let mut huge_cmyk_jpg = vec![0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x14, 0x08];
+        huge_cmyk_jpg.extend_from_slice(&16_000u16.to_be_bytes());
+        huge_cmyk_jpg.extend_from_slice(&16_000u16.to_be_bytes());
+        huge_cmyk_jpg.push(4);
+        for id in 1u8..=4 {
+            huge_cmyk_jpg.extend_from_slice(&[id, 0x11, 0x00]);
+        }
+        huge_cmyk_jpg.extend_from_slice(&[0xFF, 0xD9]);
+        assert_eq!(image_dimensions(&huge_cmyk_jpg), Some((16_000, 16_000)));
+        assert!(decode_raster(&huge_cmyk_jpg, MAX_RGBA).is_none());
+    }
+
+    #[test]
+    fn trailing_ifd_and_associated_alpha_tiffs_decode_cleanly() {
+        for big_endian in [false, true] {
+            // Premultiplied 50%-transparent pure red: RGB=(128, 0, 0), A=128 -> straight RGBA=(255, 0, 0, 128).
+            let tiff = trailing_ifd_assoc_alpha_tiff(big_endian, [128, 0, 0, 128]);
+            assert_eq!(image_dimensions(&tiff), Some((2, 2)));
+            let dec = decode_raster(&tiff, MAX_RGBA).expect("trailing-IFD TIFF decodes");
+            assert_eq!(dec.dimensions(), (2, 2));
+            let [r, g, b, a] = dec.get_pixel(0, 0).0;
+            assert!(r >= 253 && g == 0 && b == 0 && a == 128, "big_endian={big_endian}: got [{r}, {g}, {b}, {a}]");
+        }
+    }
+
+    #[test]
+    fn cmyk_jpeg_renders_on_slide_with_expected_colors() {
+        use craft_image_codecs::{EncodeOptions, encode as codec_encode};
+        let mut cmyk_px = Vec::with_capacity(16 * 8 * 4);
+        for _y in 0..8 {
+            for x in 0..16 {
+                if x < 8 {
+                    cmyk_px.extend_from_slice(&[255, 0, 0, 0]);
+                } else {
+                    cmyk_px.extend_from_slice(&[0, 0, 0, 255]);
+                }
+            }
+        }
+        let cmyk_img = CodecImage::from_u8(16, 8, ChannelLayout::Cmyk, cmyk_px).expect("cmyk");
+        let jpg = codec_encode(&cmyk_img, CodecFormat::Jpeg, &EncodeOptions::default()).expect("encode cmyk jpg");
+
+        let mut pres = deckcraft_model::Presentation::default();
+        let mid = pres.add_media("cmyk.jpg", "image/jpeg", jpg).expect("add media");
+        let slide = Arc::make_mut(&mut pres.slides[0]);
+        slide.shapes.push(deckcraft_model::Shape {
+            id: deckcraft_model::ShapeId(500),
+            xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 200.0, 100.0)),
+            kind: deckcraft_model::ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: mid, ..Default::default() } },
+            ..Default::default()
+        });
+        let rendered = crate::render_slide(&pres, 0, &crate::RenderOpts { scale: 0.5, ..Default::default() });
+        let sample = |x: u32, y: u32| {
+            let off = ((y * rendered.width + x) * 4) as usize;
+            [rendered.pixels[off], rendered.pixels[off + 1], rendered.pixels[off + 2], rendered.pixels[off + 3]]
+        };
+        let [lr, lg, lb, la] = sample(25, 25);
+        assert!(lr < 40 && lg > 200 && lb > 200 && la == 255, "left cyan rendered as [{lr}, {lg}, {lb}, {la}]");
+        let [rr, rg, rb, ra] = sample(75, 25);
+        assert!(rr < 40 && rg < 40 && rb < 40 && ra == 255, "right black rendered as [{rr}, {rg}, {rb}, {ra}]");
+    }
+
+    #[test]
+    fn progressive_jpeg_coefficient_budget_rejects_before_decode() {
+        use craft_image_codecs::{EncodeOptions, JpegFormat, encode as codec_encode};
+
+        // 1. Real decodable progressive JPEG: succeeds at exact (RGBA + worst-case coefficients)
+        // budget and returns None one byte below it, even though the RGBA output alone fits.
+        let rgb = vec![128u8; 16 * 16 * 3];
+        let img = CodecImage::from_u8(16, 16, ChannelLayout::Rgb, rgb).expect("rgb");
+        let prog = codec_encode(&img, CodecFormat::Jpeg, &EncodeOptions { jpeg_format: JpegFormat::Progressive, ..Default::default() })
+            .expect("encode progressive jpeg");
+        let rgba_bytes = 16u64 * 16 * 4;
+        let coeffs = jpeg_worst_case_coefficients(&prog);
+        assert!(coeffs > 0, "progressive JPEG must charge DCT coefficients");
+        assert!(fits(16, 16, rgba_bytes + coeffs - 1));
+        assert!(decode_raster(&prog, rgba_bytes + coeffs).is_some());
+        assert!(decode_raster(&prog, rgba_bytes + coeffs - 1).is_none());
+
+        // 2. Synthetic SOF2 (progressive) 8000x7000 4:4:4 header: RGBA output (224 MB) fits
+        // MAX_RGBA (512 MiB), but RGBA + worst-case coefficients (224 + 336 = 560 MB) exceeds it.
+        let mut big_prog = vec![0xFF, 0xD8, 0xFF, 0xC2, 0x00, 0x11, 0x08];
+        big_prog.extend_from_slice(&7_000u16.to_be_bytes());
+        big_prog.extend_from_slice(&8_000u16.to_be_bytes());
+        big_prog.push(3);
+        for id in 1u8..=3 {
+            big_prog.extend_from_slice(&[id, 0x11, 0x00]);
+        }
+        big_prog.extend_from_slice(&[0xFF, 0xD9]);
+        let big_rgba = 8_000u64 * 7_000 * 4;
+        let big_coeffs = jpeg_worst_case_coefficients(&big_prog);
+        assert_eq!(image_dimensions(&big_prog), Some((8_000, 7_000)));
+        assert!(fits(8_000, 7_000, MAX_RGBA));
+        assert_eq!(big_coeffs, 336_000_000);
+        assert!(big_rgba + big_coeffs > MAX_RGBA);
+        assert!(decode_raster(&big_prog, MAX_RGBA).is_none());
     }
 }

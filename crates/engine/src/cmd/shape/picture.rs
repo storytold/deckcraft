@@ -1,4 +1,4 @@
-use super::{NO_ID_SPACE, Result, Session, Value, bad, bool_or, bool_param, edit_geometry, edit_shapes, f64_param, json};
+use super::{NO_ID_SPACE, Result, Session, Value, bad, bool_or, bool_param, edit_geometry, edit_shapes, f64_param, json, targets};
 
 pub(super) fn crop(s: &mut Session, p: &Value) -> Result<Value> {
     let c = [f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom")];
@@ -42,12 +42,31 @@ pub(super) fn picture_adjust(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn picture_reset(s: &mut Session, p: &Value) -> Result<Value> {
+    let restorable: std::collections::HashSet<deckcraft_model::MediaId> = targets(s, p)
+        .ok()
+        .and_then(|ids| {
+            let st = s.doc().ok()?;
+            let mut ok_ids = std::collections::HashSet::new();
+            for id in ids {
+                if let Some(deckcraft_model::ShapeKind::Picture { fill }) = st.shape(id).map(|sh| &sh.kind)
+                    && let Some(a) = &fill.artistic
+                    && !ok_ids.contains(&a.original)
+                    && st.doc.media(a.original).is_some_and(|m| deckcraft_render::is_restorable_image(&m.data))
+                {
+                    ok_ids.insert(a.original);
+                }
+            }
+            Some(ok_ids)
+        })
+        .unwrap_or_default();
     edit_shapes(s, p, "picture.reset", |sh| {
         if let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind {
             fill.adjust = Default::default();
             fill.crop = [0.0; 4];
             fill.alpha = None;
-            if let Some(a) = fill.artistic.take() {
+            if fill.artistic.as_ref().is_some_and(|a| restorable.contains(&a.original))
+                && let Some(a) = fill.artistic.take()
+            {
                 fill.media = a.original;
             }
         }

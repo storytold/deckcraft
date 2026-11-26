@@ -129,9 +129,10 @@ pub fn apply(effect: &str, img: &RgbaImage) -> Option<RgbaImage> {
 
 /// Decodes `data`, applies `effect` and encodes a PNG.
 fn process(effect: &str, data: &[u8]) -> Result<Vec<u8>> {
-    let img = image::load_from_memory(data).map_err(|_| bad("picture.artisticEffect", "this picture's format can't be processed"))?;
-    let img = if img.width().max(img.height()) > MAX_SIDE { img.thumbnail(MAX_SIDE, MAX_SIDE) } else { img };
-    let out = apply(effect, &img.to_rgba8()).ok_or_else(|| bad("picture.artisticEffect", "unknown effect"))?;
+    let img = deckcraft_render::decode_image(data).ok_or_else(|| bad("picture.artisticEffect", "this picture's format can't be processed"))?;
+    let img =
+        if img.width().max(img.height()) > MAX_SIDE { image::DynamicImage::ImageRgba8(img).thumbnail(MAX_SIDE, MAX_SIDE).to_rgba8() } else { img };
+    let out = apply(effect, &img).ok_or_else(|| bad("picture.artisticEffect", "unknown effect"))?;
     let mut png = Vec::new();
     image::DynamicImage::ImageRgba8(out)
         .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
@@ -147,21 +148,33 @@ fn artistic_effect(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let ids = targets(s, p)?;
     let st = s.doc()?;
-    // (shape, original picture, its bytes and name)
-    let mut work: Vec<(ShapeId, MediaId, Option<(Vec<u8>, String)>)> = Vec::new();
+    // (shape, original picture, whether original differs from displayed media, the original's bytes and name)
+    let mut work: Vec<(ShapeId, MediaId, bool, Option<(Vec<u8>, String)>)> = Vec::new();
     for id in ids {
         let Some(ShapeKind::Picture { fill }) = st.shape(id).map(|sh| &sh.kind) else { continue };
         let original = fill.artistic.as_ref().map_or(fill.media, |a| a.original);
+        let distinct_original = original != fill.media;
         let item = st.doc.media(original).map(|m| (m.data.to_vec(), m.name.clone()));
-        work.push((id, original, item));
+        work.push((id, original, distinct_original, item));
     }
     if work.is_empty() {
         return Err(bad("picture.artisticEffect", "select a picture"));
     }
     let mut results: Vec<(ShapeId, MediaId, Option<(String, Vec<u8>)>)> = Vec::new();
-    for (id, original, item) in work {
+    for (id, original, distinct_original, item) in work {
         let processed = match (&effect, item) {
-            (None, _) => None,
+            (None, Some((data, _))) => {
+                if distinct_original && !deckcraft_render::is_restorable_image(&data) {
+                    return Err(bad("picture.artisticEffect", "the original picture's format can't be restored"));
+                }
+                None
+            }
+            (None, None) => {
+                if distinct_original {
+                    return Err(bad("picture.artisticEffect", "the original picture's data is missing"));
+                }
+                None
+            }
             (Some(e), Some((data, name))) => {
                 Some((format!("{}-{}.png", name.rsplit_once('.').map_or(name.as_str(), |x| x.0), e), process(e, &data)?))
             }

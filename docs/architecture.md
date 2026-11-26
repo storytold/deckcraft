@@ -109,6 +109,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 The PDF writer dependency enables only `write`. Krilla handles serialization and simple-text
 shaping for notes and footers; slide layout, rasterization, font selection, text mapping,
-links and outlines remain app-owned. PDF embedding and all Hayro production dependencies
-are disabled. Native builds enable parallel compression on the same pinned Krilla backend;
+links and outlines remain app-owned. PDF embedding and all Hayro PDF reader crates remain
+forbidden in production (`hayro-jpeg2000`, a pure-Rust JPEG 2000 image codec used by
+`craft-image-codecs`, is allowed). Native builds enable parallel compression on the same pinned Krilla backend;
 WASM keeps it disabled. Generated-PDF assertions use a std-only parser as a development dependency.

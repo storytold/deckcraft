@@ -75,12 +75,7 @@ pub fn content_type(name: &str, bytes: &[u8]) -> &'static str {
 
 /// Natural size of an image in points (96 dpi), fitted inside the slide.
 fn fitted(s: &Session, bytes: &[u8]) -> (f64, f64) {
-    let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_dimensions().ok())
-        .map(|(w, h)| (w as f64 * 0.75, h as f64 * 0.75))
-        .unwrap_or((288.0, 216.0));
+    let (w, h) = deckcraft_render::image_dimensions(bytes).map(|(w, h)| (w as f64 * 0.75, h as f64 * 0.75)).unwrap_or((288.0, 216.0));
     let size = s.active().map(|d| d.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
     let k = (size.width * 0.9 / w.max(1.0)).min(size.height * 0.9 / h.max(1.0)).min(1.0);
     (w * k, h * k)
