@@ -484,20 +484,6 @@ impl SlideApp {
         }
     }
 
-    /// Save every presentation with unsaved changes (asking for a location where needed).
-    /// Returns false if one wasn't saved (cancelled or failed).
-    pub fn save_all(&mut self) -> bool {
-        let dirty: Vec<usize> = self.session.documents().iter().enumerate().filter(|(_, d)| d.is_dirty()).map(|(i, _)| i).collect();
-        for i in dirty {
-            self.session.set_active(i);
-            self.save();
-            if self.session.documents().get(i).is_some_and(|d| d.is_dirty()) {
-                return false;
-            }
-        }
-        true
-    }
-
     pub fn save(&mut self) {
         if self.choose_provider_save(false, "deckcraft") {
             return;

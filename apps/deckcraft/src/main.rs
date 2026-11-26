@@ -49,12 +49,16 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         apple_events::poll(&self.1, &mut self.0, ctx);
         self.0.logic(ctx);
+        self.0.close_path(ctx);
     }
-    /// Forward native raw input to the wrapped application once per pass.
+    /// Forward native raw input to the wrapped application once per frame, then hand the framework
+    /// runtime this frame's root values.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(ctx, raw);
+        self.0.before_input(ctx);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        deckcraft_ui_egui::framework::before_ui(ui.ctx(), &*frame);
         self.0.ui(ui);
     }
     fn on_exit(&mut self) {
@@ -253,12 +257,20 @@ fn initialize_nightly_process_identity() -> Result<(), process_identity::Identit
     )
 }
 
+/// Whether a refusal may also open a native message box. Standard error always carries the reason;
+/// this only adds a box where one renders without the app's event loop. Never on macOS: rfd's alert
+/// there needs the AppKit run loop this start has not reached, so a refused nightly launch hung in
+/// an invisible modal instead of exiting (GridCraft Mac smoke, 2026-11-26).
+fn refusal_dialog(flavor: build_flavor::BuildFlavor, desktop_session: bool, macos: bool) -> bool {
+    build_flavor::needs_native_error(flavor, desktop_session) && !macos
+}
+
 fn report_launch_profile_error(error: &str) {
     eprintln!("DeckCraft launch profile: {error}");
     let desktop_session = cfg!(windows)
         || cfg!(target_os = "macos")
         || (cfg!(target_os = "linux") && ["DISPLAY", "WAYLAND_DISPLAY"].into_iter().any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty())));
-    if build_flavor::needs_native_error(build_flavor::COMPILED, desktop_session) {
+    if refusal_dialog(build_flavor::COMPILED, desktop_session, cfg!(target_os = "macos")) {
         if let Err(error) = initialize_nightly_process_identity() {
             eprintln!("DeckCraft launch profile: {error}");
             return;
@@ -361,6 +373,8 @@ fn main() -> eframe::Result {
         }
     };
     // `Default` lets winit choose, and winit takes Wayland whenever `WAYLAND_DISPLAY` is set.
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    let x11 = false;
     #[cfg(all(unix, not(target_os = "macos")))]
     let native_wayland = !x11 && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|w| !w.is_empty());
     #[cfg(not(all(unix, not(target_os = "macos"))))]
@@ -391,6 +405,7 @@ fn main() -> eframe::Result {
         deckcraft_ui_egui::os_window::name_for(deckcraft_ui_egui::os_window::identity()),
         options,
         Box::new(move |cc| {
+            deckcraft_ui_egui::framework::install(&cc.egui_ctx, x11)?;
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
             let mut app = SlideApp::new(Session::new(), services);
             // Presenter View asks winit how many displays there are when a show starts.
@@ -670,5 +685,19 @@ mod tests {
         let script = include_str!("../../../packaging/windows/package.ps1");
         assert!(script.contains("ExtractIconEx"), "package.ps1 does not count the exe's icons");
         assert!(script.contains("has no embedded icon"), "package.ps1 does not reject an iconless exe");
+    }
+}
+
+#[cfg(test)]
+mod refusal_dialog_tests {
+    use super::refusal_dialog;
+    use crate::build_flavor::BuildFlavor;
+
+    #[test]
+    fn a_refusal_never_blocks_on_a_modal_before_the_event_loop_on_macos() {
+        assert!(refusal_dialog(BuildFlavor::NightlyV1, true, false), "a desktop refusal still shows the box where one renders");
+        assert!(!refusal_dialog(BuildFlavor::NightlyV1, true, true), "macOS has no run loop yet: the modal would hang");
+        assert!(!refusal_dialog(BuildFlavor::NightlyV1, false, false), "a headless session has no box");
+        assert!(!refusal_dialog(BuildFlavor::Stable, true, false), "only a nightly refusal explains itself in a box");
     }
 }

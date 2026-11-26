@@ -366,8 +366,12 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "app.export" => wrap(app.run("file.export", p.clone())),
         "app.quit" => {
             // Automation quits without asking (`{"save": true}` saves first).
-            if p.get("save").and_then(Value::as_bool) == Some(true) && !app.save_all() {
-                return err("not every presentation could be saved");
+            if p.get("save").and_then(Value::as_bool) == Some(true) {
+                match app.save_all() {
+                    crate::SaveAllOutcome::Saved => {}
+                    crate::SaveAllOutcome::Pending => return ok(json!({"pending": true})),
+                    crate::SaveAllOutcome::Incomplete => return err("not every presentation could be saved"),
+                }
             }
             app.quit_confirmed = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);

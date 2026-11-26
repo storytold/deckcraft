@@ -24,6 +24,7 @@ pub mod doc_window;
 pub mod eyedropper;
 pub mod file_providers;
 pub mod flavor;
+pub mod framework;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -217,12 +218,20 @@ struct InputTarget {
     opening: Option<(egui::Id, u64)>,
 }
 
-/// A close confirmed by the user, still waiting for this exact provider save.
+/// Result of asking to save every dirty presentation before quitting.
+pub(crate) enum SaveAllOutcome {
+    Saved,
+    Pending,
+    Incomplete,
+}
+
+/// A file or window close confirmed by the user, waiting for this exact provider save.
 struct ProviderClose {
     request: String,
     connection: String,
     document: u64,
     checkpoint: Option<std::sync::Arc<deckcraft_model::Presentation>>,
+    quit_remaining: Option<std::collections::VecDeque<u64>>,
 }
 
 pub struct SlideApp {
@@ -277,8 +286,11 @@ pub struct SlideApp {
     synthetic_generation: u64,
     /// Document/slide/canvas identity the queued/injected batch belongs to.
     synthetic_target: Option<InputTarget>,
-    /// Focus identity the pending batch was injected with; a focus change retracts it.
+    /// Focus identity the pending batch was injected with (the document window counts as none); a focus change
+    /// retracts it.
     synthetic_focus: Option<egui::Id>,
+    /// The document window as a Tab stop, and when it takes the keyboard focus.
+    document_focus: app::DocumentFocus,
     /// `RawInput::time` of the pass the batch was injected into. A logic-only callback leaves
     /// `InputState` from the previous pass; comparing this value keeps retraction from draining
     /// an unrelated batch out of that stale input.
@@ -310,6 +322,11 @@ pub struct SlideApp {
     print_previews: app::files::PrintPreviews,
     #[cfg(not(target_arch = "wasm32"))]
     updates_rt: updates_ui::Runtime,
+    /// The framework dialogs (the update prompt and check result), run once per pass after the
+    /// app's own UI.
+    pub framework_dialogs: craft_ui::dialog::DialogHost,
+    /// Who DeckCraft is to the framework's dialogs.
+    framework_host: std::sync::Arc<craft_host::Host>,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
     /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).
@@ -463,6 +480,8 @@ mod animpane_tests;
 mod browsetheme_tests;
 #[cfg(test)]
 mod compare_tests;
+#[cfg(test)]
+mod document_focus_tests;
 #[cfg(test)]
 mod eyedropper_tests;
 #[cfg(test)]

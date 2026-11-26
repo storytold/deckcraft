@@ -6,12 +6,15 @@ use super::{Color32, Presentation, Show, ShowAction};
 /// audience window and Presenter View use this path, including animation steps and end-of-show.
 /// `presenter` is true for Presenter View, where G opens that window's own grid (#1130).
 pub(super) fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, presenter: bool) -> bool {
-    let keys: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
+    let mut keys: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
         i.events
             .iter()
             .filter_map(|e| if let egui::Event::Key { key, pressed: true, modifiers, .. } = e { Some((*key, *modifiers)) } else { None })
             .collect()
     });
+    if crate::framework::window_escape(ctx) {
+        keys.push((egui::Key::Escape, egui::Modifiers::NONE));
+    }
     let (keep, consumed) = handle_keys(show, doc, now, keys, presenter);
     for (key, modifiers) in consumed {
         ctx.input_mut(|i| i.consume_key(modifiers, key));
