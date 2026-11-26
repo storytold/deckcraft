@@ -140,7 +140,7 @@ impl SlideApp {
             return;
         }
         let current = self.input_target();
-        let focus = ctx.memory(|m| m.focused());
+        let focus = crate::framework::focused_widget(ctx);
         if self.synthetic_target == Some(current) && focus == self.synthetic_focus {
             return;
         }
@@ -210,7 +210,7 @@ impl SlideApp {
                 Err(e) => self.set_status(e),
             }
         }
-        let focus = ctx.memory(|m| m.focused());
+        let focus = crate::framework::focused_widget(ctx);
         if self.synthetic_pending {
             let current = self.input_target();
             if self.synthetic_target != Some(current) || focus != self.synthetic_focus {

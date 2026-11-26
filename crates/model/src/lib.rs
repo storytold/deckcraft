@@ -12,7 +12,7 @@ pub mod bidi;
 pub mod chart;
 pub mod defaults;
 pub mod edit;
-pub mod numfmt;
+pub use craft_drawingml::numfmt;
 pub mod resolve;
 pub mod style;
 pub mod table;
@@ -636,6 +636,9 @@ pub struct Slide {
     pub animations: Vec<Animation>,
     /// Speaker notes.
     pub notes: TextBody,
+    /// Whether the slide has an associated notes slide even if its text is empty.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_notes_slide: bool,
     pub comments: Vec<Comment>,
     /// `clrMapOvr`: a colour map replacing the layout's or master's (`bg1`→`dk1`…); None follows
     /// the layout.
@@ -662,6 +665,7 @@ impl Default for Slide {
             transition: None,
             animations: vec![],
             notes: TextBody::default(),
+            has_notes_slide: false,
             comments: vec![],
             color_map: None,
             tags: vec![],
