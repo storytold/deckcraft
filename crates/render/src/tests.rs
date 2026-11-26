@@ -1239,6 +1239,39 @@ fn effect_text(set: impl Fn(&mut deckcraft_model::text::RunProps)) -> Presentati
     deck_with(vec![sh])
 }
 
+/// Text whose glow comes only from its paragraph's `defRPr` needs the filters too: drawn on the
+/// worker threads it panicked (vello_cpu has no filters there) and the slide came out blank.
+#[test]
+fn a_paragraph_default_text_glow_needs_filters() {
+    let mut sh = Shape { id: ShapeId(741), xfrm: Some(Xfrm::new(100.0, 100.0, 600.0, 300.0)), text_box: true, ..Default::default() };
+    let mut t = TextBody::from_text("IIII");
+    let p = &mut t.paragraphs[0];
+    p.runs[0].props.size = Some(100.0);
+    p.runs[0].props.fill = Some(deckcraft_model::style::Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 0))));
+    p.def_props.glow = Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 });
+    sh.text = Some(t);
+    assert_green_glow_drawn_with_threads(&deck_with(vec![sh]));
+}
+
+/// Text whose glow comes only from the presentation's default text style (`p:defaultTextStyle`)
+/// needs the filters too, or the threaded render panics and the slide comes out blank.
+#[test]
+fn a_presentation_default_text_style_glow_needs_filters() {
+    let mut deck = effect_text(|_| {});
+    let level = deck.default_text_style.levels[0].as_mut().expect("the default text style sets level 1");
+    level.run.glow = Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 });
+    assert_green_glow_drawn_with_threads(&deck);
+}
+
+/// Asserts that `deck`'s first slide needs filters and that, rendered with worker threads
+/// requested, its text shows a green glow halo rather than a blank slide.
+fn assert_green_glow_drawn_with_threads(deck: &Presentation) {
+    assert!(needs_filters(deck, &deck.slides[0]));
+    let img = render_slide(deck, 0, &RenderOpts { scale: 1.0, threads: 4, ..Default::default() });
+    let halo = img.pixels.as_chunks::<4>().0.iter().filter(|p| p[1] > 150 && p[0] < 120 && p[2] < 120).count();
+    assert!(halo > 300, "green halo pixels {halo}");
+}
+
 #[test]
 fn text_glow_and_shadow_are_drawn() {
     let count = |img: &Image, f: &dyn Fn(&[u8; 4]) -> bool| img.pixels.as_chunks::<4>().0.iter().filter(|px| f(px)).count();
@@ -3205,6 +3238,117 @@ fn pie_data_labels_take_the_chart_text_colour_when_it_has_one() {
     assert!(count(&plain, &white) > count(&coloured, &white), "the labels were white before");
 }
 
+/// #2066: a line series that asks for value labels (`c:dLbls/c:showVal`, chart-wide or its own)
+/// shows each point's value above it; with the chart's text red, the labels add red ink there.
+/// Area series still draw none (their labels belong inside the area, not on a point).
+#[test]
+fn line_chart_value_labels_are_drawn_above_their_points() {
+    let draw = |kind: ChartType, labels: bool, own: bool| {
+        let mut c = Chart::sample(kind);
+        c.title = None;
+        c.legend = None;
+        c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)));
+        if own {
+            c.series[0].data_labels = Some(labels);
+        } else {
+            c.data_labels = labels;
+        }
+        let sh = Shape { id: ShapeId(633), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let red = |img: &Image| {
+        (0..400u32)
+            .flat_map(|x| (0..300u32).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = img.pixel(*x, *y);
+                p[0] > 200 && p[1] < 60 && p[2] < 60
+            })
+            .count()
+    };
+    for kind in [ChartType::Line, ChartType::LineMarkers] {
+        let (off, on) = (red(&draw(kind, false, false)), red(&draw(kind, true, false)));
+        assert!(on > off + 100, "{kind:?}: labels add red ink ({off} → {on})");
+        let own = red(&draw(kind, true, true));
+        assert!(own > off + 30, "{kind:?}: a series' own showVal shows its labels ({off} → {own})");
+    }
+    // Area series keep none, and scatter and bubble series (drawn by the same code) are unchanged.
+    for kind in [ChartType::Area, ChartType::Scatter, ChartType::Bubble] {
+        let (off, on) = (red(&draw(kind, false, false)), red(&draw(kind, true, false)));
+        assert_eq!(on, off, "{kind:?}: no point labels");
+    }
+}
+
+/// The magenta pixels the labels add to a line chart of two series, only the second labelled,
+/// with the chart's text magenta (no series, gridline or axis line is): its axis labels are
+/// magenta too, so they are what the unlabelled chart has.
+fn line_label_ink(kind: ChartType, first: f64, second: f64) -> (Image, Vec<(u32, u32)>) {
+    let off: std::collections::HashSet<_> = magenta_pixels(&line_label_render(kind, first, second, false)).into_iter().collect();
+    let img = line_label_render(kind, first, second, true);
+    let added = magenta_pixels(&img).into_iter().filter(|p| !off.contains(p)).collect();
+    (img, added)
+}
+
+fn line_label_render(kind: ChartType, first: f64, second: f64, labels: bool) -> Image {
+    let mut c = Chart::sample(ChartType::Line);
+    c.kind = kind;
+    c.title = None;
+    c.legend = None;
+    c.series.truncate(2);
+    c.series[0].values = vec![Some(first); 4];
+    c.series[1].values = vec![Some(second); 4];
+    c.series[1].data_labels = Some(labels);
+    c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 255)));
+    let sh = Shape { id: ShapeId(634), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+    render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+}
+
+/// Magenta ink on white, its anti-aliased edges included.
+fn is_magenta(p: [u8; 4]) -> bool {
+    p[0] > 200 && p[2] > 200 && p[1] < 200
+}
+
+fn magenta_pixels(img: &Image) -> Vec<(u32, u32)> {
+    (0..img.width).flat_map(|x| (0..img.height).map(move |y| (x, y))).filter(|(x, y)| is_magenta(img.pixel(*x, *y))).collect()
+}
+
+/// #2066: in a stacked line chart a point's label is its own value, not the running total it is
+/// drawn at. The second series' 5s, stacked on 100s, are labels as wide as an unstacked series of
+/// 5s, and far narrower than one of 105s (the width: the pixel columns the label ink covers).
+#[test]
+fn a_stacked_line_labels_each_point_with_its_own_value() {
+    let width = |kind, second| line_label_ink(kind, 100.0, second).1.iter().map(|(x, _)| *x).collect::<std::collections::HashSet<_>>().len();
+    let (stacked, fives, totals) = (width(ChartType::StackedLine, 5.0), width(ChartType::Line, 5.0), width(ChartType::Line, 105.0));
+    assert!(stacked > 0 && fives > 0, "labels are drawn ({stacked}, {fives})");
+    assert!(stacked.abs_diff(fives) <= 4, "stacked 5s are labelled \"5\" ({stacked} columns vs {fives} for 5s)");
+    assert!(stacked * 2 < totals, "not with the total \"105\" ({stacked} columns vs {totals} for 105s)");
+}
+
+/// #2066: a line label sits just above its point: all its ink is above the series' line, and
+/// its lowest row is close to it.
+#[test]
+fn a_line_label_sits_just_above_its_point() {
+    let (img, ink) = line_label_ink(ChartType::Line, 20.0, 50.0);
+    assert!(!ink.is_empty(), "labels are drawn");
+    let cols: std::collections::HashSet<u32> = ink.iter().map(|(x, _)| *x).collect();
+    let (first, last) = (cols.iter().min().copied().unwrap(), cols.iter().max().copied().unwrap());
+    // The labelled series' flat line at 50: the topmost coloured pixel in the plot's columns
+    // between the labels (the other line is lower, at 20; the axis labels lie outside them).
+    let line_top = (first..last)
+        .filter(|x| !cols.iter().any(|c| c.abs_diff(*x) < 4))
+        .filter_map(|x| {
+            (0..img.height).find(|y| {
+                let p = img.pixel(x, *y);
+                let (hi, lo) = (p[0].max(p[1]).max(p[2]), p[0].min(p[1]).min(p[2]));
+                hi - lo > 80 && !is_magenta(p)
+            })
+        })
+        .min()
+        .unwrap();
+    let lowest = ink.iter().map(|(_, y)| *y).max().unwrap();
+    assert!(lowest < line_top, "the labels are above the line (lowest ink row {lowest}, line at {line_top})");
+    assert!(line_top - lowest < 20, "and just above it (lowest ink row {lowest}, line at {line_top})");
+}
+
 /// #1165: an ellipse sized at the EMU limit, crossing the slide, made vello's flattener allocate a
 /// buffer from its on-screen length and abort. It is skipped; the rest of the slide still draws.
 #[test]
@@ -3259,4 +3403,66 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     let mut quad = geo(&[(0.0, 0.0), (1.0, 1.0)]);
     quad.paths[0].path = path;
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
+}
+
+/// A WMF without a placeable header (the frame comes from its window records) holding `records`
+/// (function, parameter bytes).
+fn wmf_bare(records: &[(u16, Vec<u8>)]) -> Vec<u8> {
+    let mut body = Vec::new();
+    let mut max_words = 3u32;
+    for (func, params) in records {
+        let words = (6 + params.len() as u32).div_ceil(2);
+        max_words = max_words.max(words);
+        body.extend(words.to_le_bytes());
+        body.extend(func.to_le_bytes());
+        body.extend(params);
+        if params.len() % 2 == 1 {
+            body.push(0);
+        }
+    }
+    body.extend([3, 0, 0, 0, 0, 0]);
+    let mut f = Vec::new();
+    for v in [1u16, 9, 0x300] {
+        f.extend(v.to_le_bytes());
+    }
+    f.extend((((18 + body.len()) / 2) as u32).to_le_bytes());
+    f.extend(1u16.to_le_bytes());
+    f.extend(max_words.to_le_bytes());
+    f.extend(0u16.to_le_bytes());
+    f.extend(body);
+    f
+}
+
+#[test]
+fn metafile_scaled_viewport_places_each_sub_picture_in_its_half() {
+    // #2069: an 800 × 400 frame drawn as two sub-pictures. Each saves the DC, halves the viewport
+    // width with SCALEVIEWPORTEXT, sets its own 400 × 400 window (the second shifted right by its
+    // window origin), draws a circle and restores the DC: red on the left, blue on the right.
+    let sub = |origin_x: i32, colorref: u32| {
+        let mut brush = 0u16.to_le_bytes().to_vec();
+        brush.extend(colorref.to_le_bytes());
+        brush.extend(0u16.to_le_bytes());
+        vec![
+            (0x001E, vec![]),                    // SAVEDC
+            (0x0103, i16s(&[8])),                // SETMAPMODE MM_ANISOTROPIC
+            (0x0412, i16s(&[1, 1, 2, 1])),       // SCALEVIEWPORTEXT y 1/1, x 1/2
+            (0x020B, i16s(&[0, origin_x])),      // SETWINDOWORG
+            (0x020C, i16s(&[400, 400])),         // SETWINDOWEXT
+            (0x02FC, brush),                     // CREATEBRUSHINDIRECT
+            (0x012D, i16s(&[0])),                // SELECTOBJECT
+            (0x0418, i16s(&[380, 380, 20, 20])), // ELLIPSE
+            (0x0127, i16s(&[-1])),               // RESTOREDC
+            (0x01F0, i16s(&[0])),                // DELETEOBJECT
+        ]
+    };
+    let mut recs = vec![(0x020B, i16s(&[0, 0])), (0x020C, i16s(&[400, 800]))];
+    recs.extend(sub(0, 0x0000_00FF));
+    recs.extend(sub(-400, 0x00FF_0000));
+    let img = crate::metafile::rasterize(&wmf_bare(&recs), 200).expect("raster");
+    assert_eq!(img.dimensions(), (200, 100));
+    let red = |p: &image::Rgba<u8>| p[0] > 200 && p[1] < 60 && p[2] < 60 && p[3] > 200;
+    let blue = |p: &image::Rgba<u8>| p[2] > 200 && p[0] < 60 && p[1] < 60 && p[3] > 200;
+    assert!(red(img.get_pixel(50, 50)), "red circle in the left half: {:?}", img.get_pixel(50, 50));
+    assert!(blue(img.get_pixel(150, 50)), "blue circle in the right half: {:?}", img.get_pixel(150, 50));
+    assert!(img.get_pixel(100, 50)[3] < 128, "the circles don't meet in the middle: {:?}", img.get_pixel(100, 50));
 }

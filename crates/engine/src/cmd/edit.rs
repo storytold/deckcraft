@@ -83,7 +83,12 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         && let Some(body) = super::text::body_of(st, t)
         && let Some((_ri, _ch, _len, r)) = super::equation::find_math_run_at(body, m.pos)
     {
-        let plain = r.text.clone();
+        let plain = match &r.kind {
+            deckcraft_model::text::RunKind::Math { math: m, .. } if !m.is_empty() && (!m.linear || r.text.is_empty()) => {
+                deckcraft_model::math::to_linear(&m.nodes)
+            }
+            _ => r.text.clone(),
+        };
         let sliced =
             TextBody { paragraphs: vec![deckcraft_model::text::Paragraph { runs: vec![r.clone()], ..Default::default() }], ..Default::default() };
         s.clipboard = crate::Clipboard { text: Some(sliced), plain: plain.clone(), ..Default::default() };

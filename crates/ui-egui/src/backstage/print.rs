@@ -96,7 +96,7 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 PrintScope::Current => "Print Current Slide",
                 PrintScope::Custom => "Custom Range",
             };
-            let combo = craft_ui::ComboBox::from_id_salt("backstage_print_scope").width(240.0).selected_text(scope).show_ui(ui, |ui| {
+            let combo = egui::ComboBox::from_id_salt("backstage_print_scope").width(240.0).selected_text(scope).show_ui(ui, |ui| {
                 for (s, label) in
                     [(PrintScope::All, "Print All Slides"), (PrintScope::Current, "Print Current Slide"), (PrintScope::Custom, "Custom Range")]
                 {
@@ -119,7 +119,7 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             });
             ui.add_space(4.0);
             let layout = LAYOUTS.iter().find(|l| l.0 == bs.print_layout).map_or("Full Page Slides", |l| l.1);
-            let combo = craft_ui::ComboBox::from_id_salt("backstage_print_layout").width(240.0).selected_text(layout).show_ui(ui, |ui| {
+            let combo = egui::ComboBox::from_id_salt("backstage_print_layout").width(240.0).selected_text(layout).show_ui(ui, |ui| {
                 for (id, label) in LAYOUTS {
                     if ui.selectable_label(bs.print_layout == id, label).clicked() {
                         bs.print_layout = id;
@@ -133,7 +133,7 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             // for notes pages and handouts.
             ui.add_enabled_ui(bs.print_layout != "slides", |ui| {
                 let paper = deckcraft_engine::cmd::file::PAPERS.iter().find(|p| p.0 == bs.print_paper).map_or("Letter", |p| p.1);
-                craft_ui::ComboBox::from_id_salt("backstage_print_paper")
+                egui::ComboBox::from_id_salt("backstage_print_paper")
                     .width(240.0)
                     .selected_text(paper)
                     .show_ui(ui, |ui| {
@@ -147,7 +147,7 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Paper size"));
                 ui.add_space(4.0);
                 let orient = if bs.print_landscape { "Landscape Orientation" } else { "Portrait Orientation" };
-                craft_ui::ComboBox::from_id_salt("backstage_print_orientation")
+                egui::ComboBox::from_id_salt("backstage_print_orientation")
                     .width(240.0)
                     .selected_text(orient)
                     .show_ui(ui, |ui| {
@@ -321,7 +321,7 @@ pub(super) fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 ExportTask::Handouts => {
                     ui.label(RichText::new("Create Handouts").font(theme::font(16.0)).color(t.text));
                     bullets(ui, &["Several slides on each page of a PDF", "Three a page leaves lines for notes", "Print them for your audience"]);
-                    let combo = craft_ui::ComboBox::from_id_salt("backstage_handouts")
+                    let combo = egui::ComboBox::from_id_salt("backstage_handouts")
                         .width(240.0)
                         .selected_text(format!("{} slides per page", bs.handouts_per_page))
                         .show_ui(ui, |ui| {
@@ -357,7 +357,7 @@ pub(super) fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                         }
                     }
                     ui.add_space(12.0);
-                    let png = bs.file_type == "png";
+                    let png = matches!(bs.file_type, "png" | "pngAll");
                     if png {
                         ui.checkbox(&mut bs.png_transparent, "Transparent background")
                             .on_hover_text("Leave the slide background out: only what is on the slide is drawn");

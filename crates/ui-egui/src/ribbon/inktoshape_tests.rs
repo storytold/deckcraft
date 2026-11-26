@@ -16,13 +16,17 @@ fn pen_a_rectangle_then_ink_to_shape() {
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     let mut app = SlideApp::new(s, Services::default());
     app.ui.tab = "Draw".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     h.get_by_label("Black Pen").click();
     h.run_steps(2);

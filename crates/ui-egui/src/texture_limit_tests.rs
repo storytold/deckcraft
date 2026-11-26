@@ -9,7 +9,7 @@ use crate::{Services, SlideApp};
 use deckcraft_engine::Session;
 
 fn harness(session: Session, size: egui::Vec2) -> egui_kittest::Harness<'static, SlideApp> {
-    egui_kittest::Harness::builder().with_size(size).build_ui_state(
+    egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(size).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

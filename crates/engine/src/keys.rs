@@ -324,6 +324,14 @@ impl Session {
         Ok(true)
     }
 
+    /// Whether Tab has something to do here: text is being edited (it indents, types a tab or goes to the next table
+    /// cell), or the slide has an object after the selected one. Past the last object it has nothing left to select.
+    pub fn tab_has_work(&self) -> bool {
+        let Some(st) = self.active() else { return false };
+        let last = st.shapes().iter().rev().find(|s| !s.hidden).map(|s| s.id);
+        st.selection.text.is_some() || (last.is_some() && st.selection.shapes.first().copied() != last)
+    }
+
     fn cycle_selection(&mut self, forward: bool) -> Result<()> {
         let st = self.doc()?;
         let ids: Vec<_> = st.shapes().iter().filter(|s| !s.hidden).map(|s| s.id).collect();
