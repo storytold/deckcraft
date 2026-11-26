@@ -41,6 +41,16 @@ fn stdout_line(args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // nightly-v1 is a desktop-only launcher protocol. Never let GUI profile arguments fall through
+    // to stable CLI/MCP directory discovery.
+    if args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg == "--launch-profile" || arg == "--profile-root" || arg.starts_with("--launch-profile=") || arg.starts_with("--profile-root="))
+    {
+        eprintln!("nightly-v1 is supported only by the DeckCraft desktop launcher protocol");
+        return ExitCode::from(2);
+    }
     let rest = args.get(1..).unwrap_or(&[]);
     let asks_help = rest.iter().any(|a| a == "--help" || a == "-h");
     if let Some(page) = args.first().filter(|_| asks_help).and_then(|n| help::page(n)) {

@@ -13,13 +13,17 @@ fn harness() -> Harness<'static, SlideApp> {
     // A selected shape, not a caret: the dialog then formats the text that is already there.
     let _ = s.execute("text.exit", &json!({}));
     let app = SlideApp::new(s, Services::default());
-    let mut h = Harness::builder().with_size(egui::vec2(1440.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1440.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(4);
     h
 }
