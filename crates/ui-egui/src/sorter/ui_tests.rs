@@ -19,13 +19,17 @@ fn harness(with_sections: bool) -> Harness<'static, SlideApp> {
     }
     let mut app = SlideApp::new(s, Services::default());
     app.ui.view = crate::ViewMode::Sorter;
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     h
 }
@@ -258,4 +262,25 @@ fn shift_and_ctrl_shift_clicks_select_ranges() {
     click(&mut h, 3, Modifiers::COMMAND);
     click(&mut h, 4, Modifiers::COMMAND | Modifiers::SHIFT);
     assert_eq!(selected(&h), vec![0, 2, 3]);
+}
+
+/// The outline view lists a slide's title and body text, not its footer, date and slide-number
+/// placeholders, as PowerPoint's does: turning them on leaves the slide's outline block as it was.
+#[test]
+fn the_outline_view_leaves_footer_date_and_slide_number_out() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "Agenda", "body": "First point\nSecond point"})).unwrap();
+    let slide = |s: &Session| {
+        let st = s.doc().unwrap();
+        st.doc.slides[st.selection.slide].clone()
+    };
+    let plain = super::outline_estimate(&slide(&s));
+    s.execute(
+        "design.headerFooter",
+        &json!({"footer": true, "footerText": "Company Confidential", "slideNumber": true, "date": true, "dateText": "1 May 2026"}),
+    )
+    .unwrap();
+    let with_footer = slide(&s);
+    assert!(with_footer.shapes.iter().any(|x| x.ph_type().is_some_and(|k| k.is_footer_kind())), "the footers are on the slide");
+    assert_eq!(super::outline_estimate(&with_footer), plain);
 }

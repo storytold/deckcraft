@@ -56,8 +56,8 @@ folders:
   its nearest existing folder's links are followed and the rest must be plain names, so `..` below a
   folder that doesn't exist is refused, as is a link that leads nowhere (writing through it would
   create its target). The result is compared with the root by whole folder names: `/work2/x` is not
-  inside `/work`. On Windows case is ignored, UNC paths (`\\server\share\...`) are resolved like
-  drive-letter ones, and device names (`CON`, `NUL`, `COM1`...) are refused.
+  inside `/work`. On Windows names are compared exactly after what exists is resolved to its real case (so `OUT\x` reaches the root `out` on an ordinary volume, but not in a case-sensitive folder), UNC paths (`\\server\share\...`) are resolved like
+  drive-letter ones, and device names (`CON`, `NUL`, `COM1`, `COM¹`..., also followed by an extension or a colon) are refused.
 - A refused path is an ordinary tool error the agent can read and correct, for example
   `automation path rejected: outside the write root /work/project/out: /etc/x.pptx` or
   `automation filesystem access is not granted: write authority is absent: /work/project/out/x.pptx`.
@@ -96,7 +96,7 @@ files it was given rather than guarding against other software on the computer.
 | `screenshot` | The whole window, UI included (connected mode) |
 | `call_app` | Any [control protocol](control-protocol.md) method (connected mode) |
 
-A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, series, title, type)`). Keys inside `run_command`'s `params` are that command's parameters.
+A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters.
 
 Useful commands for building decks: `slide.new {layout, title, body}`, `shape.insert {preset,
 rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, closed, smooth}`,

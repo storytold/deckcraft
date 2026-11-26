@@ -33,13 +33,17 @@ fn browse_button_applies_the_picked_files_theme() {
     s.execute("slide.new", &json!({"layout": "title", "title": "Hello"})).unwrap();
     let mut app = SlideApp::new(s, services);
     app.ui.tab = "Design".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1600.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     h.get_by_label("Browse for Themes…").click();
     h.run_steps(3);

@@ -110,7 +110,7 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
             }
             app.sorter.rename_started = true;
         }
-        let (enter, esc) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+        let (enter, esc) = (ui.input(|i| i.key_pressed(egui::Key::Enter)), crate::framework::escape_pressed(ui.ctx()));
         // The frame that asks for focus has not had it yet; committing then would cancel the rename.
         if already && (out.lost_focus() || enter || esc) {
             app.sorter.renaming = None;
@@ -209,7 +209,8 @@ fn place_slides(app: &mut SlideApp, ui: &mut Ui, g: &Grid<'_>, budget: &mut u32,
                 // Only cells in view (plus a little margin) ask for a thumbnail, so a deck bigger
                 // than the thumbnail cache does not evict its own thumbnails forever (#969).
                 let near = ui.clip_rect().expand2(vec2(0.0, 2.0 * cell.height())).intersects(cell);
-                let tex = if near { app.textures.thumb(ui.ctx(), g.doc, i, (img.width() * ppp).round() as u32, budget) } else { None };
+                let tex =
+                    if near { app.textures.thumb(ui.ctx(), g.doc, i, (img.width() * ppp).round() as u32, app.ui.grayscale, budget) } else { None };
                 match tex {
                     Some(tex) => {
                         p.image(tex.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -277,6 +278,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let multi = st.selection.slides.clone();
     let zoom = app.ui.sorter_zoom.clamp(0.5, 3.0);
     let grouped = groups(&doc);
+    // Behind the thumbnails, which take the presses: the document's Tab stop and key target.
+    app.document_behind(ui, ui.available_rect_before_wrap());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
@@ -362,6 +365,9 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let avail = ui.available_rect_before_wrap();
     ui.painter().rect_filled(avail, CornerRadius::ZERO, t.canvas);
+    if app.session.active().is_some() {
+        app.document_widget(ui, avail, Sense::click());
+    }
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
     let idx = st.selection.slide;
@@ -391,7 +397,7 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     }
     let ppp = ui.ctx().pixels_per_point();
     let mut budget = 2;
-    if let Some(tex) = app.textures.thumb(ui.ctx(), &doc, idx, (srect.width() * ppp).round() as u32, &mut budget) {
+    if let Some(tex) = app.textures.thumb(ui.ctx(), &doc, idx, (srect.width() * ppp).round() as u32, app.ui.grayscale, &mut budget) {
         ui.painter().image(tex.id(), srect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     ui.painter().rect_stroke(srect, CornerRadius::ZERO, Stroke::new(1.0, Color32::GRAY), egui::StrokeKind::Outside);
@@ -476,7 +482,7 @@ fn outline_estimate(s: &deckcraft_model::Slide) -> f32 {
     let lines: usize = s
         .shapes
         .iter()
-        .filter(|x| !x.ph_type().is_some_and(|k| k.is_title()))
+        .filter(|x| !x.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind()))
         .filter_map(|x| x.text.as_ref())
         .filter(|tb| !tb.is_empty())
         .map(|tb| tb.paragraphs.len().max(1))
@@ -512,7 +518,8 @@ fn outline_slide(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, i: usize, s: &deck
             ui.data_mut(|d| d.insert_temp(id, v));
         }
     });
-    for sh in s.shapes.iter().filter(|x| !x.ph_type().is_some_and(|k| k.is_title())) {
+    // Footer, date and slide-number placeholders are not outline text, as in PowerPoint.
+    for sh in s.shapes.iter().filter(|x| !x.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind())) {
         let Some(tb) = &sh.text else { continue };
         if tb.is_empty() {
             continue;

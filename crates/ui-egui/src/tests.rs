@@ -13,13 +13,14 @@ fn shape_rot(app: &SlideApp) -> f64 {
 /// letting go is one undo step. Off the canvas it does nothing.
 #[test]
 fn a_trackpad_twist_rotates_the_shape_under_the_canvas() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let id = harness.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 100.0, 60.0]})).unwrap();
     let id = id.get("id").and_then(|v| v.as_u64()).unwrap();
@@ -88,6 +89,27 @@ fn web_png_export_can_leave_the_background_transparent() {
     assert_eq!(corner_alpha(&got[2].1), 255, "JPEG has no transparency");
 }
 
+/// Every type File › Save As and Export › Change File Type list is one `export_as` writes:
+/// a listed type it doesn't know would only say "can't export" (#2019).
+#[test]
+fn every_listed_save_type_exports() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let got: Rc<RefCell<Vec<String>>> = Rc::default();
+    let log = got.clone();
+    let services = Services { download: Some(Box::new(move |name: &str, _: &[u8]| log.borrow_mut().push(name.to_string()))), ..Default::default() };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    app.session.execute("slide.new", &json!({})).unwrap();
+    for (id, _, _) in crate::backstage::SAVE_TYPES {
+        assert!(app.export_as(id, json!({})), "{id} exports");
+    }
+    let title = app.session.active().unwrap().title();
+    let got = got.borrow();
+    for name in [format!("{title}1.jpg"), format!("{title}2.jpg"), format!("{title}1.png"), format!("{title}2.png")] {
+        assert!(got.contains(&name), "{name} downloaded, got {got:?}");
+    }
+}
+
 fn title_text(app: &SlideApp) -> String {
     let d = app.session.active().unwrap();
     let sh = &d.doc.slides[0].shapes[0];
@@ -96,13 +118,14 @@ fn title_text(app: &SlideApp) -> String {
 
 #[test]
 fn quick_access_toolbar_adds_removes_resets_and_persists() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let ids = |app: &SlideApp| app.ui.qat.iter().map(|q| q.id.clone()).collect::<Vec<_>>();
     assert_eq!(ids(harness.state()), ["app.home", "file.save", "app.exportDialog", "edit.undo", "edit.redo", "show.fromStart"]);
@@ -158,13 +181,14 @@ fn opening_a_file_with_missing_fonts_shows_a_toast_once() {
     body.paragraphs[0].runs[0].props.font = Some("Qqq Nonexistent Sans".into());
     slide.shapes[0].text = Some(body);
     let data = deckcraft_engine::cmd::base64_encode(&deckcraft_engine::cmd::file::save_bytes(&p, "pptx").unwrap());
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     assert!(harness.state().toast.is_none(), "a new presentation has nothing to say");
     harness.state_mut().session.execute("file.openBytes", &json!({"name": "a.pptx", "data": data})).unwrap();
@@ -233,13 +257,14 @@ fn change_picture_replaces_the_selected_picture() {
 /// #17: Home created a new blank presentation instead of going to the start screen.
 #[test]
 fn home_shows_the_start_screen_over_the_open_presentation() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     // The app keeps requesting repaints, so step frames instead of run().
     harness.run_steps(2);
     let title = harness.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
@@ -281,13 +306,14 @@ fn ctrl_word_keys_edit_text() {
     let mut session = Session::with_new();
     session.mac_keys = false;
     session.prefs.autocorrect = false;
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(session, Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, Services::default()),
+        );
     harness.run_steps(2);
     let title = harness.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
     harness.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
@@ -359,13 +385,14 @@ fn ctrl_word_keys_edit_text() {
 /// Export… had no visible control: only the command palette reached it.
 #[test]
 fn title_bar_export_opens_the_export_dialog() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     assert!(harness.state().dialog.is_none());
     // Quick access: Home, Save, Export, each 24 points wide with 2 between, from x = 10.
@@ -376,6 +403,57 @@ fn title_bar_export_opens_the_export_dialog() {
     harness.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
     harness.run_steps(2);
     assert_eq!(harness.state().dialog.as_ref().map(|d| d.id.as_str()), Some("export"));
+}
+
+/// A browser's Copy Image puts the picture on the clipboard with text that only names it: the
+/// address (and the alt text), and an `<img>` fragment as HTML. Ctrl+V pastes the picture, as
+/// PowerPoint does, instead of a text box with the link. Without a picture the link pastes as text.
+#[test]
+fn ctrl_v_pastes_the_picture_a_browser_copied_not_its_link() {
+    let url = "https://github.com/storytold/deckcraft/raw/main/assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png";
+    let caption = format!("{url}\nDeckCraft icon: a presentation screen with a bar chart on an orange tile");
+    for (text, html, with_picture, pictures_after) in [
+        (caption.clone(), Some(format!("<img src=\"{url}\" alt=\"DeckCraft icon\">")), true, 1),
+        (url.to_string(), None, true, 1),
+        // Firefox's text/x-moz-url is UTF-16; read as UTF-8 it carries NULs.
+        (url.chars().flat_map(|c| [c, '\0']).collect(), None, true, 1),
+        (url.to_string(), None, false, 0),
+        ("See https://example.com for the photos".to_string(), None, true, 0),
+    ] {
+        let session = Session::with_new();
+        let png = {
+            let d = session.active().unwrap();
+            deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+        };
+        let services = Services {
+            clipboard_image: Some(Box::new(move || with_picture.then(|| png.clone()))),
+            clipboard_html: Some(Box::new(move || html.clone())),
+            ..Default::default()
+        };
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .with_size(egui::vec2(1200.0, 800.0))
+            .build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                SlideApp::new(session, services),
+            );
+        harness.run_steps(2);
+        let shapes_before = harness.state().session.active().unwrap().doc.slides[0].shapes.len();
+        harness.event(egui::Event::Paste(text.clone()));
+        harness.run_steps(2);
+        let d = harness.state().session.active().unwrap();
+        let shapes = &d.doc.slides[0].shapes;
+        let pictures = shapes.iter().filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).count();
+        assert_eq!(pictures, pictures_after, "{text:?}");
+        assert_eq!(shapes.len(), shapes_before + 1, "one shape, picture or text, for {text:?}");
+        if pictures_after == 0 {
+            let pasted = shapes.last().and_then(|s| s.text.as_ref()).map(deckcraft_model::TextBody::text);
+            assert_eq!(pasted.as_deref(), Some(text.as_str()), "the text survives");
+        }
+    }
 }
 
 /// #53: Ctrl+V did nothing for an image-only clipboard: egui-winit sends no Paste event for it and
@@ -389,13 +467,14 @@ fn ctrl_v_pastes_an_image_when_no_paste_event_arrives() {
     };
     assert!(!png.is_empty());
     let services = Services { clipboard_image: Some(Box::new(move || Some(png.clone()))), ..Default::default() };
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(session, services),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, services),
+        );
     harness.run_steps(2);
     let pictures = |app: &SlideApp| {
         let d = app.session.active().unwrap();
@@ -421,17 +500,18 @@ fn ctrl_v_pastes_an_image_when_no_paste_event_arrives() {
 /// #78: after Tab in a text box, typing and deleting no longer reached the text.
 #[test]
 fn typing_goes_on_after_tab_in_a_text_box() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        {
-            let mut session = Session::with_new();
-            session.prefs.autocorrect = false;
-            SlideApp::new(session, Services::default())
-        },
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            {
+                let mut session = Session::with_new();
+                session.prefs.autocorrect = false;
+                SlideApp::new(session, Services::default())
+            },
+        );
     harness.run_steps(2);
     let title = harness.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
     harness.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
@@ -464,13 +544,14 @@ fn typing_goes_on_after_tab_in_a_text_box() {
 /// list could neither be typed into nor continued with Enter.
 #[test]
 fn tab_in_an_edited_list_keeps_the_keyboard() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let title = harness.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
     harness.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
@@ -568,13 +649,14 @@ fn grid_options_sets_spacing_and_display_or_opens_the_dialog() {
 #[test]
 fn grid_options_dialog_lists_spacing_and_display() {
     use egui_kittest::kittest::Queryable;
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     harness.state_mut().run("view.gridOptions", json!({})).unwrap();
     harness.run_steps(2);
@@ -611,13 +693,14 @@ fn grid_options_dialog_lists_spacing_and_display() {
 #[test]
 fn preferences_cancel_restores_the_settings_done_keeps_them() {
     use egui_kittest::kittest::Queryable;
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let before = harness.state().session.prefs.clone();
     let dark_before = harness.state().ui.brightness;
@@ -671,13 +754,14 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
 #[test]
 fn about_dialog_close_and_cancel_close_it() {
     use egui_kittest::kittest::Queryable;
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     harness.state_mut().run("app.about", json!({})).unwrap();
     harness.run_steps(2);
@@ -703,13 +787,14 @@ fn about_dialog_close_and_cancel_close_it() {
 }
 
 fn canvas_harness() -> egui_kittest::Harness<'static, SlideApp> {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let app = harness.state_mut();
     // Zoomed out, the canvas shows plenty of pasteboard around the slide.
@@ -811,13 +896,14 @@ fn the_canvas_renders_only_the_slide_when_nothing_is_off_it() {
 /// Ctrl+X do.
 #[test]
 fn copy_and_cut_commands_reach_the_system_clipboard() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let copied = |h: &egui_kittest::Harness<'_, SlideApp>| {
         h.output().platform_output.commands.iter().find_map(|c| match c {
@@ -848,13 +934,14 @@ fn copy_and_cut_commands_reach_the_system_clipboard() {
 /// egui-winit drops Ctrl+V when the system clipboard is empty; the context menu worked.
 #[test]
 fn copy_then_paste_shortcut_duplicates_an_object_without_text() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     harness.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
     let count = |h: &egui_kittest::Harness<'_, SlideApp>| h.state().session.doc().unwrap().current_slide().unwrap().shapes.len();
@@ -877,13 +964,14 @@ fn copy_then_paste_shortcut_duplicates_an_object_without_text() {
 /// canvas focused it still selects shapes.
 #[test]
 fn select_all_follows_the_focused_pane() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     for _ in 0..2 {
         harness.state_mut().run("slide.new", json!({})).unwrap();
@@ -916,13 +1004,31 @@ fn select_all_follows_the_focused_pane() {
 }
 
 fn harness() -> egui_kittest::Harness<'static, SlideApp> {
-    egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+    egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
         },
         SlideApp::new(Session::new(), Services::default()),
     )
+}
+
+/// With the framework runtime installed, the window's keys still reach DeckCraft's own routing: Alt+1 runs the
+/// first Quick Access Toolbar item (Alt+numpad code entry leaves the claimed chord alone off macOS), and Escape with
+/// nothing focused leaves the File tab.
+#[test]
+fn alt_digit_and_escape_reach_the_app_through_the_runtime() {
+    let mut h = harness();
+    h.state_mut().run("file.new", json!({})).unwrap();
+    h.state_mut().session.mac_keys = false;
+    h.run_steps(3);
+    assert!(!h.state().backstage_open());
+    h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::Num1);
+    h.run_steps(2);
+    assert!(h.state().backstage_open(), "Alt+1 runs app.home, which opens the File tab");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert!(!h.state().backstage_open(), "Escape leaves the File tab");
 }
 
 /// #172: a recent file that no longer exists is marked on File › Home, and clicking it draws
@@ -984,13 +1090,14 @@ fn recent_exists_tells_missing_from_present() {
 #[test]
 fn the_language_dialog_marks_the_selected_text() {
     use egui_kittest::kittest::Queryable;
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let title = harness.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
     harness.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
@@ -999,7 +1106,8 @@ fn the_language_dialog_marks_the_selected_text() {
     harness.state_mut().run("app.dialog", json!({"id": "language"})).unwrap();
     // The anchored window settles over its first frames; click once it stays put.
     harness.run_steps(4);
-    harness.get_by_label("Français (France)").click();
+    // Installed dictionaries append a marker to the language's accessible label.
+    harness.get_by_label_contains("Français (France)").click();
     harness.run_steps(2);
     harness.get_by_label("OK").click();
     harness.run_steps(2);
@@ -1013,13 +1121,14 @@ fn the_language_dialog_marks_the_selected_text() {
 #[test]
 fn the_language_dialog_marks_the_whole_presentation() {
     use egui_kittest::kittest::Queryable;
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let s = &mut harness.state_mut().session;
     let title = s.active().unwrap().doc.slides[0].shapes[0].id.0;
@@ -1049,13 +1158,14 @@ fn the_language_dialog_marks_the_whole_presentation() {
 #[test]
 fn the_language_dialog_marks_the_whole_presentation_with_nothing_selected() {
     use egui_kittest::kittest::{NodeT, Queryable};
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let s = &mut harness.state_mut().session;
     let title = s.active().unwrap().doc.slides[0].shapes[0].id.0;
@@ -1109,13 +1219,14 @@ fn editing_notes_in_the_pane_keeps_their_formatting() {
     };
     let mut session = Session::with_new();
     session.execute("slide.notes", &json!({"index": 0, "body": notes})).unwrap();
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(session, Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, Services::default()),
+        );
     harness.run_steps(2);
     let id = egui::Id::unique("notes_edit");
     let caret = |h: &mut egui_kittest::Harness<'_, SlideApp>, at: usize| {
@@ -1163,15 +1274,66 @@ fn editing_notes_in_the_pane_keeps_their_formatting() {
 }
 
 fn step_app(services: Services) -> egui_kittest::Harness<'static, SlideApp> {
-    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), services),
-    );
+    let mut h =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), services),
+        );
     h.run_steps(2);
     h
+}
+
+/// #1855: text pasted into the focused speaker-notes field lands at its caret. While a stock
+/// field has the focus, `SlideApp::keyboard` leaves the batch to it and nothing in the app drops
+/// `Paste`, whether it arrives alone or inside the ⌘V batch egui-winit sends (V down, Paste, V up).
+#[test]
+fn paste_reaches_the_focused_notes_field() {
+    let mut h = step_app(Services::default());
+    let id = egui::Id::unique("notes_edit");
+    h.ctx.memory_mut(|m| m.request_focus(id));
+    h.run_steps(2);
+    assert!(h.ctx.memory(|m| m.has_focus(id)), "the notes field has the focus");
+    h.event(egui::Event::Text("ab".into()));
+    h.run_steps(2);
+    h.event(egui::Event::Paste("PASTED".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().notes_buf.2.text, "abPASTED", "a bare Paste event");
+    let v = |pressed| egui::Event::Key { key: egui::Key::V, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND };
+    h.input_mut().events.extend([v(true), egui::Event::Paste("TWO".into()), v(false)]);
+    h.run_steps(2);
+    assert_eq!(h.state().notes_buf.2.text, "abPASTEDTWO", "the ⌘V batch");
+    // Leaving the field commits the notes to the slide.
+    h.ctx.memory_mut(|m| m.surrender_focus(id));
+    h.run_steps(3);
+    assert_eq!(h.state().session.active().unwrap().doc.slides[0].notes_text(), "abPASTEDTWO");
+}
+
+/// #1956: the ribbon's drop-downs are announced by their purpose, not by their value or an
+/// internal key. Animations › Start with a shape that has no animation was "astart"; Home's Font
+/// and Font size boxes were "font" and "size" while nothing told them a font or size.
+#[test]
+fn ribbon_dropdowns_are_named_by_purpose_even_when_empty() {
+    use egui::accesskit::Role;
+    let mut h = step_app(Services::default());
+    // A fresh shape, selected but not edited and without an animation.
+    h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [100.0, 100.0, 200.0, 100.0]})).unwrap();
+    h.state_mut().run("text.exit", json!({})).unwrap();
+    h.state_mut().ui.tab = "Animations".into();
+    h.run_steps(2);
+    let start = h.get_by_role_and_label(Role::ComboBox, "Start");
+    assert_eq!(start.value(), None, "no animation, no start value");
+    assert!(h.query_by_label("astart").is_none(), "the internal key is not a name");
+
+    h.state_mut().ui.tab = "Home".into();
+    h.state_mut().run("edit.select", json!({"ids": []})).unwrap();
+    h.run_steps(2);
+    for (name, key) in [("Font", "font"), ("Font size", "size")] {
+        assert!(h.query_by_role_and_label(Role::ComboBox, name).is_some(), "{name} is named while empty");
+        assert!(h.query_by_role_and_label(Role::ComboBox, key).is_none(), "{key} is not announced");
+    }
 }
 
 /// Copy of a bold selection offers HTML; paste of Pages-like HTML keeps the bold.
@@ -1274,13 +1436,17 @@ fn preview_hides_an_entrance_until_it_plays() {
 
 #[test]
 fn animation_preview_plays_on_the_canvas_then_stops() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).with_step_dt(0.05).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness = egui_kittest::Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1200.0, 800.0))
+        .with_step_dt(0.05)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let none = harness.state_mut().run("animation.preview", json!({})).unwrap();
     assert_eq!(none["playing"], false);
@@ -1341,13 +1507,17 @@ fn animation_preview_plays_on_the_canvas_then_stops() {
 }
 
 fn flick_harness() -> egui_kittest::Harness<'static, SlideApp> {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness = egui_kittest::Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1200.0, 800.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     // Fitted: the slide is smaller than the window, so a flick turns the page instead of panning.
     harness.state_mut().ui.zoom = Some(0.4);
@@ -1621,13 +1791,14 @@ fn the_pen_ignores_a_swipe_during_the_show() {
 /// until the pointer lets go, so the slider doesn't grow under the pointer mid-drag.
 #[test]
 fn interface_size_applies_when_the_slider_is_let_go() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     harness.state_mut().run("app.preferences", json!({})).unwrap();
     harness.run_steps(4);
@@ -1655,7 +1826,7 @@ fn interface_size_applies_when_the_slider_is_let_go() {
 #[test]
 fn status_zoom_slider_is_named_without_growing_the_status_bar() {
     for size in [egui::vec2(900.0, 560.0), egui::vec2(1440.0, 900.0)] {
-        let mut harness = egui_kittest::Harness::builder().with_size(size).build_ui_state(
+        let mut harness = egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(size).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());
                 app.ui(ui);
@@ -1683,13 +1854,14 @@ fn status_zoom_slider_is_named_without_growing_the_status_bar() {
 /// than a visible label duplicated by `Slider::text`.
 #[test]
 fn preferences_and_format_pane_name_every_input() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(3);
     harness.state_mut().run("app.preferences", json!({})).unwrap();
     harness.run_steps(3);
@@ -1712,13 +1884,14 @@ fn preferences_and_format_pane_name_every_input() {
 /// kittest's screenshot callback, and replied to exactly once after a logic drain.
 #[test]
 fn ui_screenshot_round_trips_through_the_callable_slot() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(900.0, 600.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     let (tx, rx) = std::sync::mpsc::channel();
     harness.state_mut().control_rx = Some(rx);
     let (req, reply) = ControlRequest::new("ui.screenshot", json!({}));
@@ -1740,6 +1913,7 @@ fn ui_screenshot_round_trips_through_the_callable_slot() {
 fn logic_drains_control_without_a_ui_pass() {
     let mut app = SlideApp::new(Session::with_new(), Services::default());
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let (tx, rx) = std::sync::mpsc::channel();
     app.control_rx = Some(rx);
     let (req, reply) = ControlRequest::new("ui.inspect", json!({}));
@@ -1756,6 +1930,7 @@ fn logic_drains_control_without_a_ui_pass() {
 fn synthetic_input_is_one_pending_batch_and_never_replays() {
     let mut app = SlideApp::new(Session::with_new(), Services::default());
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     app.queue_input(egui::Event::PointerMoved(egui::pos2(10.0, 10.0)));
     let mut raw = egui::RawInput::default();
     app.raw_input_hook(&ctx, &mut raw);
@@ -1823,6 +1998,7 @@ fn a_control_click_on_the_first_font_discard_is_requeued_and_lands() {
     app.fonts_ready = true;
     app.styled = true;
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let pass = |app: &mut SlideApp, time: f64| {
         let mut raw = egui::RawInput { time: Some(time), ..Default::default() };
         raw.viewports.insert(
@@ -1873,6 +2049,7 @@ fn a_control_click_on_the_first_font_discard_is_requeued_and_lands() {
 fn synthetic_batch_is_retracted_when_a_modal_opens_first() {
     let mut app = SlideApp::new(Session::with_new(), Services::default());
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     app.queue_input(egui::Event::PointerMoved(egui::pos2(10.0, 10.0)));
     let mut raw = egui::RawInput::default();
     app.raw_input_hook(&ctx, &mut raw);
@@ -1902,6 +2079,7 @@ fn synthetic_click_is_consumed_on_its_old_target_before_logic_changes_the_docume
     app.fonts_ready = true;
     app.styled = true;
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let pass = |app: &mut SlideApp, time: f64| {
         let mut raw = egui::RawInput { time: Some(time), ..Default::default() };
         raw.viewports.insert(
@@ -2063,6 +2241,7 @@ fn input_target_changes_retract_a_queued_click() {
 fn hidden_logic_pass_carries_a_synthetic_batch_and_drops_it_when_the_document_changes() {
     let mut app = SlideApp::new(Session::with_new(), Services::default());
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let (tx, rx) = std::sync::mpsc::channel();
     app.control_rx = Some(rx);
     app.queue_input(egui::Event::PointerMoved(egui::pos2(10.0, 10.0)));
@@ -2157,6 +2336,7 @@ fn carried_batch_is_consumed_before_the_full_pass_applies_a_control_change() {
     app.fonts_ready = true;
     app.styled = true;
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let (tx, rx) = std::sync::mpsc::channel();
     app.control_rx = Some(rx);
     app.queue_input(egui::Event::PointerMoved(egui::pos2(10.0, 10.0)));
@@ -2213,6 +2393,7 @@ fn hidden_full_pass_receives_synthetic_ui_input() {
     app.dialog = Some(crate::dialogs::Dialog::new("replaceFonts"));
     app.queue_input(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut hidden = egui::RawInput { time: Some(4.0), ..Default::default() };
     hidden.viewports.insert(
         egui::ViewportId::ROOT,
@@ -2236,13 +2417,14 @@ fn hidden_full_pass_receives_synthetic_ui_input() {
 /// asking the host clipboard service for the same image again.
 #[test]
 fn paste_image_event_inserts_one_picture() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(900.0, 600.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     harness.run_steps(2);
     let before = harness.state().session.active().unwrap().doc.slides[0].shapes.len();
     let image = egui::ColorImage::filled([2, 2], egui::Color32::from_rgb(1, 2, 3));
@@ -2275,6 +2457,7 @@ fn hidden_viewport_advances_show_and_presenter_clocks_from_logic() {
     app.session.execute("transition.timing", &json!({"index": 1, "after": null})).unwrap();
     app.start_show(0, false);
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
 
     // A real visible UI pass starts the show and its clocks. There is no renderer here, so
     // each frame's texture uploads are cleared explicitly (egui 0.37 panics on drop).
@@ -2339,6 +2522,7 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     app.session.execute("transition.timing", &json!({"index": 1, "after": null})).unwrap();
     app.start_show(0, false);
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
 
     // The full visible pass is the only pass that anchors the show: egui time 10.
     ctx.run_ui(raw_at(10.0, false, false), |ui| {
@@ -2359,4 +2543,49 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     // the slide would not advance.
     let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(3)));
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
+}
+
+/// #1431: a comment card's reply row was wider than the pane, so the Comments pane grew every
+/// frame until it stuck at its widest and dragging its edge did nothing.
+#[test]
+fn comments_pane_keeps_its_width_and_resizes() {
+    let mut h =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+    h.run_steps(3);
+    h.state_mut().run("comment.add", json!({"text": "Check the figures on this slide"})).unwrap();
+    h.state_mut().run("comment.add", json!({"text": "Resolved one"})).unwrap();
+    h.state_mut().run("comment.resolve", json!({"index": 1, "resolved": true})).unwrap();
+    h.state_mut().run("view.pane", json!({"pane": "comments"})).unwrap();
+    h.run_steps(30);
+    let width = h.state().ui.pane_width;
+    assert!(width < 320.0, "the pane keeps its default width, not {width}");
+    // The cards stay compact: the second one starts near the top, not below a stretched first.
+    let second = h.get_by_label("Resolved one").rect();
+    assert!(second.top() < 450.0, "the second comment sits near the top, at {second:?}");
+
+    // Drag the pane's left edge: right narrows it, left widens it.
+    let drag = |h: &mut egui_kittest::Harness<'_, SlideApp>, dx: f32| {
+        let start = egui::pos2(1200.0 - h.state().ui.pane_width - 1.0, 500.0);
+        let end = start + egui::vec2(dx, 0.0);
+        h.event(egui::Event::PointerMoved(start));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+        for i in 1..=6 {
+            h.event(egui::Event::PointerMoved(start + (end - start) * (i as f32 / 6.0)));
+            h.run_steps(1);
+        }
+        h.event(egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+        h.run_steps(10);
+        h.state().ui.pane_width
+    };
+    let narrow = drag(&mut h, 50.0);
+    assert!(narrow < width - 40.0, "dragging right narrows the pane: {width} -> {narrow}");
+    let wide = drag(&mut h, -150.0);
+    assert!(wide > narrow + 140.0, "dragging left widens the pane: {narrow} -> {wide}");
 }

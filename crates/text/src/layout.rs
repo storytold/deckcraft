@@ -93,12 +93,24 @@ impl BoxGeom {
         } else {
             text_rect
         };
-        let inner = Rect::new(
-            r.x0 + bp.inset_l.unwrap_or(7.2),
-            r.y0 + bp.inset_t.unwrap_or(3.6),
-            (r.x1 - bp.inset_r.unwrap_or(7.2)).max(r.x0 + bp.inset_l.unwrap_or(7.2)),
-            (r.y1 - bp.inset_b.unwrap_or(3.6)).max(r.y0 + bp.inset_t.unwrap_or(3.6)),
-        );
+        // Insets wider than the shape scale down proportionally to fit inside it (#1632).
+        let (mut ins_l, mut ins_r) = (bp.inset_l.unwrap_or(7.2), bp.inset_r.unwrap_or(7.2));
+        let (mut ins_t, mut ins_b) = (bp.inset_t.unwrap_or(3.6), bp.inset_b.unwrap_or(3.6));
+        let w = r.width().max(0.0);
+        let total_x = ins_l + ins_r;
+        if ins_l >= 0.0 && ins_r >= 0.0 && total_x > w && total_x > 0.0 {
+            let s = w / total_x;
+            ins_l *= s;
+            ins_r *= s;
+        }
+        let h = r.height().max(0.0);
+        let total_y = ins_t + ins_b;
+        if ins_t >= 0.0 && ins_b >= 0.0 && total_y > h && total_y > 0.0 {
+            let s = h / total_y;
+            ins_t *= s;
+            ins_b *= s;
+        }
+        let inner = Rect::new(r.x0 + ins_l, r.y0 + ins_t, (r.x1 - ins_r).max(r.x0 + ins_l), (r.y1 - ins_b).max(r.y0 + ins_t));
         // Text that follows a WordArt arch or circle is set on one line per paragraph.
         let follow = bp.warp.as_deref().is_some_and(deckcraft_geom::warp::is_follow);
         let wrap = bp.wrap.unwrap_or(true) && !follow && !matches!(bp.autofit, Some(AutoFit::Shape) if shape.text_box && !bp.wrap.unwrap_or(true));
@@ -221,6 +233,7 @@ struct ParaEnv<'a> {
     first_x: f64,
     rest_x: f64,
     tabs: &'a [Tab],
+    hang: Option<f64>,
 }
 
 impl ParaEnv<'_> {
@@ -300,6 +313,12 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
     let first_x = first_line_start(p.bullet.is_some(), margin, indent, bullet_w);
     let rest_x = margin;
     let tabs = tabs_of(props);
+    // A hanging first line (marL > 0, indent < 0) treats the indent position (marL) as an
+    // implicit tab stop for its first tab; later lines already start there, so the stop
+    // only ever applies ahead of the first line's start.
+    // LTR only: the implicit stop is measured from the left margin, and RTL tab handling is
+    // out of this change's scope (its stops are not mirrored here yet).
+    let hang = (!p.rtl && margin - first_x > 0.5 && margin.is_finite()).then_some(margin);
     let first_w = (g.col_w - first_x - mr).max(1.0);
     let rest_w = (g.col_w - rest_x - mr).max(1.0);
     let raw = break_lines(
@@ -312,13 +331,14 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
             default_tab: props.default_tab.unwrap_or(72.0),
             x0_first: first_x,
             x0_rest: rest_x,
+            hang,
         },
     );
     // The first paragraph's space before counts only when the body says so.
     let before = if pi == 0 && !first_last { 0.0 } else { spacing_pts(props.space_before, p.lead_size) };
     flow.y += before.max(0.0) + flow.prev_after;
     let first_line_idx = flow.lines.len();
-    let env = ParaEnv { p, g, reduce, margin, indent, mr, bullet_w, first_x, rest_x, tabs: &tabs };
+    let env = ParaEnv { p, g, reduce, margin, indent, mr, bullet_w, first_x, rest_x, tabs: &tabs, hang };
     for (li, rl) in raw.iter().enumerate() {
         let is_last = li + 1 == raw.len();
         let placed = place_line(&env, pi, rl, li, is_last, flow);
@@ -364,7 +384,10 @@ fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
 }
 
 /// Logical advance of each cell on the line (tabs measure from the start edge) and their sum.
-fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64) -> (Vec<f64>, f64) {
+/// `hang` is the implicit first-line stop, or `None` on later lines: they already start at the
+/// margin, and negative character spacing can dip `x` below it, which would wrongly re-trigger
+/// the stop.
+fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64, hang: Option<f64>, avail: f64) -> (Vec<f64>, f64) {
     let p = env.p;
     let line_cells = p.cells.get(rl.start..rl.end).unwrap_or(&[]);
     let n = rl.end.saturating_sub(rl.start);
@@ -376,7 +399,7 @@ fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64) -> (Vec<f6
         let a = if shy_end && k + 1 == n {
             p.faces.get(c.face).zip(p.styles.get(c.style)).map(|(f, st)| measure_str(f, st.size, "-").0).unwrap_or(0.0)
         } else if c.ch == '\t' {
-            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k))
+            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k), hang, x0 + avail)
         } else {
             c.adv
         };
@@ -406,7 +429,7 @@ fn justify_line(p: &ParaShaped, rl: &RawLine, adv: &mut [f64], align: Align, sla
             filled = true;
         }
     }
-    if stretch && !filled && matches!(align, Align::Justify | Align::JustLow) {
+    if stretch && !filled && matches!(align, Align::Justify | Align::JustLow | Align::ThaiDistributed) {
         let spaces = line_cells.iter().filter(|c| c.ch == ' ').count();
         if spaces > 0 {
             for (a, c) in adv.iter_mut().zip(line_cells) {
@@ -438,8 +461,8 @@ fn line_left(align: Align, filled: bool, rtl: bool, bx: (f64, f64), line_w: f64,
         Align::Center => box_l + (box_r - box_l - line_w) / 2.0,
         Align::Distributed if n <= 1 => box_l + slack / 2.0,
         // Justified lines that aren't stretched (the last one) sit at the start edge.
-        Align::Justify | Align::JustLow | Align::Distributed if rtl => box_r - line_w,
-        Align::Justify | Align::JustLow | Align::Distributed => box_l,
+        Align::Justify | Align::JustLow | Align::Distributed | Align::ThaiDistributed if rtl => box_r - line_w,
+        Align::Justify | Align::JustLow | Align::Distributed | Align::ThaiDistributed => box_l,
     }
 }
 
@@ -508,7 +531,7 @@ fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, 
     let avail = (g.col_w - x0 - env.mr).max(0.0);
     let n = rl.end.saturating_sub(rl.start);
     let line_cells = p.cells.get(rl.start..rl.end).unwrap_or(&[]);
-    let (mut adv, width) = line_advances(env, rl, is_last, x0);
+    let (mut adv, width) = line_advances(env, rl, is_last, x0, if li == 0 { env.hang } else { None }, avail);
     let align = props.align.unwrap_or(Align::Left);
     let slack = (avail - width).max(0.0);
     let stretch = !is_last && g.wrap && slack > 0.0;

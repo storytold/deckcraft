@@ -857,19 +857,37 @@ fn one_line(text: &str) -> f64 {
 #[test]
 fn a_word_does_not_break_after_a_slash_or_backslash() {
     // PowerPoint (latinLnBrk off, its default) keeps "alpha/beta/gamma" whole and only breaks it
-    // where it no longer fits; Unicode line breaking would allow a break after each slash.
-    for sep in ["/", "\\"] {
+    // where it no longer fits; Unicode line breaking would allow a break after each slash. The
+    // same holds after ?, !, } and + (a URL's query, measured in PowerPoint 2016 for Windows).
+    for sep in ["/", "\\", "?", "!", "}", "+"] {
         let text = ["alpha", "beta", "gamma", "delta", "epsilon"].join(sep);
         let w = one_line(&text) * 0.6;
         let lines = wrapped(&text, w, |_| {});
         assert!(lines.len() >= 2, "{lines:?}");
         assert!(lines[0].chars().count() > "alpha/beta".len(), "filled to the edge, not cut at a separator: {lines:?}");
+        // The line breaks where the next character no longer fits, not at an earlier separator
+        // (it may still end with one when that is where the width runs out).
+        let next: String = lines[0].chars().chain(lines[1].chars().take(1)).collect();
+        assert!(one_line(&next) > w, "no break right after {sep:?} while more fits: {lines:?}");
     }
     // latinLnBrk on: Unicode's break after a slash is allowed again.
     let text = "alpha/beta/gamma/delta/epsilon";
     let lines = wrapped(text, one_line(text) * 0.6, |p| p.latin_line_break = Some(true));
     assert!(lines[0].ends_with('/'), "{lines:?}");
-    // A slash followed by a space still breaks, and hyphens still break.
+    // Outside a Latin word the Unicode break stays: "日本!" fits, "語" moves to the next line.
+    let lines = wrapped("日本!語", one_line("日本!") + 0.5, |_| {});
+    assert_eq!(lines[0], "日本!", "{lines:?}");
+    // Nor before a symbol that only shares the letters' line-break class.
+    let (allowed, _) = break_opportunities("ab!&cd", false);
+    assert!(allowed[3], "break after ! before &: {allowed:?}");
+    // Latin text before CJK still breaks after the mark: "ab?" fits, "日本" moves down.
+    let lines = wrapped("ab?日本", one_line("ab?") + 0.5, |_| {});
+    assert_eq!(lines[0], "ab?", "{lines:?}");
+    // A separator followed by a space still breaks, and hyphens still break.
+    for sep in ["/", "?", "!"] {
+        let lines = wrapped(&format!("alpha{sep} beta"), one_line(&format!("alpha{sep} b")) + 0.5, |_| {});
+        assert_eq!(lines.iter().map(|l| l.trim_end()).collect::<Vec<_>>(), [format!("alpha{sep}"), "beta".into()], "{lines:?}");
+    }
     let lines = wrapped("alpha-beta-gamma-delta-epsilon", one_line("alpha-beta-gamma-") + 1.0, |_| {});
     assert_eq!(lines[0], "alpha-beta-gamma-");
 }
@@ -947,6 +965,9 @@ fn symbol_font_bullets_map_by_font() {
     assert_eq!(map_symbol_bullet(&star, Some("Wingdings 2")), "★");
     assert_eq!(map_symbol_bullet("\u{7d}", Some("Wingdings 3")), "►");
     assert_eq!(map_symbol_bullet("\u{f0a7}", Some("Wingdings")), "▪");
+    // Wingdings' diamonds (`w` is the small one) are not dots (#1137 review).
+    assert_eq!(map_symbol_bullet("w", Some("Wingdings")), "◆");
+    assert_eq!(map_symbol_bullet("u", Some("Wingdings")), "◆");
     assert_eq!(map_symbol_bullet("•", Some("Arial")), "•");
     assert!(is_symbol_font("Wingdings 2") && is_symbol_font("Symbol") && !is_symbol_font("Arial"));
 }
@@ -1399,6 +1420,64 @@ fn tab_stops_align_the_text_after_them() {
 }
 
 #[test]
+fn a_right_tab_stop_past_the_margin_ends_the_text_at_the_margin() {
+    // #1663: a layout may set a right tab stop a little past the text area's right edge.
+    // PowerPoint treats it as one at the margin: the text after it stays on one line and ends
+    // at the right edge. DeckCraft started it too far right and wrapped the rest.
+    let l = tabbed("x\tCorrie Ten Boom", &[(700.0, "r")], 600.0);
+    assert_eq!(l.lines.len(), 1, "{:?}", l.lines.iter().map(|x| (x.start, x.end, x.extent)).collect::<Vec<_>>());
+    let right = l.inner.x0 + l.inner.width();
+    assert!((l.lines[0].extent.1 - right).abs() < 0.01, "ends at {:?}, margin {right}", l.lines[0].extent);
+}
+
+#[test]
+fn an_indented_paragraph_clamps_a_tab_stop_to_its_absolute_right_edge() {
+    // #1663: the stop and the edge are measured from the text area's left edge, so an indented
+    // first line does not pull the edge in by its margin. A stop inside it keeps its position;
+    // one past it ends the text at the margin.
+    let (p, mut sh) = setup("x\tCorrie Ten Boom", 600.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    for r in &mut para.runs {
+        r.props.size = Some(18.0);
+    }
+    let pp = &mut para.props;
+    pp.bullet = Some(Bullet::None);
+    pp.margin_left = Some(100.0);
+    pp.indent = Some(0.0);
+    pp.default_tab = Some(72.0);
+    pp.tabs = Some(vec![deckcraft_model::text::TabStop { pos: 550.0, align: "r".to_string() }]);
+    let l = lay(&p, &sh, 600.0, 300.0);
+    assert_eq!(l.lines.len(), 1, "{:?}", l.lines.iter().map(|x| (x.start, x.end, x.extent)).collect::<Vec<_>>());
+    assert!((l.lines[0].extent.1 - l.inner.x0 - 550.0).abs() < 0.01, "inside stop at {:?}", l.lines[0].extent);
+
+    let (p, mut sh) = setup("x\tCorrie Ten Boom", 600.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    for r in &mut para.runs {
+        r.props.size = Some(18.0);
+    }
+    let pp = &mut para.props;
+    pp.bullet = Some(Bullet::None);
+    pp.margin_left = Some(100.0);
+    pp.indent = Some(0.0);
+    pp.default_tab = Some(72.0);
+    pp.tabs = Some(vec![deckcraft_model::text::TabStop { pos: 700.0, align: "r".to_string() }]);
+    let l = lay(&p, &sh, 600.0, 300.0);
+    assert_eq!(l.lines.len(), 1, "{:?}", l.lines.iter().map(|x| (x.start, x.end, x.extent)).collect::<Vec<_>>());
+    let right = l.inner.x0 + l.inner.width();
+    assert!((l.lines[0].extent.1 - right).abs() < 0.01, "ends at {:?}, margin {right}", l.lines[0].extent);
+}
+
+#[test]
+fn many_tabs_over_many_stops_lay_out_by_position() {
+    // 20,000 stops given out of order, and 2,000 tabs: each tab finds the next stop by position.
+    let mut stops: Vec<(f64, &str)> = (1..=20_000).rev().map(|k| (k as f64 * 0.05 + 30.0, "l")).collect();
+    stops.push((f64::NAN, "l"));
+    let text = "a\t".repeat(2_000);
+    let l = tabbed(&text, &stops, 1.0e6);
+    assert!((l.lines[0].edges[2].0 - l.inner.x0 - 30.05).abs() < 0.01, "{:?}", &l.lines[0].edges[..3]);
+}
+
+#[test]
 fn a_tab_past_the_end_moves_to_the_next_line() {
     // PowerPoint: "abcdefghij\tk\tl\tm…" in a narrow box puts the tab that doesn't fit on the next
     // line, so the text after it lands on that line's first stop.
@@ -1406,6 +1485,70 @@ fn a_tab_past_the_end_moves_to_the_next_line() {
     assert_eq!(l.lines.len(), 2);
     assert_eq!(l.lines[1].start, 10, "the tab starts the second line: {:?}", l.lines.iter().map(|x| (x.start, x.end, x.extent)).collect::<Vec<_>>());
     assert!((l.lines[1].edges[1].0 - l.inner.x0 - 72.0).abs() < 0.01);
+}
+
+/// One paragraph `text` with a hanging indent (`marL`/`indent`), no bullet or explicit stops.
+fn hanging_tabbed(text: &str, margin: f64, indent: f64, w: f64) -> TextLayout {
+    let (p, mut sh) = setup(text, w, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    for r in &mut para.runs {
+        r.props.size = Some(18.0);
+    }
+    let pp = &mut para.props;
+    pp.bullet = Some(Bullet::None);
+    pp.margin_left = Some(margin);
+    pp.indent = Some(indent);
+    pp.default_tab = Some(72.0);
+    pp.tabs = None;
+    lay(&p, &sh, w, 300.0)
+}
+
+#[test]
+fn hanging_indent_is_the_first_tab_stop() {
+    // PowerPoint: with a 0.375 in (27 pt) hanging indent, the first tab on the first line goes
+    // to marL; later tabs go to the normal default stops.
+    let l = hanging_tabbed("a\tb\tc", 27.0, -27.0, 600.0);
+    assert_eq!(l.lines.len(), 1);
+    let x0 = l.inner.x0;
+    assert!((l.lines[0].edges[2].0 - x0 - 27.0).abs() < 0.5, "the char after the first tab starts at marL: {:?}", l.lines[0].edges);
+    assert!((l.lines[0].edges[4].0 - x0 - 72.0).abs() < 0.5, "the char after the second tab starts at the default stop: {:?}", l.lines[0].edges);
+    // A third tab lands on the next default stop.
+    let l = hanging_tabbed("a\tb\tc\td", 27.0, -27.0, 600.0);
+    assert!((l.lines[0].edges[6].0 - l.inner.x0 - 144.0).abs() < 0.5, "{:?}", l.lines[0].edges);
+}
+
+#[test]
+fn a_tab_on_a_wrapped_line_keeps_the_default_stop() {
+    // The implicit stop only applies ahead of the first line's start: a tab on the second
+    // line uses the normal default stop from the box grid (72 pt here), not marL + 27.
+    let l = hanging_tabbed("AAAA\u{b}\tB", 27.0, -27.0, 600.0);
+    assert_eq!(l.lines.len(), 2, "{:?}", l.lines.iter().map(|x| (x.start, x.end)).collect::<Vec<_>>());
+    let x = l.lines[1].edges[1].0 - l.inner.x0;
+    assert!((x - 72.0).abs() < 0.5, "the wrapped line's tab uses the default stop, got {x}");
+    assert!((x - 54.0).abs() > 5.0, "and not marL + 27");
+}
+
+#[test]
+fn a_tab_after_negative_spacing_on_a_later_line_keeps_the_default_stop() {
+    // #1683 follow-up: the implicit stop is a first-line stop only. Negative character spacing
+    // can put a later line's cursor left of the margin; its tab must still take the default stop.
+    let (p, mut sh) = setup("A\u{b}X\tY", 600.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    for r in &mut para.runs {
+        r.props.size = Some(18.0);
+        r.props.spacing = Some(-20.0);
+    }
+    let pp = &mut para.props;
+    pp.bullet = Some(Bullet::None);
+    pp.margin_left = Some(27.0);
+    pp.indent = Some(-27.0);
+    pp.default_tab = Some(72.0);
+    pp.tabs = None;
+    let l = lay(&p, &sh, 600.0, 300.0);
+    assert_eq!(l.lines.len(), 2, "{:?}", l.lines.iter().map(|x| (x.start, x.end)).collect::<Vec<_>>());
+    let x = l.lines[1].edges[2].0 - l.inner.x0;
+    assert!((x - 72.0).abs() < 0.5, "the later line's tab uses the default stop, got {x}");
+    assert!((x - 27.0).abs() > 5.0, "and not the first line's margin stop");
 }
 
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.
@@ -1927,4 +2070,71 @@ fn a_paragraph_with_its_own_start_at_restarts_the_count_there() {
     check(&[3, 3, 3, 3], &[3, 4, 5, 6]);
     // A later paragraph with a new start begins a fresh run.
     check(&[1, 1, 7, 7], &[1, 2, 7, 8]);
+}
+
+/// #1632: when insets are wider than the shape, they scale down proportionally so the text
+/// rectangle stays inside the shape bounds and unwrapped text does not project outside it.
+#[test]
+fn insets_wider_than_the_shape_scale_down_within_the_shape_bounds() {
+    let (p, mut sh) = setup("Collaboration Hub", 14.17, 14.17);
+    sh.ph = None;
+    let bp = &mut sh.text.as_mut().unwrap().body;
+    bp.wrap = Some(false);
+    bp.inset_l = Some(127.5);
+    bp.inset_r = Some(11.33);
+    bp.inset_t = Some(11.33);
+    bp.inset_b = Some(11.33);
+    sh.text.as_mut().unwrap().paragraphs[0].props = deckcraft_model::text::ParaProps { align: Some(Align::Center), ..Default::default() };
+    let l = lay(&p, &sh, 14.17, 14.17);
+    assert_eq!(l.lines.len(), 1);
+    let line = &l.lines[0];
+    let mid = (line.caret_x[0] + *line.caret_x.last().unwrap()) / 2.0;
+    // The text center must remain inside the 14.17 pt wide shape, not pushed ~127.5 pt to the right.
+    assert!((0.0..=14.17).contains(&mid), "line center {mid} should be within [0, 14.17]");
+}
+
+/// #1632: signed insets (e.g. negative left inset with positive right inset) are preserved when
+/// their sum fits within the shape bounds.
+#[test]
+fn signed_insets_are_preserved_when_they_fit() {
+    let (p, mut sh) = setup("Text", 100.0, 50.0);
+    sh.ph = None;
+    let bp = &mut sh.text.as_mut().unwrap().body;
+    bp.inset_l = Some(-10.0);
+    bp.inset_r = Some(10.0);
+    sh.text.as_mut().unwrap().paragraphs[0].props = deckcraft_model::text::ParaProps { align: Some(Align::Left), ..Default::default() };
+    let l = lay(&p, &sh, 100.0, 50.0);
+    assert_eq!(l.lines.len(), 1);
+    assert_eq!(l.inner.x0, -10.0);
+}
+
+/// Each run is shaped in its own language (Review › Language), so a font's forms for that language
+/// (OpenType `locl`) are drawn: the Serbian б, not the Russian one, in a Serbian run beside a
+/// Russian run of the same word.
+#[test]
+fn serbian_runs_draw_the_fonts_serbian_forms() {
+    let b = |f: &FontFace, lang: &str| {
+        let params = deckcraft_fonts::ShapeParams { language: Some(lang), ..Default::default() };
+        deckcraft_fonts::shape_range(f, "б", 0.."б".len(), &params, |c| c).first().map(|g| g.gid)
+    };
+    let serbian_form = |f: &FontFace| b(f, "sr-Cyrl-RS") != b(f, "ru-RU");
+    let Some(family) = first_family(&["DejaVu Sans", "DejaVu Serif", "Source Sans 3", "Source Serif 4", "Noto Sans", "Noto Serif"], serbian_form)
+    else {
+        eprintln!("skipped: no font with a Serbian б");
+        return;
+    };
+    let run = |text: &str, lang: &str| {
+        let mut r = Run::new(text);
+        r.props.lang = Some(lang.into());
+        r.props.font = Some(family.clone());
+        r
+    };
+    let (p, sh) = bidi_setup(vec![run("грб ", "sr-Cyrl-RS"), run("грб", "ru-RU")], 2000.0, false, Align::Left);
+    let l = lay(&p, &sh, 2000.0, 300.0);
+    // Glyph of each paragraph character.
+    let at = |i: usize| l.runs.iter().find_map(|r| r.cells.iter().position(|&(k, _)| k == i).and_then(|g| r.glyphs.get(g)).map(|g| g.0));
+    // г р б, space, г р б: each б is the one its language gives.
+    let face = FontDb::global().face(&family, "Regular");
+    assert_eq!(at(2), b(&face, "sr-Cyrl-RS"), "{family}: the Serbian б");
+    assert_eq!(at(6), b(&face, "ru-RU"), "{family}: the Russian б");
 }

@@ -82,9 +82,18 @@ fn is_cj_nonstarter(c: char) -> bool {
     )
 }
 
+/// A character that continues a Latin-style word: a letter or digit that Unicode does not break
+/// between, as opposed to CJK ideographs, kana, spaces, punctuation and symbols such as `&` or `×`
+/// (which share the AL and AI line-break classes with letters).
+fn is_word_char(c: char) -> bool {
+    use unicode_linebreak::BreakClass::{Alphabetic, Ambiguous, HebrewLetter, Numeric};
+    matches!(unicode_linebreak::break_property(c as u32), Alphabetic | Ambiguous | HebrewLetter | Numeric) && c.is_alphanumeric()
+}
+
 /// Break opportunities: allowed[i] = a line may start at char i. Unicode line breaking, then
-/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/` or `\`, and
-/// Korean breaks only between words.
+/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/`, `\`, `?`, `!`, `}`
+/// or `+` inside a word (measured in PowerPoint 2016 for Windows; before an ideograph or a space
+/// the Unicode break stays), and Korean breaks only between words.
 pub(crate) fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, Vec<bool>) {
     let n = text.chars().count();
     let mut allowed = vec![false; n + 1];
@@ -113,7 +122,7 @@ pub(crate) fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, 
         let keep = if (is_hangul(prev) && is_hangul(next)) || prev == '\u{200B}' || next == '\u{2014}' || is_cj_nonstarter(next) {
             false
         } else {
-            latin_break || !matches!(prev, '/' | '\\') || next.is_whitespace()
+            latin_break || !matches!(prev, '/' | '\\' | '?' | '!' | '}' | '+') || !is_word_char(next)
         };
         if !keep
             && !mandatory.get(i + 1).copied().unwrap_or(false)
@@ -141,10 +150,13 @@ pub(crate) struct BreakParams<'a> {
     pub(crate) default_tab: f64,
     pub(crate) x0_first: f64,
     pub(crate) x0_rest: f64,
+    /// Absolute position of the hanging-indent implicit stop (`marL`), when the first
+    /// line starts left of the margin. [`tab_advance`] treats it as a left stop.
+    pub(crate) hang: Option<f64>,
 }
 
 pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> {
-    let BreakParams { first_w, rest_w, wrap, tab_stops, default_tab, x0_first, x0_rest } = *params;
+    let BreakParams { first_w, rest_w, wrap, tab_stops, default_tab, x0_first, x0_rest, hang: hang_stop } = *params;
     let text: String = p.cells.iter().map(|c| c.ch).collect();
     let (allowed, _) = break_opportunities(&text, p.props.latin_line_break.unwrap_or(false));
     let hang = p.props.hanging_punct.unwrap_or(false);
@@ -170,7 +182,8 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 break;
             }
             let adv = if c == '\t' {
-                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i))
+                // The implicit stop is for the first line only: later lines start at the margin.
+                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i), if lines.is_empty() { hang_stop } else { None }, x0 + avail)
             } else {
                 p.cells.get(i).map(|c| c.adv).unwrap_or(0.0)
             };
@@ -251,12 +264,15 @@ pub(crate) struct Tab {
     align: TabAlign,
 }
 
+/// The paragraph's tab stops in position order (a stop at no finite position is left out), so
+/// [`tab_advance`] finds the next one by binary search instead of a scan per tab.
 pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
-    props
+    let mut tabs: Vec<Tab> = props
         .tabs
         .as_ref()
         .map(|t| {
             t.iter()
+                .filter(|s| s.pos.is_finite())
                 .map(|s| Tab {
                     pos: s.pos,
                     align: match s.align.as_str() {
@@ -268,7 +284,9 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    tabs.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+    tabs
 }
 
 /// Width of the text after the tab at cell `i` up to the next tab or line break, and the width of
@@ -291,19 +309,87 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 /// Advance of a tab at `x` (from the start edge) to the next stop, placing the text after it
 /// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
 /// moving back, as PowerPoint does; past the last stop, to the next default stop.
-pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64)) -> f64 {
-    for s in stops {
-        if s.pos > x + 0.5 {
-            let to = s.pos - x;
-            return match s.align {
-                TabAlign::Left => to,
-                TabAlign::Right => (to - seg.0).max(0.0),
-                TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
-                TabAlign::Decimal => (to - seg.1).max(0.0),
-            };
+/// `hang` is the hanging-indent implicit stop (`marL`): the first tab on a first line that
+/// starts left of the margin goes there instead, as PowerPoint does. The nearer of the
+/// implicit and the regular stops wins; an explicit stop within 0.5 pt of it keeps its
+/// own alignment.
+///
+/// `right` is the line's right edge in the same coordinate space as `x` (the text area's left
+/// edge plus the line's start offset and width): a stop set past that edge acts as one at the
+/// edge, as PowerPoint treats it (a right-aligned stop there ends the text at the margin).
+pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64), hang: Option<f64>, right: f64) -> f64 {
+    // `stops` is in position order (`tabs_of`): the next stop is the first past x.
+    // A NaN `x` (a NaN spacing upstream) skips the lookup and takes the finite default-stop path.
+    if !x.is_nan()
+        && let Some(h) = hang
+        && h.is_finite()
+        && x < h - 0.5
+    {
+        let explicit = stops.get(stops.partition_point(|s| s.pos <= x + 0.5));
+        let d = if default_tab > 1.0 { default_tab } else { 72.0 };
+        let default_next = ((x / d).floor() + 1.0) * d;
+        let explicit_wins = match explicit {
+            // Compared where the stop takes effect: one past the line's edge ends there (below).
+            Some(s) => {
+                let pos = if right.is_finite() && right > 0.0 { s.pos.min(right) } else { s.pos };
+                pos < h - 0.5 || (pos - h).abs() <= 0.5
+            }
+            None => h >= default_next - 0.5,
+        };
+        if !explicit_wins {
+            return (h - x).max(1.0);
         }
+    }
+    if let Some(s) = stops.get(stops.partition_point(|s| s.pos <= x + 0.5)).filter(|_| !x.is_nan()) {
+        let pos = if right.is_finite() && right > 0.0 { s.pos.min(right) } else { s.pos };
+        let to = (pos - x).max(0.0);
+        return match s.align {
+            TabAlign::Left => to,
+            TabAlign::Right => (to - seg.0).max(0.0),
+            TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
+            TabAlign::Decimal => (to - seg.1).max(0.0),
+        };
     }
     let d = if default_tab > 1.0 { default_tab } else { 72.0 };
     let next = ((x / d).floor() + 1.0) * d;
     (next - x).max(1.0)
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use super::*;
+
+    #[test]
+    fn a_nan_position_takes_the_finite_default_stop() {
+        let stops = [Tab { pos: 100.0, align: TabAlign::Left }];
+        assert!(tab_advance(f64::NAN, &stops, 72.0, (0.0, 0.0), None, 600.0).is_finite());
+        assert_eq!(tab_advance(10.0, &stops, 72.0, (0.0, 0.0), None, 600.0), 90.0);
+    }
+
+    #[test]
+    fn a_stop_past_the_edge_is_compared_with_the_hang_at_the_edge() {
+        // The 700 pt stop takes effect at the 60 pt edge, which comes before the 80 pt hang: it
+        // wins, and right-aligned text after it ends at the edge (60 - 20), not at the hang.
+        let stops = [Tab { pos: 700.0, align: TabAlign::Right }];
+        assert_eq!(tab_advance(0.0, &stops, 72.0, (20.0, 20.0), Some(80.0), 60.0), 40.0);
+    }
+
+    #[test]
+    fn a_stop_past_the_line_ends_at_its_edge() {
+        let stops = [Tab { pos: 700.0, align: TabAlign::Right }];
+        // Right-aligned text after the tab ends at the line's right edge, not 700.
+        assert_eq!(tab_advance(0.0, &stops, 72.0, (100.0, 100.0), None, 600.0), 500.0);
+        // A stop inside the line keeps its own position.
+        assert_eq!(tab_advance(0.0, &stops, 72.0, (100.0, 100.0), None, 800.0), 600.0);
+    }
+
+    #[test]
+    fn an_offset_line_clamps_to_its_absolute_right_edge() {
+        // The stop and the edge are absolute coordinates: a 100 pt start offset does not move the
+        // edge in to 500 pt, so an inside stop at 550 stays there and one past 600 ends at 600.
+        let inside = [Tab { pos: 550.0, align: TabAlign::Right }];
+        assert_eq!(tab_advance(100.0, &inside, 72.0, (100.0, 100.0), None, 600.0), 350.0);
+        let past = [Tab { pos: 700.0, align: TabAlign::Right }];
+        assert_eq!(tab_advance(100.0, &past, 72.0, (100.0, 100.0), None, 600.0), 400.0);
+    }
 }

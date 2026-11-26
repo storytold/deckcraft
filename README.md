@@ -19,7 +19,8 @@
 
 <p align="center">
   Build decks with themes, layouts, shapes, pictures, tables, charts, transitions and animations,
-  open and save .pptx presentation files, and present them full screen. Native on macOS, Windows, Linux
+  open and save .pptx presentation files, open PowerPoint 97–2003 .ppt/.pot/.pps files (import only), and present them full
+  screen. Native on macOS, Windows, Linux
   and FreeBSD, and in the browser. Every button is also a command that the CLI and AI agents
   (through MCP) can drive.
 </p>
@@ -81,7 +82,7 @@ Today it can:
   audio and video (MP3, AAC, FLAC, ALAC, Ogg, Opus, WAV, AIFF; H.264, HEVC, VP9, AV1).
 - **Present**: transitions (including Morph), entrance/emphasis/exit and motion-path animations,
   by-paragraph builds, full-screen slide show, presenter view, pen, rehearse timings, media playback.
-- **Exchange files**: open and save .pptx presentations, export PDF (slides, notes pages, handouts
+- **Exchange files**: open and save .pptx presentations, open PowerPoint 97–2003 .ppt/.pot/.pps files (import only: Save asks for a new name), export PDF (slides, notes pages, handouts
   with selectable text), PNG/JPEG, an animated GIF of the deck and outlines. Unsaved work is kept by AutoRecover.
 - **Automate**: 200+ commands with undo, all scriptable from the CLI, a JSON control channel and an
   MCP server for AI agents.
@@ -171,6 +172,32 @@ See [ROADMAP.md](ROADMAP.md) for the stage, numbers by dimension and what's next
 [docs/target-app-parity.md](docs/target-app-parity.md) for the full assessment,
 [docs/gaps.md](docs/gaps.md) for every known shortfall and
 [docs/parity-checklist.md](docs/parity-checklist.md) for the feature-by-feature checklist.
+
+## Nightly builds (not released yet)
+
+DeckCraft has a separate **DeckCraft Nightly** channel for Launcher-managed nightly builds beside
+the stable app: its own application ID, package identity, data folder, taskbar entry and window
+class, so it never reads or writes stable DeckCraft's settings, recovery autosaves, logs, user
+dictionary or single window state. The Nightly app is started only by ArtCraft Launcher
+(`--launch-profile nightly-v1 --profile-root <dir> -- <files>`); the profile root is validated and
+fenced against every stable data and install folder, so a Nightly window cannot fall back to
+stable state. Nightly is managed by the Launcher and does not self-update.
+
+On Linux, the plain nightly `.tar.gz` starts through the canonical shared launcher template
+(`packaging/linux/nightly-launch.sh`, rendered from `craft-common-actions`'s
+`scripts/nightly-launcher.sh.in`): `deckcraft` starts `deckcraft-bin` beside it on the nightly-v1
+profile under the Nightly package identity. The distro formats keep their own launcher
+(`packaging/linux/nightly-package-launch.sh`) and their own profile folder; the AppImage, the deb/rpm
+package, the Flatpak and the Arch handoff all pass `--launch-profile nightly-v1 --profile-root <dir>
+-- <files>` to the GUI, so an unpacked or distro-installed copy is isolated without the Launcher.
+
+The channel's packaging lives in `packaging/nightly-common.sh`, `packaging/{linux,macos,windows}/nightly*`
+and `.github/workflows/nightly*.yml`. The producer and signer workflows are registered and can be
+dispatched by the reviewed release managers only; there is no schedule or automatic dispatch yet.
+Read [`docs/nightly-release-preparation.md`](docs/nightly-release-preparation.md) before the first
+supervised run. The channel is compiled with `DECKCRAFT_BUILD_CHANNEL=nightly-v1`, which also
+selects the deeper-background icons recorded in
+[`assets/app-icon/nightly-provenance.json`](assets/app-icon/nightly-provenance.json).
 
 ## Downloads
 
@@ -286,7 +313,15 @@ stand on its own.
 | <img src="https://raw.githubusercontent.com/storytold/pdfcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.pdfcraft.png" alt="" width="32" height="32"> | **PdfCraft** | Reading, organizing and protecting PDFs | [GitHub](https://github.com/storytold/pdfcraft) | [Website](https://getartcraft.com/apps/pdfcraft) |
 | <img src="https://raw.githubusercontent.com/storytold/effectcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.effectcraft.png" alt="" width="32" height="32"> | **EffectCraft** | Motion graphics and visual effects | [GitHub](https://github.com/storytold/effectcraft) | [Website](https://getartcraft.com/apps/effectcraft) |
 | <img src="https://raw.githubusercontent.com/storytold/designcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.designcraft.png" alt="" width="32" height="32"> | **DesignCraft** | Page layout and publishing | [GitHub](https://github.com/storytold/designcraft) | [Website](https://getartcraft.com/apps/designcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/deckcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.deckcraft.png" alt="" width="32" height="32"> | **DeckCraft** | **Presentations and slide shows · you are here** | [GitHub](https://github.com/storytold/deckcraft) | [Website](https://getartcraft.com/apps/deckcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/figcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.figcraft.png" alt="" width="32" height="32"> | **FigCraft** | Interface design and prototyping | [GitHub](https://github.com/storytold/figcraft) | [Website](https://getartcraft.com/apps/figcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/wordcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.wordcraft.png" alt="" width="32" height="32"> | **WordCraft** | Word processing and documents | [GitHub](https://github.com/storytold/wordcraft) | [Website](https://getartcraft.com/apps/wordcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/soundcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.soundcraft.png" alt="" width="32" height="32"> | **SoundCraft** | Audio recording and editing | [GitHub](https://github.com/storytold/soundcraft) | [Website](https://getartcraft.com/apps/soundcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/deckcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.deckcraft.png" alt="" width="32" height="32"> | **DeckCraft** | Presentations and slide decks | [GitHub](https://github.com/storytold/deckcraft) | [Website](https://getartcraft.com/apps/deckcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/cadcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.cadcraft.png" alt="" width="32" height="32"> | **CADCraft** | Computer-aided design | [GitHub](https://github.com/storytold/cadcraft) | [Website](https://getartcraft.com/apps/cadcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/gridcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.gridcraft.png" alt="" width="32" height="32"> | **GridCraft** | Spreadsheets and data | [GitHub](https://github.com/storytold/gridcraft) | [Website](https://getartcraft.com/apps/gridcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/texturecraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.texturecraft.png" alt="" width="32" height="32"> | **TextureCraft** | 3D texture painting | [GitHub](https://github.com/storytold/texturecraft) | [Website](https://getartcraft.com/apps/texturecraft) |
+| <img src="https://raw.githubusercontent.com/storytold/craft-anything/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.craft-anything.png" alt="" width="32" height="32"> | **Craft Anything** | See how any software works, then build your own | [GitHub](https://github.com/storytold/craft-anything) | [Website](https://getartcraft.com/apps/craft-anything) |
+| <img src="https://raw.githubusercontent.com/tangency-labs/solidcraft/main/assets/icons/app/linux/exports/hicolor/64x64/apps/io.tangencylabs.solidcraft.png" alt="" width="32" height="32"> | **SolidCraft** | Parametric 3D CAD by Tangency Labs (community app) | [GitHub](https://github.com/tangency-labs/solidcraft) | |
 
 And [**ArtCraft**](https://getartcraft.com/) itself, our AI image and video studio for artists who want real control.
 

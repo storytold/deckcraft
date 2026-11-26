@@ -49,6 +49,13 @@ where
     T: Into<OsString> + Clone,
 {
     let mut io = Io::new(out, err);
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    // nightly-v1 is a desktop-only launcher protocol. Never let GUI profile arguments fall through
+    // to stable CLI/MCP directory discovery.
+    if is_launcher_protocol(&args) {
+        io.diag_text("nightly-v1 is supported only by the DeckCraft desktop launcher protocol\n");
+        return 2;
+    }
     let result = match Cli::parse_args(args) {
         Ok(cli) => commands::dispatch(cli.command, &mut io),
         // help and version go to stdout with status 0; usage errors to stderr with status 2
@@ -71,6 +78,15 @@ where
         code = 1;
     }
     code
+}
+
+/// Whether the arguments before any `--` carry the desktop launcher's profile flags.
+fn is_launcher_protocol(args: &[OsString]) -> bool {
+    args.iter()
+        .skip(1)
+        .map(|a| a.to_string_lossy())
+        .take_while(|a| a != "--")
+        .any(|a| a == "--launch-profile" || a == "--profile-root" || a.starts_with("--launch-profile=") || a.starts_with("--profile-root="))
 }
 
 /// `error: <message>` on stderr; a usage error also points at `--help`, as clap's own do.

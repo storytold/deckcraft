@@ -20,7 +20,7 @@ fn oversized_stdio_frame_is_drained_before_the_next_request() {
     let replies: Vec<Value> = std::str::from_utf8(&output).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     assert_eq!(replies.len(), 2);
     assert_eq!(replies[0]["error"]["code"], -32600);
-    assert!(replies[0]["error"]["message"].as_str().unwrap().contains("16 MiB"));
+    assert!(replies[0]["error"]["message"].as_str().unwrap().contains("too large"));
     assert_eq!(replies[1]["id"], 1);
     assert_eq!(replies[1]["result"]["serverInfo"]["name"], "deckcraft");
 }
@@ -60,6 +60,40 @@ fn handshake_and_tool_list() {
     // Garbage never panics.
     assert!(s.handle_line("not json").is_some());
     assert!(s.handle_line("{}").is_some());
+}
+
+/// #1151: `insert_chart` takes x, y, w and h like `insert_picture` and `insert_table`.
+#[test]
+fn insert_chart_takes_a_box() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let chart = json!({"type": "pie", "categories": ["A", "B"], "series": [{"name": "S", "values": [3, 5]}]});
+    let box_of = |s: &mut Server, id: u64| {
+        let sl = tool(s, "inspect_slide", json!({}));
+        let shape = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"].as_u64() == Some(id)).unwrap().clone();
+        assert_eq!(shape["kind"], "chart");
+        shape["box"].clone()
+    };
+    let mut args = chart.clone();
+    for (k, v) in [("x", 50), ("y", 60), ("w", 300), ("h", 200)] {
+        args[k] = json!(v);
+    }
+    let placed = tool(&mut s, "insert_chart", args)["id"].as_u64().unwrap();
+    assert_eq!(box_of(&mut s, placed), json!([50.0, 60.0, 300.0, 200.0]));
+    // without a full box the chart keeps its default place, as for pictures and tables
+    let plain = tool(&mut s, "insert_chart", chart.clone())["id"].as_u64().unwrap();
+    let default_box = box_of(&mut s, plain);
+    let mut partial = chart.clone();
+    partial["x"] = json!(50);
+    let partial_id = tool(&mut s, "insert_chart", partial)["id"].as_u64().unwrap();
+    assert_eq!(box_of(&mut s, partial_id), default_box);
+    // a hostile box is answered, not a panic
+    let mut odd = chart;
+    for (k, v) in [("x", json!(-1e300)), ("y", json!(1e300)), ("w", json!(-5)), ("h", json!(0))] {
+        odd[k] = v;
+    }
+    let r = call(&mut s, 11, "tools/call", json!({"name": "insert_chart", "arguments": odd}));
+    assert!(r["result"].is_object(), "{r}");
 }
 
 #[test]
@@ -269,4 +303,74 @@ fn export_tool_lists_gif_and_its_options() {
     let r = call(&mut s, 9, "tools/call", json!({"name": "export", "arguments": {"path": dir.join("bad.gif").to_string_lossy(), "width": 0}}));
     assert_eq!(r["result"]["isError"], true, "{r}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn stdio_initialize_negotiation_transcript() {
+    let mut lines: Vec<Value> = craft_mcp_server::SUPPORTED_VERSIONS
+        .iter()
+        .enumerate()
+        .map(|(i, version)| {
+            json!({
+                "jsonrpc": "2.0",
+                "id": i + 1,
+                "method": "initialize",
+                "params": {"protocolVersion": version, "capabilities": {}, "clientInfo": {"name": "parity-client", "version": "1.0"}},
+            })
+        })
+        .collect();
+    lines.push(json!({
+        "jsonrpc": "2.0",
+        "id": 99,
+        "method": "initialize",
+        "params": {"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "parity-client", "version": "1.0"}},
+    }));
+    lines.push(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+    lines.push(json!({"jsonrpc": "2.0", "id": 100, "method": "ping", "params": {}}));
+    let input: String = lines.iter().map(|v| v.to_string() + "\n").collect();
+
+    let mut s = Server::new(Box::new(Headless::new()));
+    let mut out = Vec::new();
+    s.serve(std::io::Cursor::new(input), &mut out).unwrap();
+    assert!(s.is_initialized());
+
+    let replies: Vec<Value> = std::str::from_utf8(&out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(replies.len(), craft_mcp_server::SUPPORTED_VERSIONS.len() + 2);
+    for (i, version) in craft_mcp_server::SUPPORTED_VERSIONS.iter().enumerate() {
+        assert_eq!(replies[i]["id"], i + 1);
+        assert_eq!(replies[i]["result"]["protocolVersion"], *version);
+        assert_eq!(replies[i]["result"]["serverInfo"]["name"], "deckcraft");
+    }
+    let fallback = &replies[craft_mcp_server::SUPPORTED_VERSIONS.len()];
+    assert_eq!(fallback["id"], 99);
+    assert_eq!(fallback["result"]["protocolVersion"], craft_mcp_server::PROTOCOL_VERSION);
+    let ping = &replies[craft_mcp_server::SUPPORTED_VERSIONS.len() + 1];
+    assert_eq!(ping["id"], 100);
+    assert_eq!(ping["result"], json!({}));
+}
+
+#[test]
+fn stdio_cancel_and_batch_transcript() {
+    let input = concat!(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}\n",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":1,\"reason\":\"client\"}}\n",
+        "[]\n",
+        "[{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":9}}]\n",
+        "[{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"},{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}]\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\",\"params\":{}}\n"
+    );
+    let mut s = Server::new(Box::new(Headless::new()));
+    let mut out = Vec::new();
+    s.serve(std::io::Cursor::new(input), &mut out).unwrap();
+    assert!(s.is_initialized());
+
+    let replies: Vec<Value> = std::str::from_utf8(&out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(replies.len(), 4, "{replies:?}");
+    assert_eq!(replies[0]["id"], 1);
+    assert_eq!(replies[0]["result"]["serverInfo"]["name"], "deckcraft");
+    assert_eq!(replies[1]["id"], Value::Null);
+    assert_eq!(replies[1]["error"]["code"], -32600);
+    assert_eq!(replies[2], json!([{"jsonrpc": "2.0", "id": 2, "result": {}}]));
+    assert_eq!(replies[3], json!({"jsonrpc": "2.0", "id": 3, "result": {}}));
 }

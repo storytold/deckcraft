@@ -7,38 +7,13 @@
 #![forbid(unsafe_code)]
 
 pub mod morph;
-pub mod preset;
 pub mod squircle;
-pub mod warp;
 
 pub use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as KurboShape, Size, Vec2};
+// Placement, units and preset and warp geometry are DrawingML's, shared in craft-libs
+// (`craft_drawingml`, craft-libs#778 and #792).
+pub use craft_drawingml::{EMU_PER_CM, EMU_PER_IN, EMU_PER_PT, Xfrm, emu_to_pt, group_child_affine, preset, pt_to_emu, warp};
 use serde::{Deserialize, Serialize};
-
-/// EMU per point.
-pub const EMU_PER_PT: f64 = 12_700.0;
-/// EMU per inch.
-pub const EMU_PER_IN: f64 = 914_400.0;
-/// EMU per centimetre.
-pub const EMU_PER_CM: f64 = 360_000.0;
-
-pub fn emu_to_pt(emu: i64) -> f64 {
-    emu as f64 / EMU_PER_PT
-}
-
-/// Points to EMU, rounded. Non-finite input becomes 0; huge values saturate.
-pub fn pt_to_emu(pt: f64) -> i64 {
-    if !pt.is_finite() {
-        return 0;
-    }
-    let v = (pt * EMU_PER_PT).round();
-    if v >= i64::MAX as f64 {
-        i64::MAX
-    } else if v <= i64::MIN as f64 {
-        i64::MIN
-    } else {
-        v as i64
-    }
-}
 
 /// Display units for measurements (inches on US English systems, centimetres elsewhere).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,7 +46,10 @@ impl Unit {
     /// `2.08"` style text for a length in points.
     pub fn format(self, pt: f64) -> String {
         let v = pt / self.points_per_unit();
-        let s = format!("{v:.2}");
+        let mut s = format!("{v:.2}");
+        if s.starts_with('-') && s[1..].bytes().all(|b| b == b'0' || b == b'.') {
+            s.remove(0);
+        }
         format!("{s}{}", self.suffix())
     }
     /// Parses `2.5`, `2.5"`, `2.5 in`, `6 cm`, `30 pt`, `40px`, `5mm` into points. A bare number uses `self`.
@@ -96,73 +74,6 @@ fn split_number(t: &str) -> Option<(f64, &str)> {
     let end = t.char_indices().find(|(_, c)| !(c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+')).map(|(i, _)| i).unwrap_or(t.len());
     let n: f64 = t.get(..end)?.parse().ok()?;
     Some((n, t.get(end..).unwrap_or("")))
-}
-
-/// A shape's placement on its slide (or in its group's child space): offset, extent, rotation
-/// (degrees clockwise) and flips. Rotation and flips are about the centre.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Xfrm {
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
-    #[serde(skip_serializing_if = "is_zero")]
-    pub rot: f64,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub flip_h: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub flip_v: bool,
-}
-
-fn is_zero(v: &f64) -> bool {
-    *v == 0.0
-}
-
-impl Xfrm {
-    pub fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
-        Xfrm { x, y, w, h, ..Default::default() }
-    }
-    pub fn rect(&self) -> Rect {
-        Rect::new(self.x, self.y, self.x + self.w, self.y + self.h)
-    }
-    pub fn center(&self) -> Point {
-        Point::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
-    }
-    /// Local shape space (0..w, 0..h) → parent space, applying flips and rotation about the centre.
-    pub fn affine(&self) -> Affine {
-        let c = Vec2::new(self.w / 2.0, self.h / 2.0);
-        let sx = if self.flip_h { -1.0 } else { 1.0 };
-        let sy = if self.flip_v { -1.0 } else { 1.0 };
-        Affine::translate(Vec2::new(self.x, self.y) + c)
-            * Affine::rotate(self.rot.to_radians())
-            * Affine::scale_non_uniform(sx, sy)
-            * Affine::translate(-c)
-    }
-    /// Axis-aligned bounds of the rotated box in parent space.
-    pub fn bounds(&self) -> Rect {
-        let a = self.affine();
-        let pts = [Point::new(0.0, 0.0), Point::new(self.w, 0.0), Point::new(self.w, self.h), Point::new(0.0, self.h)].map(|p| a * p);
-        let mut r = Rect::from_points(pts[0], pts[1]);
-        r = r.union_pt(pts[2]).union_pt(pts[3]);
-        r
-    }
-    /// True when no dimension is NaN/inf.
-    pub fn is_finite(&self) -> bool {
-        [self.x, self.y, self.w, self.h, self.rot].iter().all(|v| v.is_finite())
-    }
-    /// Rotation normalised to 0..360.
-    pub fn rot_norm(&self) -> f64 {
-        let r = self.rot % 360.0;
-        if r < 0.0 { r + 360.0 } else { r }
-    }
-}
-
-/// Maps a group's child coordinate space (`ch_off`, `ch_ext`) onto the group's own box.
-pub fn group_child_affine(group: &Xfrm, ch: Rect) -> Affine {
-    let sx = if ch.width().abs() > 1e-9 { group.w / ch.width() } else { 1.0 };
-    let sy = if ch.height().abs() > 1e-9 { group.h / ch.height() } else { 1.0 };
-    group.affine() * Affine::scale_non_uniform(sx, sy) * Affine::translate(-ch.origin().to_vec2())
 }
 
 /// Distance from `p` to the segment `a`–`b`.
@@ -223,6 +134,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn format_has_no_negative_zero() {
+        assert_eq!(Unit::Points.format(-0.001), "0.00 pt");
+        assert_eq!(Unit::Inches.format(-0.001), "0.00\"");
+        assert!(!Unit::Centimeters.format(-0.01).starts_with('-'));
+        assert_eq!(Unit::Points.format(-1.5), "-1.50 pt");
+    }
+
+    #[test]
     fn emu_roundtrip_is_exact() {
         for emu in [0i64, 1, 12_699, 12_700, 914_400, 12_192_000, 6_858_000, -5, 123_456_789] {
             assert_eq!(pt_to_emu(emu_to_pt(emu)), emu);
@@ -264,6 +183,14 @@ mod tests {
         let a = group_child_affine(&g, Rect::new(0.0, 0.0, 100.0, 50.0));
         let p = a * Point::new(100.0, 50.0);
         assert!((p.x - 300.0).abs() < 1e-9 && (p.y - 200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rot_norm_stays_below_360() {
+        for rot in [-1e-15, -1e-13, -f64::EPSILON, -0.0, 360.0, 720.0, -360.0] {
+            let n = Xfrm { rot, ..Default::default() }.rot_norm();
+            assert!((0.0..360.0).contains(&n), "rot {rot} -> {n}");
+        }
     }
 
     #[test]

@@ -76,16 +76,12 @@ fn tokens(l: &TextLayout, chars: bool) -> (Vec<Token>, Vec<(usize, usize)>) {
 
 /// For each token of `b`, the token of `a` with the same text, in reading order, each used once.
 fn matches(a: &[Token], b: &[Token]) -> Vec<Option<usize>> {
-    let mut used = vec![false; a.len()];
-    b.iter()
-        .map(|tb| {
-            let i = a.iter().enumerate().position(|(i, ta)| !used.get(i).copied().unwrap_or(true) && ta.key == tb.key)?;
-            if let Some(u) = used.get_mut(i) {
-                *u = true;
-            }
-            Some(i)
-        })
-        .collect()
+    // Unused tokens of `a` by text, in reading order, so each lookup is a pop rather than a scan.
+    let mut free: std::collections::HashMap<&str, std::collections::VecDeque<usize>> = std::collections::HashMap::new();
+    for (i, ta) in a.iter().enumerate() {
+        free.entry(ta.key.as_str()).or_default().push_back(i);
+    }
+    b.iter().map(|tb| free.get_mut(tb.key.as_str())?.pop_front()).collect()
 }
 
 fn layout(ctx: &Ctx, s: &Shape, x: Xfrm, fields: &dyn Fields) -> Option<TextLayout> {
@@ -227,4 +223,20 @@ pub(crate) fn draw(
 #[cfg(test)]
 pub(crate) fn token_keys(l: &TextLayout, chars: bool) -> Vec<String> {
     tokens(l, chars).0.into_iter().map(|t| t.key).collect()
+}
+
+#[cfg(test)]
+mod match_tests {
+    use super::*;
+
+    fn tok(k: &str) -> Token {
+        Token { key: k.into(), glyphs: Vec::new(), origin: Point::ZERO, run: 0 }
+    }
+
+    #[test]
+    fn each_source_token_is_used_once_in_reading_order() {
+        let a: Vec<Token> = ["a", "b", "a"].map(tok).into();
+        let b: Vec<Token> = ["a", "a", "a", "b", "c"].map(tok).into();
+        assert_eq!(matches(&a, &b), vec![Some(0), Some(2), None, Some(1), None]);
+    }
 }

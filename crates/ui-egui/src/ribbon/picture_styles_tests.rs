@@ -22,7 +22,7 @@ fn picture_format(width: f32) -> (Harness<'static, SlideApp>, ShapeId) {
     s.execute("edit.select", &json!({"ids": [id]})).unwrap();
     let mut app = SlideApp::new(s, Services::default());
     app.ui.tab = "Picture Format".into();
-    let mut h = Harness::builder().with_size(egui::vec2(width, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(width, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

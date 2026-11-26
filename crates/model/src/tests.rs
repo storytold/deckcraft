@@ -1,7 +1,7 @@
 use super::{
-    ColorRef, Fill, LayoutType, Paragraph, PhType, Placeholder, Presentation, Run, RunProps, SchemeSlot, Shape, ShapeId, ShapeKind, ShapeStyle,
-    Slide, Table, TextBody, Theme, Xfrm, defaults, ink_pressure_is_legacy, ink_sample_width, parent_of, resolve, sibling_list_mut, style, text,
-    theme, walk,
+    ColorRef, Fill, LayoutType, MediaClip, Paragraph, PhType, Placeholder, Presentation, Run, RunProps, SchemeSlot, Shape, ShapeId, ShapeKind,
+    ShapeStyle, Slide, Table, TextBody, Theme, Xfrm, defaults, ink_pressure_is_legacy, ink_sample_width, parent_of, resolve, sibling_list_mut, style,
+    text, theme, walk,
 };
 use crate::resolve::Ctx;
 
@@ -73,8 +73,13 @@ fn a_gradient_without_stops_takes_them_from_its_style() {
     let p = Presentation::default();
     let s = &p.slides[0];
     let ctx = Ctx::for_slide(&p, s).unwrap();
-    let own =
-        style::Gradient { tile: [0.0; 4], stops: vec![], shape: style::GradientShape::Linear { angle: 45.0, scaled: true }, rotate_with_shape: true };
+    let own = style::Gradient {
+        tile: [0.0; 4],
+        stops: vec![],
+        shape: style::GradientShape::Linear { angle: 45.0, scaled: true },
+        rotate_with_shape: true,
+        flip: None,
+    };
     let mut st = ShapeStyle::accent(SchemeSlot::Accent2);
     st.fill_ref.0 = 3;
     let sh = Shape { style: Some(st.clone()), fill: Some(Fill::Gradient(own.clone())), ..Default::default() };
@@ -321,4 +326,32 @@ fn only_web_and_mail_links_are_safe_to_open() {
     for url in refused {
         assert!(!safe_url(url), "{url}");
     }
+}
+
+#[test]
+fn colour_alpha_follows_alpha_mod_and_off() {
+    use deckcraft_color::{ColorTransform, Rgba};
+    let base = || ColorRef::rgb(Rgba::rgb(1, 2, 3));
+    let mod_half = base().with(ColorTransform::AlphaMod(50000));
+    assert!((mod_half.alpha() - 0.5).abs() < 1e-9, "{}", mod_half.alpha());
+    let off = base().with(ColorTransform::AlphaOff(-50000));
+    assert!((off.alpha() - 0.5).abs() < 1e-9, "{}", off.alpha());
+    let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
+    assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
+}
+
+#[test]
+fn hide_during_show_keeps_audio_hidden_while_playing() {
+    let clip = |video: bool, hide_while_not_playing: bool| MediaClip { video, hide_while_not_playing, ..Default::default() };
+    // Audio with the flag set stays hidden both idle and playing (#1659).
+    assert!(clip(false, true).hidden_during_show(false), "audio, flagged, idle");
+    assert!(clip(false, true).hidden_during_show(true), "audio, flagged, playing");
+    // Video with the flag set hides only while not playing.
+    assert!(clip(true, true).hidden_during_show(false), "video, flagged, idle");
+    assert!(!clip(true, true).hidden_during_show(true), "video, flagged, playing");
+    // Without the flag nothing is hidden.
+    assert!(!clip(false, false).hidden_during_show(false), "audio, unflagged, idle");
+    assert!(!clip(false, false).hidden_during_show(true), "audio, unflagged, playing");
+    assert!(!clip(true, false).hidden_during_show(false), "video, unflagged, idle");
+    assert!(!clip(true, false).hidden_during_show(true), "video, unflagged, playing");
 }
