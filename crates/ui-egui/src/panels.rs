@@ -193,7 +193,7 @@ mod tests {
         let mut app = SlideApp::new(s, Services::default());
         app.ui.pane = Some("format".into());
         app.ui.format_tab = "fill".into();
-        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+        let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());
                 app.ui(ui);
@@ -234,7 +234,7 @@ mod tests {
         let mut app = SlideApp::new(s, Services::default());
         app.ui.pane = Some("format".into());
         app.ui.format_tab = "fill".into();
-        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+        let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());
                 app.ui(ui);
@@ -345,13 +345,14 @@ mod tests {
             let mut app = SlideApp::new(s, Services::default());
             app.ui.pane = Some("format".into());
             app.ui.format_tab = "fill".into();
-            let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
-                |ui, app: &mut SlideApp| {
-                    app.logic(ui.ctx());
-                    app.ui(ui);
-                },
-                app,
-            );
+            let mut h =
+                Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+                    |ui, app: &mut SlideApp| {
+                        app.logic(ui.ctx());
+                        app.ui(ui);
+                    },
+                    app,
+                );
             h.run_steps(3);
             h
         };
@@ -399,7 +400,7 @@ mod tests {
         let mut app = SlideApp::new(s, Services::default());
         app.ui.pane = Some("format".into());
         app.ui.format_tab = "fill".into();
-        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+        let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());
                 app.ui(ui);
