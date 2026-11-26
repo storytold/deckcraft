@@ -9,7 +9,7 @@ use crate::{Services, SlideApp};
 fn harness() -> Harness<'static, SlideApp> {
     let mut app = SlideApp::new(Session::with_new(), Services::default());
     app.ui.tab = "Design".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1800.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

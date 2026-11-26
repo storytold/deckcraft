@@ -103,20 +103,19 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
         let field = ui.add_sized(vec2(110.0, 20.0), egui::Label::new("Line spacing"));
         let kind = d.get("lineKind", "multiple");
         let value = d.get("lineValue", "1");
-        let combo =
-            craft_ui::ComboBox::from_id_salt("paragraph_line").selected_text(line_preset_label(&kind, &value)).width(140.0).show_ui(ui, |ui| {
-                for (label, k, v) in [
-                    ("Single", "multiple", Some("1")),
-                    ("1.5 lines", "multiple", Some("1.5")),
-                    ("Double", "multiple", Some("2")),
-                    ("Multiple", "multiple", None),
-                    ("Exactly", "exactly", None),
-                ] {
-                    if ui.selectable_label(line_preset_label(&kind, &value) == label, label).clicked() {
-                        picked = Some((k, v));
-                    }
+        let combo = egui::ComboBox::from_id_salt("paragraph_line").selected_text(line_preset_label(&kind, &value)).width(140.0).show_ui(ui, |ui| {
+            for (label, k, v) in [
+                ("Single", "multiple", Some("1")),
+                ("1.5 lines", "multiple", Some("1.5")),
+                ("Double", "multiple", Some("2")),
+                ("Multiple", "multiple", None),
+                ("Exactly", "exactly", None),
+            ] {
+                if ui.selectable_label(line_preset_label(&kind, &value) == label, label).clicked() {
+                    picked = Some((k, v));
                 }
-            });
+            }
+        });
         let _ = combo.response.labelled_by(field.id);
         ui.add_space(8.0);
         let _ = labeled_text(ui, d, "At", "lineValue", 64.0);
