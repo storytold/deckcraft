@@ -14,17 +14,25 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod app_dirs;
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod audio;
+#[cfg(test)]
+mod build_channel;
+mod build_flavor;
 mod control_server;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
+mod launch_profile;
 mod logging;
+mod nightly_session;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+mod process_identity;
+mod profile_root;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
@@ -41,16 +49,27 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         apple_events::poll(&self.1, &mut self.0, ctx);
         self.0.logic(ctx);
+        self.0.close_path(ctx);
     }
-    /// Forward native raw input to the wrapped application once per pass.
+    /// Forward native raw input to the wrapped application once per frame, then hand the framework
+    /// runtime this frame's root values.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(ctx, raw);
+        self.0.before_input(ctx);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        deckcraft_ui_egui::framework::before_ui(ui.ctx(), &*frame);
         self.0.ui(ui);
     }
     fn on_exit(&mut self) {
+        // The one exit path macOS has: run the hook exactly once (the Nightly session record).
+        if let Some(hook) = self.0.services.at_exit.take() {
+            hook();
+        }
         save_prefs(&self.0);
+        // The window is closing for good: a ready update's helper starts now and installs it once
+        // the process has exited.
+        self.0.start_pending_update();
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -66,25 +85,11 @@ impl eframe::App for App {
     }
 }
 
-/// The per-user settings directory: `ui.json`, `prefs.json` and `logs/` live here.
-fn config_dir() -> Option<std::path::PathBuf> {
-    if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/DeckCraft"))
-    } else if cfg!(windows) {
-        std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("DeckCraft"))
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-            .map(|c| c.join("deckcraft"))
-    }
-}
-
 fn load_prefs(app: &mut SlideApp) {
     if std::env::var_os("DECKCRAFT_NO_PREFS").is_some() {
         return;
     }
-    let Some(dir) = config_dir() else { return };
+    let Some(dir) = app_dirs::config_dir() else { return };
     let (ui, prefs) = deckcraft_ui_egui::settings::load(&dir);
     if let Some(ui) = ui {
         app.ui = ui;
@@ -98,12 +103,18 @@ fn save_prefs(app: &SlideApp) {
     if std::env::var_os("DECKCRAFT_NO_PREFS").is_some() {
         return;
     }
-    if let Some(dir) = config_dir() {
+    if let Some(dir) = app_dirs::config_dir() {
         deckcraft_ui_egui::settings::save(&dir, &app.ui, &app.session.prefs);
     }
 }
 
-fn services() -> Services {
+/// The desktop services. `native_wayland`: the window is a Wayland client (not Xwayland).
+fn services(native_wayland: bool) -> Services {
+    // On native Wayland, egui-winit owns the clipboard through winit's data device, which carries
+    // text and PNG but no HTML. `pasteboard` (arboard, built for X11 only) would put a copy on the
+    // Xwayland selection instead and skip egui's Wayland claim, so Ctrl+V would read something
+    // else. There, text goes through egui and pictures arrive as `PasteImage` events.
+    let pasteboard = !native_wayland;
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
             let d = rfd::FileDialog::new();
@@ -116,9 +127,10 @@ fn services() -> Services {
                 "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
                 "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
                 _ => d
-                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
+                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx", "ppt", "pot", "pps"])
                     .add_filter("DeckCraft", &["deckcraft"])
                     .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
+                    .add_filter("PowerPoint 97-2003", &["ppt", "pot", "pps"])
                     .add_filter("Outline", &["txt", "md"]),
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())
@@ -126,9 +138,9 @@ fn services() -> Services {
         pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
-        clipboard_image: Some(Box::new(pasteboard::image_png)),
-        clipboard_html: Some(Box::new(pasteboard::html)),
-        clipboard_set_html: Some(Box::new(pasteboard::set_html)),
+        clipboard_image: pasteboard.then(|| Box::new(pasteboard::image_png) as Box<dyn FnMut() -> Option<Vec<u8>>>),
+        clipboard_html: pasteboard.then(|| Box::new(pasteboard::html) as Box<dyn FnMut() -> Option<String>>),
+        clipboard_set_html: pasteboard.then(|| Box::new(pasteboard::set_html) as Box<dyn FnMut(&str, &str) -> bool>),
         // Media is mixed and clocked by the output device; `DECKCRAFT_NO_AUDIO` plays silently.
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
@@ -137,7 +149,13 @@ fn services() -> Services {
     }
 }
 
-const APP_ID: &str = "ai.storyteller.deckcraft";
+/// Displays winit lists for `window`, counting an output Wayland lists twice once. `None` when it
+/// lists none: Presenter View then stays as it was.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn display_count(window: &winit::window::Window) -> Option<usize> {
+    let n = window.available_monitors().collect::<std::collections::BTreeSet<_>>().len();
+    (n > 0).then_some(n)
+}
 
 const USAGE: &str = "\
 Usage: deckcraft [--control PORT] [--sample] [--show] [FILE...]
@@ -165,6 +183,11 @@ fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>
     let mut args = args.into_iter();
     while let Some(a) = args.next() {
         match a.as_str() {
+            // The Nightly Launcher form: everything after the delimiter is a file.
+            "--" => {
+                files.extend(args.by_ref());
+                break;
+            }
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
             "--sample" => sample = true,
             "--show" => show = true,
@@ -179,40 +202,142 @@ fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>
 }
 
 fn app_icon() -> Option<egui::IconData> {
+    // The window icon follows the compiled channel, so a Nightly window is not the stable icon.
+    #[cfg(deckcraft_nightly_v1)]
+    let png: &[u8] = include_bytes!("../../../assets/app-icon/deckcraft-nightly.png");
+    #[cfg(not(deckcraft_nightly_v1))]
     let png: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png");
     eframe::icon_data::from_png_bytes(png).map_err(|e| log::warn!("app icon: {e}")).ok()
+}
+
+/// Select the immutable launch profile before any startup service or side effect.
+fn prepare_launch() -> Option<Vec<std::ffi::OsString>> {
+    // The trusted Launcher protocol is decided before logger/crash/update/font/prefs access.
+    let argv: Vec<_> = std::env::args_os().skip(1).collect();
+    // Plain `--version`, or the Launcher's `--launch-profile nightly-v1 --profile-root <dir>
+    // --version`: answered before root validation, process identity, IPC or any window.
+    if build_flavor::COMPILED == build_flavor::BuildFlavor::NightlyV1 && (build_flavor::version_query(&argv) || launch_profile::version_query(&argv))
+    {
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), "DeckCraft {}", build_flavor::version(build_flavor::COMPILED, deckcraft_ui_egui::flavor::version()));
+        return None;
+    }
+    let early = launch_profile::parse(argv)
+        .and_then(|launch| {
+            build_flavor::require_profile(build_flavor::COMPILED, &launch.profile)?;
+            initialize_nightly_process_identity().map_err(|error| error.to_string())?;
+            Ok(launch)
+        })
+        .and_then(|launch| {
+            launch_profile::prepare(launch, |root| {
+                launch_profile::validate_root(root, |key| std::env::var_os(key), std::env::current_exe().ok().as_deref())
+            })
+        })
+        .unwrap_or_else(|error| {
+            report_launch_profile_error(&error);
+            std::process::exit(2)
+        });
+    let identity = if early.profile.is_nightly() {
+        deckcraft_ui_egui::os_window::LaunchIdentity::NightlyV1
+    } else {
+        deckcraft_ui_egui::os_window::LaunchIdentity::Stable
+    };
+    if let Err(error) = launch_profile::install(early.profile).and_then(|()| deckcraft_ui_egui::os_window::select_identity(identity)) {
+        report_launch_profile_error(&error);
+        std::process::exit(2);
+    }
+
+    Some(early.args)
+}
+
+fn initialize_nightly_process_identity() -> Result<(), process_identity::IdentityError> {
+    process_identity::initialize(
+        build_flavor::COMPILED == build_flavor::BuildFlavor::NightlyV1,
+        deckcraft_ui_egui::os_window::id_for(deckcraft_ui_egui::os_window::LaunchIdentity::NightlyV1),
+    )
+}
+
+/// Whether a refusal may also open a native message box. Standard error always carries the reason;
+/// this only adds a box where one renders without the app's event loop. Never on macOS: rfd's alert
+/// there needs the AppKit run loop this start has not reached, so a refused nightly launch hung in
+/// an invisible modal instead of exiting (GridCraft Mac smoke, 2026-11-26).
+fn refusal_dialog(flavor: build_flavor::BuildFlavor, desktop_session: bool, macos: bool) -> bool {
+    build_flavor::needs_native_error(flavor, desktop_session) && !macos
+}
+
+fn report_launch_profile_error(error: &str) {
+    eprintln!("DeckCraft launch profile: {error}");
+    let desktop_session = cfg!(windows)
+        || cfg!(target_os = "macos")
+        || (cfg!(target_os = "linux") && ["DISPLAY", "WAYLAND_DISPLAY"].into_iter().any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty())));
+    if refusal_dialog(build_flavor::COMPILED, desktop_session, cfg!(target_os = "macos")) {
+        if let Err(error) = initialize_nightly_process_identity() {
+            eprintln!("DeckCraft launch profile: {error}");
+            return;
+        }
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        let _ = rfd::MessageDialog::new()
+            .set_title("DeckCraft Nightly")
+            .set_description(error)
+            .set_level(rfd::MessageLevel::Error)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }
 }
 
 /// Install logging, parse startup arguments and environment, launch the native app, and
 /// propagate an eframe startup failure.
 fn main() -> eframe::Result {
+    let Some(arguments) = prepare_launch() else { return Ok(()) };
+    let nightly = launch_profile::current().is_nightly();
+    // Nightly session health: the record names this window's owner and survives an abnormal end.
+    let (watch, session_unavailable) = nightly_session::Session::begin_with_health(
+        launch_profile::current().root(),
+        deckcraft_ui_egui::flavor::version(),
+        option_env!("DECKCRAFT_BUILD_SHA"),
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("DeckCraft Nightly session state: {error}");
+        (None, false)
+    });
+    let previous_unclean = watch.as_ref().is_some_and(nightly_session::Session::previous_unclean);
+    let session: nightly_session::Shared = std::sync::Arc::new(std::sync::Mutex::new(watch));
+    let notice_shown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let exit_session = session.clone();
+    let exit_notice = notice_shown.clone();
     // First, so every start-up record (and the engine's panic hook, installed with the first
     // Session) is captured; see `logging`.
     let logger = logging::install();
-    if let Some(done) = craft_update::self_update::finish(&deckcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+    // Nightly is managed by ArtCraft Launcher: no stable self-update helper runs in it.
+    if !nightly
+        && let Some(done) = craft_update::self_update::finish(&deckcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>())
+    {
         if let Err(e) = done {
             eprintln!("DeckCraft update helper failed: {e}");
             std::process::exit(1);
         }
         return Ok(());
     }
-    let (control_port, files, sample, show) =
-        match startup(std::env::var("DECKCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()), std::env::args().skip(1)) {
-            Startup::Help => {
-                print!("{USAGE}");
-                return Ok(());
-            }
-            Startup::Version => {
-                println!("deckcraft {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            Startup::Run { control_port, files, sample, show } => (control_port, files, sample, show),
-        };
-    log::info!("DeckCraft {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
+    let (control_port, files, sample, show) = match startup(
+        if nightly { None } else { std::env::var("DECKCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()) },
+        arguments.into_iter().map(|a| a.to_string_lossy().into_owned()),
+    ) {
+        Startup::Help => {
+            print!("{USAGE}");
+            return Ok(());
+        }
+        Startup::Version => {
+            println!("deckcraft {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Startup::Run { control_port, files, sample, show } => (control_port, files, sample, show),
+    };
+    log::info!("DeckCraft {} ({} {})", deckcraft_ui_egui::flavor::version(), std::env::consts::OS, std::env::consts::ARCH);
+
     // The log file lives under the settings directory; opened after the arguments, so `--help` and
     // `--version` leave no file behind. Records logged until now are written to it first.
     if let Some(logger) = logger {
-        match config_dir().map(|d| logger.attach_dir(&d.join(logging::LOG_DIR))) {
+        match app_dirs::config_dir().map(|d| logger.attach_dir(&d.join(logging::LOG_DIR))) {
             Some(Ok(path)) => log::info!("log file {}", path.display()),
             Some(Err(e)) => log::warn!("no log file: {e}"),
             None => {
@@ -226,7 +351,7 @@ fn main() -> eframe::Result {
     let window_controls = cfg!(not(any(target_os = "macos", target_os = "windows"))) && std::env::var_os("DECKCRAFT_SYSTEM_TITLEBAR").is_none();
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("DeckCraft")
+            .with_title(deckcraft_ui_egui::os_window::name_for(deckcraft_ui_egui::os_window::identity()))
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([900.0, 560.0])
             .with_drag_and_drop(true)
@@ -236,7 +361,7 @@ fn main() -> eframe::Result {
             .with_decorations(!window_controls),
         ..Default::default()
     };
-    options.viewport = options.viewport.with_app_id(APP_ID);
+    options.viewport = options.viewport.with_app_id(deckcraft_ui_egui::os_window::app_id());
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
     }
@@ -251,6 +376,13 @@ fn main() -> eframe::Result {
             false
         }
     };
+    // `Default` lets winit choose, and winit takes Wayland whenever `WAYLAND_DISPLAY` is set.
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    let x11 = false;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let native_wayland = !x11 && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|w| !w.is_empty());
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    let native_wayland = false;
     #[cfg(all(unix, not(target_os = "macos")))]
     if x11 {
         options.event_loop_builder = Some(Box::new(|b| {
@@ -267,22 +399,46 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    eframe::run_native(
-        "DeckCraft",
+    let creator_notice = notice_shown.clone();
+    let mut services = services(native_wayland);
+    // The Nightly session record is finished exactly once, on the clean exit path macOS has.
+    services.at_exit = Some(Box::new(move || {
+        nightly_session::finish_once(&exit_session, exit_notice.load(std::sync::atomic::Ordering::Relaxed));
+    }));
+    let result = eframe::run_native(
+        deckcraft_ui_egui::os_window::name_for(deckcraft_ui_egui::os_window::identity()),
         options,
         Box::new(move |cc| {
+            deckcraft_ui_egui::framework::install(&cc.egui_ctx, x11)?;
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
-            let mut app = SlideApp::new(Session::new(), services());
+            let mut app = SlideApp::new(Session::new(), services);
+            // Presenter View asks winit how many displays there are when a show starts.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            if let Some(window) = cc.winit_window().cloned() {
+                app.services.displays = Some(Box::new(move || display_count(&window)));
+            }
             load_prefs(&mut app);
-            app.enable_update_checks();
+            if !nightly {
+                // Nightly is managed by ArtCraft Launcher: no self-update prompt or stable feed.
+                app.enable_update_checks();
+            }
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
             if std::env::var_os("DECKCRAFT_NO_RECOVERY").is_none() {
-                app.session.recovery_dir = deckcraft_engine::recovery::default_dir();
+                app.session.recovery_dir = app_dirs::recovery_dir();
                 if let Ok(v) = app.session.execute("file.recovery.open", &serde_json::json!({}))
                     && let Some(n) = v.get("opened").and_then(|o| o.as_array()).map(Vec::len).filter(|n| *n > 0)
                 {
                     app.set_status(format!("Recovered {n} unsaved presentation{} from the last session", if n == 1 { "" } else { "s" }));
                 }
+            }
+            if let Some(dictionary) = app_dirs::user_dictionary() {
+                deckcraft_engine::spell::set_user_dictionary_path(dictionary);
+            }
+            if session_unavailable {
+                app.set_status("Another DeckCraft Nightly window owns this profile: its session health is unavailable here.");
+            } else if previous_unclean {
+                app.set_status("DeckCraft Nightly closed unexpectedly last time.");
+                creator_notice.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
             app.window_controls = window_controls;
@@ -306,7 +462,10 @@ fn main() -> eframe::Result {
                 apple_events.connect(&cc.egui_ctx),
             )))
         }),
-    )
+    );
+    // The exit hook normally finished it already; this covers a start that never created a window.
+    nightly_session::finish_once(&session, notice_shown.load(std::sync::atomic::Ordering::Relaxed));
+    result
 }
 
 #[cfg(test)]
@@ -340,6 +499,26 @@ mod tests {
         assert_eq!(stdout.contains("on_exit returned"), !cfg!(target_os = "macos"), "{stdout}");
     }
 
+    /// The egui 0.37 migration (#1350) left `clipboard` out of eframe's features. egui then
+    /// simulated a clipboard inside the app: nothing pasted from other apps, and Ctrl+C/Ctrl+V
+    /// lost text that went out as HTML. Keep the OS clipboard on.
+    #[test]
+    fn eframe_uses_the_os_clipboard() {
+        let manifest = include_str!("../Cargo.toml");
+        let eframe = manifest.lines().find(|l| l.starts_with("eframe = ")).unwrap_or_default();
+        assert!(eframe.contains("\"clipboard\""), "eframe must enable the OS clipboard: {eframe}");
+    }
+
+    /// On native Wayland, the X11-only pasteboard would bypass egui's Wayland clipboard; elsewhere
+    /// it carries HTML and pictures beside egui's text.
+    #[test]
+    fn the_pasteboard_stays_off_native_wayland() {
+        let s = services(true);
+        assert!(s.clipboard_html.is_none() && s.clipboard_set_html.is_none() && s.clipboard_image.is_none());
+        let s = services(false);
+        assert!(s.clipboard_html.is_some() && s.clipboard_set_html.is_some() && s.clipboard_image.is_some());
+    }
+
     #[test]
     fn help_exits_instead_of_opening_a_file() {
         assert!(matches!(startup(None, ["--help".to_string()]), Startup::Help));
@@ -354,6 +533,53 @@ mod tests {
             assert!(sample);
             assert!(!show);
         }
+    }
+
+    /// The delimiter is the Nightly Launcher's file list, never a file name of its own.
+    #[test]
+    fn the_delimiter_ends_the_flags_and_leaves_only_files() {
+        let launch = startup(None, ["--", "--control", "deck.pptx"].map(str::to_string));
+        assert!(matches!(launch, Startup::Run { control_port: None, .. }));
+        if let Startup::Run { files, .. } = launch {
+            assert_eq!(files, ["--control".to_string(), "deck.pptx".to_string()]);
+        }
+    }
+
+    /// The desktop crate's build script and the UI crate's read the same channel switch.
+    #[test]
+    fn both_crates_agree_on_the_compiled_channel() {
+        assert_eq!(build_flavor::COMPILED == build_flavor::BuildFlavor::NightlyV1, deckcraft_ui_egui::flavor::is_nightly());
+        assert_eq!(deckcraft_ui_egui::os_window::name_for(deckcraft_ui_egui::os_window::LaunchIdentity::NightlyV1), "DeckCraft Nightly");
+    }
+
+    /// The exit hook (the Nightly session record) runs once, on the one exit path macOS has.
+    /// The check runs in a child with `DECKCRAFT_NO_PREFS=1`: `on_exit` saves the preferences
+    /// otherwise, and this test never loads the ones already on the machine. Not on macOS
+    /// itself: there `on_exit` ends the process, which is the behaviour the test above checks.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn leaving_runs_the_exit_hook_once() {
+        if std::env::var_os("DECKCRAFT_TEST_EXIT_HOOK").is_some() {
+            let runs = std::rc::Rc::new(std::cell::Cell::new(0));
+            let counted = runs.clone();
+            let services = Services { at_exit: Some(Box::new(move || counted.set(counted.get() + 1))), ..Default::default() };
+            let mut app = App(SlideApp::new(Session::new(), services));
+            eframe::App::on_exit(&mut app);
+            assert_eq!(runs.get(), 1);
+            eframe::App::on_exit(&mut app);
+            assert_eq!(runs.get(), 1, "a second exit must not run the hook again");
+            println!("exit hook ran once");
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::leaving_runs_the_exit_hook_once", "--nocapture"])
+            .env("DECKCRAFT_TEST_EXIT_HOOK", "1")
+            .env("DECKCRAFT_NO_PREFS", "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{stdout}");
+        assert!(stdout.contains("exit hook ran once"), "the child didn't run the test: {stdout}");
     }
 
     #[test]
@@ -417,12 +643,16 @@ mod tests {
             .collect();
         win.sort();
 
-        let mime_ext = |m: &str| match m {
-            "application/x-deckcraft" => Some("deckcraft"),
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
-            "application/vnd.openxmlformats-officedocument.presentationml.template" => Some("potx"),
-            "application/vnd.openxmlformats-officedocument.presentationml.slideshow" => Some("ppsx"),
-            _ => None,
+        // One MIME type covers all three PowerPoint 97-2003 extensions.
+        let mime_exts = |m: &str| -> Option<&[&str]> {
+            Some(match m {
+                "application/x-deckcraft" => &["deckcraft"],
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation" => &["pptx"],
+                "application/vnd.openxmlformats-officedocument.presentationml.template" => &["potx"],
+                "application/vnd.openxmlformats-officedocument.presentationml.slideshow" => &["ppsx"],
+                "application/vnd.ms-powerpoint" => &["ppt", "pot", "pps"],
+                _ => return None,
+            })
         };
         let mut linux: Vec<String> = desktop
             .lines()
@@ -430,7 +660,8 @@ mod tests {
             .unwrap_or_default()
             .split(';')
             .filter(|m| !m.is_empty())
-            .map(|m| mime_ext(m).unwrap_or(m).to_string()) // an unknown MIME type shows up in the diff
+            // An unknown MIME type shows up in the diff.
+            .flat_map(|m| mime_exts(m).map_or_else(|| vec![m.to_string()], |e| e.iter().map(|x| x.to_string()).collect()))
             .collect();
         linux.sort();
 
@@ -459,5 +690,19 @@ mod tests {
         let script = include_str!("../../../packaging/windows/package.ps1");
         assert!(script.contains("ExtractIconEx"), "package.ps1 does not count the exe's icons");
         assert!(script.contains("has no embedded icon"), "package.ps1 does not reject an iconless exe");
+    }
+}
+
+#[cfg(test)]
+mod refusal_dialog_tests {
+    use super::refusal_dialog;
+    use crate::build_flavor::BuildFlavor;
+
+    #[test]
+    fn a_refusal_never_blocks_on_a_modal_before_the_event_loop_on_macos() {
+        assert!(refusal_dialog(BuildFlavor::NightlyV1, true, false), "a desktop refusal still shows the box where one renders");
+        assert!(!refusal_dialog(BuildFlavor::NightlyV1, true, true), "macOS has no run loop yet: the modal would hang");
+        assert!(!refusal_dialog(BuildFlavor::NightlyV1, false, false), "a headless session has no box");
+        assert!(!refusal_dialog(BuildFlavor::Stable, true, false), "only a nightly refusal explains itself in a box");
     }
 }

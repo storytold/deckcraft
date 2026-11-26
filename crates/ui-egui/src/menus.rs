@@ -128,14 +128,9 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
             r.request_focus();
             let q = query.to_lowercase();
             let items = palette_items(&app.session, &q);
-            let (down, up, enter, esc) = ui.input(|i| {
-                (
-                    i.key_pressed(egui::Key::ArrowDown),
-                    i.key_pressed(egui::Key::ArrowUp),
-                    i.key_pressed(egui::Key::Enter),
-                    i.key_pressed(egui::Key::Escape),
-                )
-            });
+            let (down, up, enter) =
+                ui.input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter)));
+            let esc = crate::framework::escape_pressed(ui.ctx());
             if down {
                 sel = (sel + 1).min(items.len().saturating_sub(1));
             }
@@ -248,7 +243,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("-", ""),
                 ("Section", "section.add"),
                 ("Text Box", "insert.textBox"),
-                ("WordArt", "insert.wordArt"),
+                ("Decorative Text", "insert.wordArt"),
                 ("Date and Time", "insert.dateTime"),
                 ("Slide Number", "insert.slideNumber"),
                 ("-", ""),

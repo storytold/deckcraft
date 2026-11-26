@@ -65,6 +65,18 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     };
     let now = ctx.input(|i| i.time);
     let Some(mut show) = app.show.take() else { return };
+    let whole = ctx.content_rect();
+    let rect = show.content_rect(app, &ctx, &doc, whole);
+    let has_chrome = rect != whole;
+    let mut content;
+    let ui = if has_chrome {
+        crate::ribbon::show_title_bar(ui, Rect::from_min_max(whole.min, pos2(whole.max.x, rect.min.y)));
+        content = ui.new_child(egui::UiBuilder::new().id_salt("windowed_show").max_rect(rect));
+        content.set_clip_rect(content.clip_rect().intersect(rect));
+        &mut content
+    } else {
+        ui
+    };
     if !viewport_visible(&ctx) {
         // A forced hidden paint (for example a pending screenshot) draws the current frame;
         // the show clocks are advanced by logic, not by this draw, so it must not advance them a
@@ -80,6 +92,10 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         && !show.reading
         && let Some(host) = app.services.presenter.as_mut()
     {
+        if show.remote_opened && show.presenter_grid && !host.is_open() {
+            // A grid left open in the closed popup would hold auto-advance for the rest of the show.
+            show.presenter_grid = false;
+        }
         if !show.remote_opened {
             show.remote_opened = true;
             if let Err(message) = host.open() {
@@ -94,10 +110,19 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     show.zoom_arm = false;
                 }
                 crate::presenter::Command::Key { name, command, shift, alt, ctrl } => {
-                    if let Some(key) = egui::Key::ALL.iter().copied().find(|key| key.name() == name) {
+                    if let Some(key) = egui::Key::from_name(&name) {
                         let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
-                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], false).0;
+                        // The popup is the Presenter View: G opens All slides there, not on the audience screen (#1866).
+                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], true).0;
                     }
+                }
+                crate::presenter::Command::Goto { slide } if show.presenter_grid && slide < doc.slides.len() => {
+                    show.presenter_grid = false;
+                    show.blank = None;
+                    show.zoom = None;
+                    show.zoom_arm = false;
+                    let action = show.state.goto(&doc, slide);
+                    out.keep &= show.apply(action, &doc, now);
                 }
                 _ => {}
             }
@@ -111,6 +136,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, &doc);
     let pointer = ctx.input(|i| i.pointer.interact_pos());
+    // The show reads raw clicks; egui's caption and drag widgets do not consume those.
+    let on_content = !has_chrome || pointer.is_some_and(|p| full.contains(p));
+    let (clicked, secondary) = (clicked && on_content, secondary && on_content);
     show.expire_goto(now);
     // The clock of the triggered animations runs before anything reacts to the pointer.
     show.tick_triggers(&doc, now);
@@ -143,6 +171,20 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 );
                 show.remote_next = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false)).map(|image| (n, image));
             }
+            if !show.presenter_grid {
+                show.remote_grid.clear();
+            } else if show.remote_grid.len() < grid_indices(doc.slides.len()).len() {
+                // A few thumbnails per update keep the audience window responsive on the web.
+                for i in grid_indices(doc.slides.len()).into_iter().skip(show.remote_grid.len()).take(4) {
+                    // At most 96 px on the long side: 48 thumbnails stay well under the popup's message limit.
+                    let (w, h) = (doc.slide_size.width.max(1.0), doc.slide_size.height.max(1.0));
+                    let scale = REMOTE_THUMB / w.max(h);
+                    let size = (((w * scale).round() as u32).max(1), ((h * scale).round() as u32).max(1));
+                    let image = deckcraft_render::render_slide(&doc, i, &RenderOpts { scale, size: Some(size), ..Default::default() });
+                    let preview = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false));
+                    show.remote_grid.push(preview.unwrap_or(crate::presenter::Preview { width: 1, height: 1, rgba: vec![0; 4] }));
+                }
+            }
             host.update(crate::presenter::Snapshot {
                 slide: show.state.slide,
                 total: doc.slides.len(),
@@ -152,10 +194,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 paused: show.timer.paused(),
                 notes_px: show.notes_px,
                 blank: show.blank_name().map(str::to_owned),
-                grid: show.grid,
+                grid: show.presenter_grid,
                 zoom_armed: show.zoom_arm,
-                current: show.remote_preview.clone(),
-                next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next).map(|(_, image)| image.clone()),
+                // The grid replaces both previews in the popup; leaving them out keeps one message small.
+                current: show.remote_preview.clone().filter(|_| !show.presenter_grid),
+                next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next && !show.presenter_grid).map(|(_, image)| image.clone()),
+                slides: show.presenter_grid.then(|| show.remote_grid.clone()),
             });
             show.remote_sent = now;
         }
@@ -163,6 +207,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     finish(app, show, &f, out.keep);
 }
+
+/// Longest side of an All slides thumbnail sent to the web presenter window (#1866).
+const REMOTE_THUMB: f64 = 96.0;
 
 fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
     if show.started {
@@ -337,7 +384,7 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
     let media = crate::media::slide_media(doc, idx);
     let hidden: Vec<ShapeId> = media
         .iter()
-        .filter(|(id, _, clip)| clip.hide_while_not_playing && !app.media.status(*id).is_some_and(|s| s.state != deckcraft_media::PlayState::Ended))
+        .filter(|(id, _, clip)| clip.hidden_during_show(app.media.status(*id).is_some_and(|s| s.state != deckcraft_media::PlayState::Ended)))
         .map(|m| m.0)
         .collect();
     let gifs = app.media.gifs(doc_uid, doc, idx, now, &app.session.gif_paused);

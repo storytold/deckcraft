@@ -1,0 +1,12 @@
+# Custom runner labels actionlint can't know about.
+self-hosted-runner:
+  labels:
+    - macos-release  # org larger runner (M2 Pro), used by release.yml
+
+# actionlint 1.7.12 predates GitHub's queue key, which the signer caller may use when it needs
+# serialization. Only this exact false positive is suppressed; Packaging lint's independent
+# source-contract job enforces the values.
+paths:
+  .github/workflows/nightly-sign.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'

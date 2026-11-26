@@ -2,9 +2,9 @@
 //! that put real text over a raster (PDF text layer, links) and for text extraction.
 
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::text::{Hyperlink, TextBody};
+use deckcraft_model::text::{Hyperlink, RunKind, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
-use deckcraft_text::{Opts, TextLayout};
+use deckcraft_text::{Fields, Opts, TextLayout};
 use kurbo::{Affine, Rect};
 
 use crate::{SlideFields, shape_geometry, table};
@@ -12,7 +12,10 @@ use crate::{SlideFields, shape_geometry, table};
 /// One shape's text as drawn on the slide.
 pub struct PlacedText {
     pub layout: TextLayout,
-    /// Shape-local → slide points (text rotation included, flips not: see [`crate::text_transform`]).
+    /// Text-local → slide points (text rotation included, flips not: see [`crate::text_transform`]).
+    /// Text-local space is the shape's own space, except inside a group whose child coordinates
+    /// scale the shape: there the text is set at the shape's size on the slide, as the renderer
+    /// draws it, so font sizes and insets stay in points.
     pub transform: Affine,
     pub body: TextBody,
 }
@@ -52,10 +55,16 @@ pub struct Placed {
 
 /// Text and links of slide `index` (master and layout graphics first, as rendered).
 pub fn place_slide(pres: &Presentation, index: usize) -> Placed {
+    place_slide_with(pres, index, &crate::RenderOpts::default())
+}
+
+/// [`place_slide`] with the render options the slide was drawn with, so date fields take the same
+/// date and time as the raster (`opts.now`).
+pub fn place_slide_with(pres: &Presentation, index: usize, opts: &crate::RenderOpts) -> Placed {
     let mut out = Placed::default();
     let Some(slide) = pres.slides.get(index) else { return out };
     let Some(rctx) = Ctx::for_slide(pres, slide) else { return out };
-    let fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), &crate::RenderOpts::default());
+    let fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts);
     let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);
     if show_master {
         let mctx = Ctx::for_master(pres, rctx.master);
@@ -143,20 +152,37 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
         ShapeKind::Chart(_) | ShapeKind::Ink { .. } => {}
         _ => {
             let Some(body) = s.text.as_ref().filter(|b| !b.is_empty()) else { return };
-            let tr = shape_geometry(s, x.w, x.h).text_rect;
-            place_text(out, rctx, fields, s.id, s, body, tr, m);
+            // Placed space is slide points, so `m` is also the shape's transform relative to them.
+            let (tw, th, tm) = text_space(m, m, depth, x.w, x.h);
+            let tr = shape_geometry(s, tw, th).text_rect;
+            place_text(out, rctx, fields, s.id, s, body, tr, tm);
         }
     }
 }
 
-/// Lay out `body` in text rect `tr` of shape `s` (shape-local → slide `m`) and record it and its hyperlinks.
+/// Lay out `body` in text rect `tr` of shape `s` (text-local → slide `m`) and record it and its hyperlinks.
 #[allow(clippy::too_many_arguments)]
 fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId, s: &Shape, body: &TextBody, tr: Rect, m: Affine) {
     let layout = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: None, no_shrink: false });
     let m = crate::text_transform(m, tr, layout.rotation);
+    // Field runs carry their saved text (`‹#›`); the layout drew their values, so the body that
+    // goes with it (character offsets, text layer) must hold the same values.
+    let mut placed = body.clone();
+    for (pi, para) in body.paragraphs.iter().enumerate() {
+        for (ri, run) in para.runs.iter().enumerate() {
+            let RunKind::Field { field } = &run.kind else { continue };
+            let lang = resolve::run(rctx, s, para, &run.props).lang;
+            if let Some(v) = fields.field_in(field, lang.as_deref())
+                && let Some(out_run) = placed.paragraphs.get_mut(pi).and_then(|p| p.runs.get_mut(ri))
+            {
+                out_run.text = v;
+                out_run.kind = RunKind::Text;
+            }
+        }
+    }
     // Text hyperlinks: one box per line segment of a linked run.
     for run in layout.runs.iter().filter(|r| r.link && !r.glyphs.is_empty()) {
-        let Some(link) = run_link(body, run.para, run.chars.0) else { continue };
+        let Some(link) = run_link(&placed, run.para, run.chars.0) else { continue };
         let Some(line) = layout.lines.iter().find(|l| l.para == run.para && l.start <= run.chars.0 && run.chars.0 <= l.end) else { continue };
         // The run's visual extent (right-to-left runs run from right to left).
         let first = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
@@ -164,7 +190,26 @@ fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId
         let r = Rect::new(x0, line.top, x1, line.bottom);
         out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true });
     }
-    out.texts.push(PlacedText { layout, transform: m, body: body.clone() });
+    out.texts.push(PlacedText { layout, transform: m, body: placed });
+}
+
+/// The size and transform a shape's text is set in. `rel` is the shape's transform relative to
+/// slide points and `m` the one its text is drawn under; `depth` is its group nesting. Inside a
+/// group whose child coordinates scale the shape, the text is set at the shape's size in slide
+/// points under `m` with that scale taken out, so insets and font sizes stay in points; otherwise
+/// in `w` × `h` under `m` itself.
+pub(crate) fn text_space(rel: Affine, m: Affine, depth: usize, w: f64, h: f64) -> (f64, f64, Affine) {
+    let c = rel.as_coeffs();
+    let (sx, sy) = (c[0].hypot(c[1]), c[2].hypot(c[3]));
+    let ok = |k: f64| k.is_finite() && k > 1e-9;
+    if depth == 0 || !ok(sx) || !ok(sy) || ((sx - 1.0).abs() < 1e-9 && (sy - 1.0).abs() < 1e-9) {
+        return (w, h, m);
+    }
+    let (tw, th) = (w * sx, h * sy);
+    if !tw.is_finite() || !th.is_finite() {
+        return (w, h, m);
+    }
+    (tw, th, m * Affine::scale_non_uniform(1.0 / sx, 1.0 / sy))
 }
 
 /// The hyperlink of the model run containing character `at` of paragraph `para`.

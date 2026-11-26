@@ -101,7 +101,7 @@ fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     let label = ui.label("Slides sized for:");
     let preset = d.get("preset", "");
-    let combo = craft_ui::ComboBox::from_id_salt("sizes").selected_text(if preset.is_empty() { "Custom" } else { &preset }).show_ui(ui, |ui| {
+    let combo = egui::ComboBox::from_id_salt("sizes").selected_text(if preset.is_empty() { "Custom" } else { &preset }).show_ui(ui, |ui| {
         for (label, w, h) in deckcraft_model::defaults::SLIDE_SIZES {
             if ui.selectable_label(preset == *label, *label).clicked() {
                 d.fields.insert("preset".into(), label.to_string());
@@ -149,7 +149,7 @@ fn dlg_header_footer(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.add_enabled_ui(date && automatic, |ui| {
         ui.horizontal(|ui| {
             ui.label("  Format:");
-            craft_ui::ComboBox::from_id_salt("hf-date-format").selected_text(label).width(200.0).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("hf-date-format").selected_text(label).width(200.0).show_ui(ui, |ui| {
                 for (kind, sample) in &rows {
                     if ui.selectable_label(fmt == *kind, sample).clicked() {
                         d.fields.insert("dateFormat".into(), (*kind).to_string());
@@ -264,7 +264,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
     let field = ui.label("Slides");
     let label = if chosen.is_empty() { "All slides".to_string() } else { chosen.clone() };
-    let combo = craft_ui::ComboBox::from_id_salt("setup_custom").selected_text(label).show_ui(ui, |ui| {
+    let combo = egui::ComboBox::from_id_salt("setup_custom").selected_text(label).show_ui(ui, |ui| {
         if ui.selectable_label(chosen.is_empty(), "All slides").clicked() {
             d.fields.insert("custom".into(), String::new());
         }
@@ -339,8 +339,9 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 app.save();
-                // In the browser a save is a download: the presentation stays "unsaved".
-                let web = app.services.pick_save.is_none() && app.services.download.is_some();
+                // In the browser a save is a download: the presentation stays "unsaved". A page
+                // that keeps the files saves it for real, so a failed save keeps it open.
+                let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
                 if web || app.session.active().is_some_and(|d| !d.is_dirty()) {
                     run(app, "file.close", json!({}));
                 }
@@ -427,7 +428,7 @@ fn dlg_bullets(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let color = d.get("color", "");
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new("Color:"));
-        let combo = craft_ui::ComboBox::from_id_salt("bullet-color")
+        let combo = egui::ComboBox::from_id_salt("bullet-color")
             .selected_text(colors.iter().find(|c| c.0 == color).map_or("Automatic", |c| c.1))
             .show_ui(ui, |ui| {
                 for (k, l) in colors {
@@ -534,7 +535,7 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ];
         let shown = targets.iter().find(|t| t.0 == kind).map_or("Next Slide", |t| t.1);
         ui.add_enabled_ui(hyperlink, |ui| {
-            let combo = craft_ui::ComboBox::from_id_salt("action-target").selected_text(shown).show_ui(ui, |ui| {
+            let combo = egui::ComboBox::from_id_salt("action-target").selected_text(shown).show_ui(ui, |ui| {
                 for (k, l) in targets {
                     if ui.selectable_label(kind == k, l).clicked() {
                         d.fields.insert("kind".into(), k.into());
@@ -706,6 +707,9 @@ fn dlg_rename_section(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Export…: the format (PDF, PNG or JPEG of the current slide or of every slide, PowerPoint,
+/// outline, animated GIF, RTF) and its options; Export hands them to [`SlideApp::export_as`].
+/// Returns true when the dialog should close.
 fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.label("Export the presentation as:");
     let fmt = d.get("fmt", "pdf");
@@ -714,6 +718,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ("PNG images (current slide)", "png"),
         ("PNG images (all slides)", "pngAll"),
         ("JPEG image (current slide)", "jpeg"),
+        ("JPEG images (all slides)", "jpegAll"),
         ("PowerPoint Presentation (.pptx)", "pptx"),
         ("Outline (.txt)", "outline"),
         ("Animated GIF (.gif)", "gif"),
@@ -728,7 +733,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             let field = ui.label("Print layout:");
-            let combo = craft_ui::ComboBox::from_id_salt("pdf_layout")
+            let combo = egui::ComboBox::from_id_salt("pdf_layout")
                 .selected_text(match pdf_layout.as_str() {
                     "notes" => "Notes Pages",
                     "h1" => "Handouts (1 slide per page)",
@@ -813,7 +818,7 @@ fn dlg_replace_fonts(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut to = d.get("to", "");
     egui::Grid::new("replace_fonts").num_columns(2).spacing(vec2(10.0, 8.0)).show(ui, |ui| {
         let field = ui.label("Replace:");
-        let combo = craft_ui::ComboBox::from_id_salt("rf_from").width(240.0).selected_text(from.clone()).show_ui(ui, |ui| {
+        let combo = egui::ComboBox::from_id_salt("rf_from").width(240.0).selected_text(from.clone()).show_ui(ui, |ui| {
             for f in &used {
                 ui.selectable_value(&mut from, f.clone(), f);
             }
@@ -1259,7 +1264,7 @@ fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let mut v = d.get("text", "Plan\nBuild\nLaunch");
-    ui.add(egui::TextEdit::multiline(&mut v).hint_text("SmartArt items").desired_rows(5).desired_width(320.0));
+    ui.add(egui::TextEdit::multiline(&mut v).hint_text("Diagram items").desired_rows(5).desired_width(320.0));
     d.fields.insert("text".into(), v.clone());
     let (ok, cancel) = buttons(ui, "Insert");
     if ok {
@@ -1350,8 +1355,14 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     // on release, and at once from the keyboard.
     let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
     let mut scale = pending.unwrap_or(app.ui.ui_scale);
-    let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
-    // No visible label here (the row is laid out to fit); the accessible name only.
+    // Labelled like the Measurement units row below it. The egui 0.37 migration (#1350) dropped
+    // the slider's own text and kept only its accessible name, which left a bare "1.00".
+    let r = ui
+        .horizontal(|ui| {
+            ui.label("Interface size:");
+            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75))
+        })
+        .inner;
     let enabled = r.enabled();
     r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
     if r.is_pointer_button_down_on() {

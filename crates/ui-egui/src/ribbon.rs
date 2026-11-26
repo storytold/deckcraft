@@ -81,7 +81,6 @@ fn run(app: &mut SlideApp, id: &str, p: Value) {
     let _ = app.run(id, p);
 }
 
-/// The window's title row: traffic-light space, quick access, centred title, actions.
 /// Width of one window-control button on the title bar.
 pub const CONTROL_W: f32 = 46.0;
 /// How far in from a frameless window's edge the pointer resizes it.
@@ -91,26 +90,74 @@ const RESIZE_CORNER: f32 = 14.0;
 
 /// The window manager keeps the release after a move or resize, so egui would wait for it and
 /// drop the next press (emilk/egui#7959).
-pub(crate) fn handed_to_os(ctx: &egui::Context) {
+fn handed_to_os(ctx: &egui::Context) {
     ctx.stop_dragging();
     ctx.input_mut(|i| i.pointer = Default::default());
+}
+
+pub(crate) fn custom_frame_visible(app: &SlideApp, ctx: &egui::Context) -> bool {
+    app.window_controls && !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false))
+}
+
+fn caption_rect(screen: Rect) -> Rect {
+    Rect::from_min_size(pos2(screen.max.x - 3.0 * CONTROL_W, screen.min.y), vec2(3.0 * CONTROL_W, TITLE_H))
+}
+
+fn window_drag(ui: &mut Ui, mut rect: Rect, frameless: bool) {
+    let ctx = ui.ctx();
+    let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+    let screen = ctx.content_rect();
+    if frameless {
+        rect.max.x = rect.max.x.min(caption_rect(screen).min.x);
+        if !maximized {
+            // Leave the corners and edge available to resize, even within egui's hit radius.
+            rect.min.x = rect.min.x.max(screen.min.x + RESIZE_BAND);
+            rect.min.y = rect.min.y.max(screen.min.y + RESIZE_BAND);
+        }
+    }
+    let drag = ui.interact(rect, ui.scope_id().with("titledrag"), Sense::click_and_drag());
+    drag.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Window, true, "Window title bar"));
+    let from_resize = frameless && !maximized && ctx.input(|i| i.pointer.press_origin()).is_some_and(|p| resize_hit(screen, p).is_some());
+    if drag.drag_started() && !from_resize {
+        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        if frameless {
+            handed_to_os(ctx);
+        }
+    }
+    if drag.double_clicked() && drag.interact_pointer_pos().is_some_and(|p| rect.contains(p)) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    }
+}
+
+/// Leave actual space above the presentation for window actions, rather than overlaying a slide.
+pub(crate) fn show_title_bar(ui: &mut Ui, rect: Rect) {
+    let ctx = ui.ctx();
+    ctx.layer_painter(ui.layer_id()).rect_filled(rect, 0.0, Tokens::get(ctx).chrome);
+    let mut drag_rect = rect;
+    drag_rect.max.x = drag_rect.max.x.min(caption_rect(ctx.content_rect()).min.x);
+    // Show overlays can register their own drag zones on the middle layer. Neither those
+    // zones nor the slide's raw pointer input owns this foreground strip.
+    egui::Area::new(egui::Id::unique("dc_show_title_drag")).order(egui::Order::Foreground).fixed_pos(drag_rect.min).constrain(false).show(
+        ctx,
+        |ui| {
+            ui.set_min_size(drag_rect.size());
+            window_drag(ui, drag_rect, true);
+        },
+    );
 }
 
 /// A frameless window (`SlideApp::window_controls`): minimize, maximize/restore and close at the
 /// top right, resizing from the edges and corners, and a hairline border. Drawn above everything,
 /// so the controls stay reachable whatever covers the title bar.
 pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
-    if !app.window_controls {
+    if !custom_frame_visible(app, ctx) {
         return;
     }
-    let (maximized, fullscreen) = ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false)));
-    if fullscreen {
-        return;
-    }
+    let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
     let t = Tokens::get(ctx);
     let screen = ctx.content_rect();
-    let controls = egui::Rect::from_min_size(egui::pos2(screen.max.x - 3.0 * CONTROL_W, screen.min.y), egui::vec2(3.0 * CONTROL_W, TITLE_H));
-    egui::Area::new(egui::Id::new("dc_window_controls")).order(egui::Order::Foreground).fixed_pos(controls.min).show(ctx, |ui| {
+    let controls = caption_rect(screen);
+    egui::Area::new(egui::Id::unique("dc_window_controls")).order(egui::Order::Foreground).fixed_pos(controls.min).constrain(false).show(ctx, |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
         ui.horizontal(|ui| {
             for kind in ["minimize", "maximize", "close"] {
@@ -152,6 +199,7 @@ pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
                         "Close"
                     }
                 };
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
                 if resp.on_hover_text(tip).clicked() {
                     ctx.send_viewport_cmd(match kind {
                         "minimize" => egui::ViewportCommand::Minimized(true),
@@ -163,18 +211,31 @@ pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
             }
         });
     });
+    let pointer = ctx.input(|i| i.pointer.latest_pos());
+    if app.show.is_some() && pointer.is_some_and(|p| p.y < screen.min.y + TITLE_H) {
+        ctx.set_cursor_icon(egui::CursorIcon::Default);
+    }
     if maximized {
         return;
     }
-    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("dc_window_border"))).rect_stroke(
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("dc_window_border"))).rect_stroke(
         screen,
         0.0,
         egui::Stroke::new(1.0, t.border),
         egui::StrokeKind::Inside,
     );
-    let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else { return };
-    if !screen.contains(pos) {
-        return;
+    if let Some((dir, icon)) = pointer.and_then(|p| resize_hit(screen, p)) {
+        ctx.set_cursor_icon(icon);
+        if ctx.input(|i| i.pointer.primary_pressed()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+            handed_to_os(ctx);
+        }
+    }
+}
+
+fn resize_hit(screen: Rect, pos: egui::Pos2) -> Option<(egui::ResizeDirection, egui::CursorIcon)> {
+    if !screen.contains(pos) || caption_rect(screen).contains(pos) {
+        return None;
     }
     let near = |d: f32, band: f32| d < band;
     let (dl, dr, dt, db) = (pos.x - screen.min.x, screen.max.x - pos.x, pos.y - screen.min.y, screen.max.y - pos.y);
@@ -182,7 +243,7 @@ pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
     // Corners reach a little along each edge, so they're easy to hit.
     let (cw, ce, cn, cs) = (near(dl, RESIZE_CORNER), near(dr, RESIZE_CORNER), near(dt, RESIZE_CORNER), near(db, RESIZE_CORNER));
     use egui::{CursorIcon, ResizeDirection};
-    let hit = if (n && cw) || (w && cn) {
+    if (n && cw) || (w && cn) {
         Some((ResizeDirection::NorthWest, CursorIcon::ResizeNorthWest))
     } else if (n && ce) || (e && cn) {
         Some((ResizeDirection::NorthEast, CursorIcon::ResizeNorthEast))
@@ -200,13 +261,6 @@ pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
         Some((ResizeDirection::East, CursorIcon::ResizeEast))
     } else {
         None
-    };
-    if let Some((dir, icon)) = hit {
-        ctx.set_cursor_icon(icon);
-        if !controls.contains(pos) && ctx.input(|i| i.pointer.primary_pressed()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
-            handed_to_os(ctx);
-        }
     }
 }
 
@@ -235,7 +289,7 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
         v.push("Layout");
     }
     if deckcraft_engine::cmd::smartart::selected(st).is_some() {
-        v.push("SmartArt Design");
+        v.push(DIAGRAM_TAB_ID);
     }
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Chart(_))) {
         v.push("Chart Design");
@@ -244,6 +298,13 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
         v.push("Playback");
     }
     v
+}
+
+// This is an existing saved/control-channel key, not the displayed label.
+const DIAGRAM_TAB_ID: &str = "SmartArt Design";
+
+fn tab_label(id: &str) -> &str {
+    if id == DIAGRAM_TAB_ID { "Diagram Design" } else { id }
 }
 
 const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "Animations", "Slide Show", "Record", "Review", "View"];
@@ -278,18 +339,19 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
+            let label = tab_label(name);
             let font = theme::font(13.0);
-            let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.scope_id().with(("tab", name)), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
             let active = app.ui.tab == name;
             if resp.hovered() && !active {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
             }
             let col = if contextual { t.contextual } else { t.text };
             let f = if active { theme::bold(13.0) } else { font };
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, name, f, col);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, label, f, col);
             if active {
                 let uw = (w - 20.0).max(16.0);
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)), CornerRadius::same(1), t.accent);
@@ -356,7 +418,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                         "Table Design" => table_design(app, ui),
                         "Layout" => table_layout(app, ui),
                         "Chart Design" => chart_design(app, ui),
-                        "SmartArt Design" => smartart_design(app, ui),
+                        DIAGRAM_TAB_ID => smartart_design(app, ui),
                         "Playback" => playback(app, ui),
                         "Slide Master" => slide_master(app, ui),
                         "Handout Master" => handout_master(app, ui),
@@ -591,3 +653,13 @@ mod inktoshape_tests;
 
 #[cfg(test)]
 mod picture_styles_tests;
+
+#[cfg(test)]
+mod feature_name_tests {
+    #[test]
+    fn diagram_tab_keeps_its_saved_identity() {
+        assert_eq!(super::DIAGRAM_TAB_ID, "SmartArt Design");
+        assert_eq!(super::tab_label(super::DIAGRAM_TAB_ID), "Diagram Design");
+        assert_eq!(super::tab_label("Home"), "Home");
+    }
+}

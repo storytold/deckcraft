@@ -1,4 +1,4 @@
-use super::{Align2, Icon, Rect, Sense, SlideApp, Tokens, Ui, icon_toggle, json, pos2, theme, vec2};
+use super::{Align2, Icon, Rect, SlideApp, Tokens, Ui, icon_toggle, json, pos2, theme, vec2};
 
 pub const TITLE_H: f32 = 38.0;
 
@@ -34,18 +34,7 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
     let (height, left, control_h) = title_geometry(app.integrated_titlebar);
     egui::Panel::top("title_bar").exact_size(height).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
-        // Dragging the empty title bar moves the window.
-        let drag = ui.interact(rect, ui.scope_id().with("titledrag"), Sense::click_and_drag());
-        // The drag surface is not a button: a full-width Button would be announced as one.
-        drag.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Window, true, "Window title bar"));
-        if drag.drag_started() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-            super::handed_to_os(ui.ctx());
-        }
-        if drag.double_clicked() {
-            let max = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-        }
+        super::window_drag(ui, rect, app.window_controls);
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_max(pos2(rect.min.x + left, rect.min.y), pos2(rect.min.x + 420.0, rect.max.y)))
