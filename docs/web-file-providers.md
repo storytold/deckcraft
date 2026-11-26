@@ -17,7 +17,8 @@ Only application logic decodes and admits an opened presentation. Account/sessio
 document and resource identities must remain correlated; stale or duplicate replies are rejected.
 
 Save and Save As emit `saveDialog`; respond with
-`resolveSaveDialog(requestId, provider|device|cancel, filename)`. The provider destination captures
+`resolveSaveDialog(requestId, provider|device|cancel, filename)`. The filename must include a supported
+presentation extension, such as `.deckcraft` or `.pptx` (case-insensitive). The provider destination captures
 the native deck or PPTX bytes from that document and revision, then emits `save`. Delivery is
 not persistence. Only a durable host write permits `saveResult(requestId, saved, resourceId)`.
 The [provider protocol](../packaging/web/file-providers.md) defines the `save` event payload.
@@ -26,7 +27,10 @@ state even if it has no provider binding. A device copy also keeps any existing 
 failed or cancelled save or a device copy leaves the presentation open after Save-and-Close.
 Later edits remain dirty after an older captured revision is acknowledged. A durable write
 invalidates stale aliases even if its originating tab has closed. Opening a damaged presentation
-can recover a working copy with its own save destination.
+can recover a working copy with its own save destination. A device download reports only that the
+download was requested, never that the browser saved a copy. Only one provider Save-and-Close
+request can be deferred at a time; refusing another close preserves the first request. An edited
+notes draft associated with provider storage also keeps the window's close confirmation active.
 
 ## Recoverable delivery failures
 

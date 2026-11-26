@@ -97,7 +97,7 @@ impl SlideApp {
             if self.provider_quit_pending() {
                 return CloseDecision::Hold;
             }
-            if !self.session.documents().iter().any(|d| d.is_dirty()) {
+            if !self.session.documents().iter().any(|d| d.is_dirty() || self.pending_provider_notes(d.uid)) {
                 return CloseDecision::Close;
             }
             self.show = None;

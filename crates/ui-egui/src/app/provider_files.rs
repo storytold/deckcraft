@@ -55,7 +55,7 @@ impl SlideApp {
         self.provider_close.as_ref().is_some_and(|close| close.quit_remaining.is_some())
     }
 
-    fn pending_provider_notes(&self, document: u64) -> bool {
+    pub(crate) fn pending_provider_notes(&self, document: u64) -> bool {
         self.notes_buf.0 == document
             && self.notes_buf.2.edited
             && self.services.file_providers.as_ref().is_some_and(|host| host.enabled() || host.bound(document) || host.pending_for(document))
@@ -78,6 +78,10 @@ impl SlideApp {
             let Some(index) = self.provider_document(document) else { continue };
             if !self.session.documents()[index].is_dirty() && !self.pending_provider_notes(document) {
                 continue;
+            }
+            if self.show.is_some() {
+                self.notify("End the slide show before starting Save All.");
+                return SaveAllOutcome::Incomplete;
             }
             // A resumed Save All can also leave another presentation's edited notes.
             if let Some(active) = self.session.active().map(|doc| doc.uid)
@@ -124,8 +128,11 @@ impl SlideApp {
             return;
         }
         if let Some(host) = self.provider_save_host() {
+            if self.provider_close.is_some() {
+                self.notify("Another presentation is already waiting to close.");
+                return;
+            }
             let Some(document) = self.session.active().map(|doc| doc.uid) else { return };
-            self.provider_close = None;
             if !host.enabled() {
                 self.notify("Provider storage is paused. Resume it before saving this presentation.");
                 return;
@@ -292,7 +299,7 @@ impl SlideApp {
         }
         let encoded = self.provider_document(doc).ok_or_else(|| "The presentation was closed before saving".to_string()).and_then(|index| {
             let state = &self.session.documents()[index];
-            let format = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+            let format = std::path::Path::new(&name).extension().and_then(|extension| extension.to_str()).unwrap_or("").to_ascii_lowercase();
             if !matches!(format.as_str(), "deckcraft" | "slidecraft" | "pptx" | "potx" | "ppsx") {
                 return Err("Save requires a presentation package. Use Export for pictures, PDF or text copies.".into());
             }
@@ -321,7 +328,7 @@ impl SlideApp {
                         // Acceptance can precede a cancelled picker or a failed browser write.
                         // Device copies never acknowledge a durable document checkpoint.
                         host.finish_device(&request);
-                        self.set_status(format!("Downloaded {name}"));
+                        self.set_status(format!("Download requested for {name}"));
                     }
                     Err(error) => {
                         host.failed(&request, &error);
@@ -512,6 +519,113 @@ mod tests {
         acknowledge_quit_save(&mut app, &host, request, "second");
         assert!(app.quit_confirmed);
         assert!(app.session.documents().iter().all(|doc| !doc.is_dirty()));
+    }
+
+    #[test]
+    fn save_all_cannot_switch_the_running_audience_presentation() {
+        let (mut app, host) = app();
+        let (_, second) = dirty_decks(&mut app);
+        app.start_show(0, false);
+        let show = app.show.as_ref().unwrap().instance;
+        let ctx = egui::Context::default();
+        let (request, _) = crate::control::ControlRequest::new("app.quit", json!({"save": true}));
+        let crate::control::Outcome::Done(reply) = crate::control::handle(&mut app, &ctx, &request) else {
+            panic!("app.quit must return without changing the running show");
+        };
+        assert_eq!(reply["ok"], false);
+        assert_eq!(app.session.active().unwrap().uid, second);
+        assert_eq!(app.show.as_ref().unwrap().instance, show);
+        assert!(!app.quit_confirmed && app.provider_close.is_none() && !host.busy());
+        assert!(host.take_events().is_empty());
+    }
+
+    #[test]
+    fn refusing_another_provider_close_preserves_the_first_acknowledgement() {
+        for second_pending in [false, true] {
+            let (mut app, host) = app();
+            let first = app.session.active().unwrap().uid;
+            let request = close_choice(&mut app, &host);
+            host.resolve_dialog(&request, "provider", "First.deckcraft").unwrap();
+            app.provider_tick();
+            host.take_events();
+            let (_, second) = dirty_decks(&mut app);
+            if second_pending {
+                let _ = save(&mut app, &host);
+            }
+            app.save_and_close_presentation();
+            assert_eq!(app.provider_close.as_ref().unwrap().request, request);
+            assert_eq!(app.provider_close.as_ref().unwrap().document, first);
+            assert!(host.take_events().is_empty(), "refusing the second close must not start a replacement save");
+            host.result(request, "saved".into(), "first".into()).unwrap();
+            app.provider_tick();
+            settle_close(&mut app);
+            assert_eq!(app.session.documents().len(), 1);
+            assert_eq!(app.session.active().unwrap().uid, second);
+            assert!(app.session.active().unwrap().is_dirty());
+            assert_eq!(host.pending_for(second), second_pending);
+        }
+    }
+
+    #[test]
+    fn provider_device_choices_require_a_reopenable_presentation_extension() {
+        for name in ["pptx", "deckcraft", ".pptx", "Talk.", "Talk.PPTX", "Talk.DECKCRAFT"] {
+            let (mut app, host) = app();
+            let copies = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let received = copies.clone();
+            app.services.provider_download = Some(Box::new(move |name, bytes| {
+                received.borrow_mut().push((name.to_string(), bytes.to_vec()));
+                Ok(())
+            }));
+            let checkpoint = app.session.active().unwrap().saved_doc.clone();
+            assert!(app.choose_provider_save(false, "deckcraft"));
+            let dialog = host.take_events().into_iter().find(|event| event.metadata["type"] == "saveDialog").unwrap();
+            host.resolve_dialog(dialog.metadata["requestId"].as_str().unwrap(), "device", name).unwrap();
+            app.provider_tick();
+            let events = host.take_events();
+            if matches!(name, "Talk.PPTX" | "Talk.DECKCRAFT") {
+                let copies = copies.borrow();
+                assert_eq!(copies.len(), 1);
+                let reopened = deckcraft_engine::cmd::file::open_presentation(&copies[0].0, &copies[0].1).unwrap();
+                assert_eq!(reopened.slides.len(), app.session.active().unwrap().doc.slides.len());
+            } else {
+                assert!(copies.borrow().is_empty());
+                assert!(events.iter().any(|event| event.metadata["type"] == "saveFailed"));
+            }
+            assert!(app.session.active().unwrap().is_dirty() && !host.busy());
+            assert!(std::sync::Arc::ptr_eq(&app.session.active().unwrap().saved_doc, &checkpoint));
+        }
+    }
+
+    #[test]
+    fn window_close_preserves_provider_notes_that_have_not_reached_the_model() {
+        for provider in ["enabled", "paused", "absent"] {
+            let (mut app, host) = app();
+            let (request, _) = save(&mut app, &host);
+            host.result(request, "saved".into(), "notes".into()).unwrap();
+            app.provider_tick();
+            match provider {
+                "paused" => host.set_enabled(false).unwrap(),
+                "absent" => app.services.file_providers = None,
+                _ => {}
+            }
+            let document = app.session.active().unwrap();
+            let slide = document.selection.slide;
+            let mut draft = crate::notes::Draft::new(&document.doc.slides[slide].notes);
+            deckcraft_model::edit::replace_text(&mut draft.body, "Notes still in the focused editor");
+            draft.text = draft.body.text();
+            draft.edited = true;
+            app.notes_buf = (document.uid, slide, draft);
+            assert!(!app.session.active().unwrap().is_dirty());
+            let ctx = egui::Context::default();
+            crate::framework::install_headless(&ctx);
+            let mut raw = egui::RawInput::default();
+            raw.viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+            ctx.run_ui(raw, |ui| app.close_path(ui.ctx())).drop_without_applying_deltas();
+            assert_eq!(app.dialog.as_ref().is_some_and(|dialog| dialog.id == "quit"), provider != "absent");
+            assert!(app.notes_buf.2.edited);
+            assert_eq!(app.notes_buf.2.text, "Notes still in the focused editor");
+            assert!(!app.session.active().unwrap().is_dirty());
+        }
     }
 
     #[test]
