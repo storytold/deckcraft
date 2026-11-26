@@ -1487,6 +1487,70 @@ fn a_tab_past_the_end_moves_to_the_next_line() {
     assert!((l.lines[1].edges[1].0 - l.inner.x0 - 72.0).abs() < 0.01);
 }
 
+/// One paragraph `text` with a hanging indent (`marL`/`indent`), no bullet or explicit stops.
+fn hanging_tabbed(text: &str, margin: f64, indent: f64, w: f64) -> TextLayout {
+    let (p, mut sh) = setup(text, w, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    for r in &mut para.runs {
+        r.props.size = Some(18.0);
+    }
+    let pp = &mut para.props;
+    pp.bullet = Some(Bullet::None);
+    pp.margin_left = Some(margin);
+    pp.indent = Some(indent);
+    pp.default_tab = Some(72.0);
+    pp.tabs = None;
+    lay(&p, &sh, w, 300.0)
+}
+
+#[test]
+fn hanging_indent_is_the_first_tab_stop() {
+    // PowerPoint: with a 0.375 in (27 pt) hanging indent, the first tab on the first line goes
+    // to marL; later tabs go to the normal default stops.
+    let l = hanging_tabbed("a\tb\tc", 27.0, -27.0, 600.0);
+    assert_eq!(l.lines.len(), 1);
+    let x0 = l.inner.x0;
+    assert!((l.lines[0].edges[2].0 - x0 - 27.0).abs() < 0.5, "the char after the first tab starts at marL: {:?}", l.lines[0].edges);
+    assert!((l.lines[0].edges[4].0 - x0 - 72.0).abs() < 0.5, "the char after the second tab starts at the default stop: {:?}", l.lines[0].edges);
+    // A third tab lands on the next default stop.
+    let l = hanging_tabbed("a\tb\tc\td", 27.0, -27.0, 600.0);
+    assert!((l.lines[0].edges[6].0 - l.inner.x0 - 144.0).abs() < 0.5, "{:?}", l.lines[0].edges);
+}
+
+#[test]
+fn a_tab_on_a_wrapped_line_keeps_the_default_stop() {
+    // The implicit stop only applies ahead of the first line's start: a tab on the second
+    // line uses the normal default stop from the box grid (72 pt here), not marL + 27.
+    let l = hanging_tabbed("AAAA\u{b}\tB", 27.0, -27.0, 600.0);
+    assert_eq!(l.lines.len(), 2, "{:?}", l.lines.iter().map(|x| (x.start, x.end)).collect::<Vec<_>>());
+    let x = l.lines[1].edges[1].0 - l.inner.x0;
+    assert!((x - 72.0).abs() < 0.5, "the wrapped line's tab uses the default stop, got {x}");
+    assert!((x - 54.0).abs() > 5.0, "and not marL + 27");
+}
+
+#[test]
+fn a_tab_after_negative_spacing_on_a_later_line_keeps_the_default_stop() {
+    // #1683 follow-up: the implicit stop is a first-line stop only. Negative character spacing
+    // can put a later line's cursor left of the margin; its tab must still take the default stop.
+    let (p, mut sh) = setup("A\u{b}X\tY", 600.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    for r in &mut para.runs {
+        r.props.size = Some(18.0);
+        r.props.spacing = Some(-20.0);
+    }
+    let pp = &mut para.props;
+    pp.bullet = Some(Bullet::None);
+    pp.margin_left = Some(27.0);
+    pp.indent = Some(-27.0);
+    pp.default_tab = Some(72.0);
+    pp.tabs = None;
+    let l = lay(&p, &sh, 600.0, 300.0);
+    assert_eq!(l.lines.len(), 2, "{:?}", l.lines.iter().map(|x| (x.start, x.end)).collect::<Vec<_>>());
+    let x = l.lines[1].edges[2].0 - l.inner.x0;
+    assert!((x - 72.0).abs() < 0.5, "the later line's tab uses the default stop, got {x}");
+    assert!((x - 27.0).abs() > 5.0, "and not the first line's margin stop");
+}
+
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.
 fn underline_decos(u: &str) -> (TextLayout, Vec<Deco>) {
     let (p, mut sh) = setup("ab cd", 2000.0, 300.0);
