@@ -25,7 +25,8 @@ pub(super) fn smartart(app: &mut SlideApp, ui: &mut Ui) {
             ui.add_space(16.0 * node.level as f32);
             ui.label("•");
             // The line keeps Tab for its own command; Escape leaves it.
-            let te = egui::TextEdit::singleline(draft).id(id).hint_text(crate::i18n::tr("Diagram text")).desired_width(f32::INFINITY).lock_focus(true);
+            let te =
+                egui::TextEdit::singleline(draft).id(id).hint_text(crate::i18n::tr("Diagram text")).desired_width(f32::INFINITY).lock_focus(true);
             let r = ui.add(te);
             if app.ui.smartart_focus == Some(i) {
                 r.request_focus();

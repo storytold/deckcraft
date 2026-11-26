@@ -96,17 +96,16 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 PrintScope::Current => "Print Current Slide",
                 PrintScope::Custom => "Custom Range",
             };
-            let combo =
-                egui::ComboBox::from_id_salt("backstage_print_scope").width(240.0).selected_text(crate::i18n::tr(scope)).show_ui(ui, |ui| {
-                    for (s, label) in
-                        [(PrintScope::All, "Print All Slides"), (PrintScope::Current, "Print Current Slide"), (PrintScope::Custom, "Custom Range")]
-                    {
-                        if ui.selectable_label(bs.print_scope == s, crate::i18n::tr(label)).clicked() {
-                            bs.print_scope = s;
-                            bs.preview_page = 0;
-                        }
+            let combo = egui::ComboBox::from_id_salt("backstage_print_scope").width(240.0).selected_text(crate::i18n::tr(scope)).show_ui(ui, |ui| {
+                for (s, label) in
+                    [(PrintScope::All, "Print All Slides"), (PrintScope::Current, "Print Current Slide"), (PrintScope::Custom, "Custom Range")]
+                {
+                    if ui.selectable_label(bs.print_scope == s, crate::i18n::tr(label)).clicked() {
+                        bs.print_scope = s;
+                        bs.preview_page = 0;
                     }
-                });
+                }
+            });
             combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::i18n::tr("Print range")));
             ui.add_space(4.0);
             ui.horizontal(|ui| {

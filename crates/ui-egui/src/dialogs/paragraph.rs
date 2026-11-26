@@ -118,8 +118,7 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
                         picked = Some((k, v));
                     }
                 }
-            }
-        });
+            });
         let _ = combo.response.labelled_by(field.id);
         ui.add_space(8.0);
         let _ = labeled_text(ui, d, "At", "lineValue", 64.0);

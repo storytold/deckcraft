@@ -44,7 +44,7 @@ pub(crate) fn enable(app: &mut SlideApp) {
 /// update check of its own (the Launcher owns the install) and never touches Stable's updater.
 pub(crate) fn request_check(app: &mut SlideApp) -> Result<(), String> {
     if !app.updates_rt.stable_services {
-        return Err(NIGHTLY_UPDATES.into());
+        return Err(crate::i18n::tr(NIGHTLY_UPDATES).into());
     }
     if !matches!(app.updates_rt.updater.status(), Status::Checking) {
         app.updates_rt.check_requested = true;
