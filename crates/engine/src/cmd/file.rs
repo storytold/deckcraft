@@ -363,11 +363,12 @@ fn report_damage(s: &mut Session, damaged: &Damage) -> Result<()> {
     Ok(())
 }
 
-/// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
+/// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `txt`, `pdf`, `gif`).
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
         f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
-        "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
+        "outline" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
+        "txt" => Ok(outline_txt_bytes(&deckcraft_format::slides_to_outline(doc))),
         "rtf" => Ok(deckcraft_format::rtf::slides_to_rtf(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),
@@ -375,6 +376,14 @@ pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
         "deckcraft" => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
         _ => Err(EngineError::Other(format!("unknown save format `{format}`"))),
     }
+}
+
+/// The `.txt` outline bytes: CRLF for the reference app, without doubling a CR that is
+/// already in the text. `TextBody::from_text` normalizes CR and CRLF (`text.rs:739`), but
+/// imported text can still carry one, so normalize before adding CRLF. Crate-visible so the
+/// regression test can feed it a CRLF string directly.
+pub(crate) fn outline_txt_bytes(text: &str) -> Vec<u8> {
+    text.replace("\r\n", "\n").replace('\n', "\r\n").into_bytes()
 }
 
 /// Paper sizes for notes and handouts, for the UI's Print page.
@@ -497,7 +506,9 @@ pub fn format_for_path(path: &str) -> &'static str {
         "pdf"
     } else if l.ends_with(".gif") {
         "gif"
-    } else if l.ends_with(".txt") || l.ends_with(".md") {
+    } else if l.ends_with(".txt") {
+        "txt"
+    } else if l.ends_with(".md") {
         "outline"
     } else if l.ends_with(".rtf") {
         "rtf"
