@@ -1365,6 +1365,35 @@ fn md_export_keeps_lf() {
 }
 
 #[test]
+fn txt_outline_export_round_trips_two_slides() {
+    let mut p = deckcraft_model::defaults::new_presentation(None);
+    p.slides.clear();
+    let n = deckcraft_format::outline_to_slides(&mut p, "Alpha heading\n\tFirst body\nBeta heading\n\tSecond body\n");
+    assert_eq!(n, 2);
+    let bytes = crate::cmd::file::save_bytes(&p, "txt").unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("\r\n"), "{text:?}");
+    assert!(!text.contains("\r\r\n"), "a CRLF input must not double the CR: {text:?}");
+
+    let mut q = deckcraft_model::defaults::new_presentation(None);
+    q.slides.clear();
+    assert_eq!(deckcraft_format::outline_to_slides(&mut q, &text), 2);
+    assert_eq!(q.slides[0].title(), "Alpha heading");
+    assert_eq!(q.slides[1].title(), "Beta heading");
+    let bodies: Vec<String> =
+        q.slides.iter().map(|s| s.shapes.iter().filter_map(|sh| sh.text.as_ref()).map(|t| t.text()).collect::<Vec<_>>().join(" ")).collect();
+    assert!(bodies[0].contains("First body"), "{:?}", bodies[0]);
+    assert!(bodies[1].contains("Second body"), "{:?}", bodies[1]);
+}
+
+#[test]
+fn txt_export_does_not_double_existing_crlf() {
+    let text = String::from_utf8(crate::cmd::file::outline_txt_bytes("Alpha\r\nBeta\r\n")).unwrap();
+    assert_eq!(text, "Alpha\r\nBeta\r\n");
+    assert!(!text.contains("\r\r\n"), "{text:?}");
+}
+
+#[test]
 fn save_and_reopen_native() {
     let mut s = Session::new();
     sample::open_sample(&mut s).unwrap();
