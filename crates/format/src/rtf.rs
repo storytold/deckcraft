@@ -113,6 +113,9 @@ struct Outline {
     /// non-ASCII `Token::Symbol`.
     skip_cont: usize,
     line: String,
+    /// The document's code page (`\ansicpg`), which `\'hh` bytes are in: Windows-1252 until it
+    /// names another single-byte one (#2394).
+    code_page: u16,
     /// Paragraphs so far: outline level and text (empty only for an empty level-0 title).
     out: Vec<(usize, String)>,
 }
@@ -199,6 +202,7 @@ fn paragraphs(rtf: &str) -> Vec<(usize, String)> {
         pending_skip: 0,
         skip_cont: 0,
         line: String::new(),
+        code_page: 1252,
         out: vec![],
     };
     p.run(rtf);
@@ -273,6 +277,12 @@ impl Outline {
                 self.style_level = arg.filter(|a| (1..=9).contains(a) && self.headings[*a as usize]).map(|a| a as u32 - 1);
             }
             "li" => self.indent = i64::from(arg.unwrap_or(0)),
+            // A code page read a byte at a time; any other (East Asian multibyte, unknown) keeps Windows-1252.
+            "ansicpg" => {
+                if let Some(cp) = arg.and_then(|a| u16::try_from(a).ok()).filter(|cp| craft_rtf::codepage::is_byte_code_page(*cp)) {
+                    self.code_page = cp;
+                }
+            }
             "tab" | "line" => self.line.push(' '),
             "uc" => self.st.uc = arg.unwrap_or(1).clamp(0, 8) as usize,
             "u" => self.unicode(i64::from(arg.unwrap_or(0))),
@@ -294,14 +304,14 @@ impl Outline {
         self.pending_skip = self.st.uc;
     }
 
-    /// `\'hh`: one cp1252 byte.
+    /// `\'hh`: one byte in the document's code page.
     fn hex_escape(&mut self, h: u8) {
         if self.pending_skip > 0 {
             self.pending_skip -= 1;
             return;
         }
         if !self.st.skip && h != 0 {
-            self.line.push(craft_rtf::codepage::cp1252(h));
+            self.line.push(craft_rtf::codepage::code_page_byte(self.code_page, h));
         }
     }
 
@@ -619,6 +629,28 @@ mod tests {
         let mut reopened = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
         rtf_to_slides(&mut reopened, &slides_to_rtf(&p));
         assert_eq!(crate::slides_to_outline(&reopened), expected);
+    }
+
+    /// A writer on a non-Western Windows locale names its code page with `\ansicpg` and writes
+    /// non-ASCII letters as `\'hh` bytes of that page (#2394); `\ansicpg1252` and no `\ansicpg`
+    /// both stay Windows-1252.
+    #[test]
+    fn hex_escapes_decode_in_the_code_page_ansicpg_names() {
+        let outline = |cpg: &str, title: &str, body: &str| {
+            let rtf = format!(
+                r"{{\rtf1\ansi{cpg}{{\stylesheet{{\s1 heading 1;}}{{\s2 heading 2;}}}}\pard\s1 {title}\par\pard\s2 {body}\par\pard\s1 Plain\par}}"
+            );
+            let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+            assert_eq!(rtf_to_slides(&mut p, &rtf), 2, "{rtf}");
+            crate::slides_to_outline(&p)
+        };
+        assert_eq!(
+            outline(r"\ansicpg1250", r"\'8elu\'9dou\'e8k\'fd k\'f9\'f2", r"\'dap\'ecl \'ef\'e1belsk\'e9 \'f3dy"),
+            "Žluťoučký kůň\n\tÚpěl ďábelské ódy\nPlain\n"
+        );
+        assert_eq!(outline(r"\ansicpg1251", r"\'cf\'f0\'e8\'e2\'e5\'f2", r"\'ec\'e8\'f0"), "Привет\n\tмир\nPlain\n");
+        assert_eq!(outline(r"\ansicpg1252", r"Caf\'e9", r"\'93a\'94"), "Café\n\t“a”\nPlain\n");
+        assert_eq!(outline("", r"Caf\'e9", r"\'93a\'94"), "Café\n\t“a”\nPlain\n");
     }
 
     #[test]
