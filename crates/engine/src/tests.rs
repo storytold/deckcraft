@@ -7533,6 +7533,25 @@ fn extensionless_export_with_an_explicit_format_still_writes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn supported_paths_still_save() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-ok-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, magic) in [("a.pptx", b"PK".as_slice()), ("a.deckcraft", b"PK".as_slice()), ("a.txt", b"")] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        s.execute("file.saveAs", &json!({"path": path})).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!bytes.is_empty(), "{name}");
+        if !magic.is_empty() {
+            assert!(bytes.starts_with(magic), "{name}: not a ZIP");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
