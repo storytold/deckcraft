@@ -2249,6 +2249,7 @@ fn a_legend_entry_draws_its_own_text_colour_and_size() {
     };
     let entry = |size: Option<f64>| deckcraft_model::chart::LegendEntry {
         idx: 0,
+        deleted: false,
         size,
         bold: Some(true),
         color: Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 200, 0))),
@@ -2259,6 +2260,25 @@ fn a_legend_entry_draws_its_own_text_colour_and_size() {
     assert_eq!(none, 0, "no green in a chart without the entry");
     assert!(own > 40, "the first entry's name is drawn in its own colour ({own})");
     assert!(big > own * 2, "and at its own size ({own} at 10 pt, {big} at 20 pt)");
+}
+
+/// #2359: a legend entry the file deletes (`c:legendEntry/c:delete`) is left out of the legend;
+/// the other entries are still drawn.
+#[test]
+fn a_deleted_legend_entry_is_not_drawn() {
+    let draw = |deleted: Option<u32>| {
+        let mut c = Chart::sample(ChartType::Line);
+        c.title = None;
+        c.legend = Some("r".into());
+        c.legend_entries = deleted.map(|idx| deckcraft_model::chart::LegendEntry { idx, deleted: true, ..Default::default() }).into_iter().collect();
+        let sh = Shape { id: ShapeId(635), xfrm: Some(Xfrm::new(0.0, 0.0, 480.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    // The legend sits right of the plot; count what is drawn there.
+    let legend_ink = |img: &Image| (400..480u32).flat_map(|x| (0..300u32).map(move |y| (x, y))).filter(|&(x, y)| img.pixel(x, y)[1] < 200).count();
+    let (all, one_deleted) = (legend_ink(&draw(None)), legend_ink(&draw(Some(1))));
+    assert!(one_deleted < all, "the deleted entry is not drawn ({one_deleted} inked pixels in the legend against {all})");
+    assert!(one_deleted > 0, "the other entries still are");
 }
 
 #[test]

@@ -1290,7 +1290,7 @@ fn chart_to(c: &dm_chart::Chart) -> cd_chart::Chart {
         legend_entries: c
             .legend_entries
             .iter()
-            .map(|e| cd_chart::LegendEntry { idx: e.idx, size: e.size, bold: e.bold, color: e.color.as_ref().map(color_ref_to) })
+            .map(|e| cd_chart::LegendEntry { idx: e.idx, deleted: e.deleted, size: e.size, bold: e.bold, color: e.color.as_ref().map(color_ref_to) })
             .collect(),
         text_size: c.text_size,
         title_size: c.title_size,
@@ -1379,7 +1379,7 @@ fn chart_from(c: cd_chart::Chart) -> dm_chart::Chart {
         legend_entries: c
             .legend_entries
             .into_iter()
-            .map(|e| dm_chart::LegendEntry { idx: e.idx, size: e.size, bold: e.bold, color: e.color.map(color_ref_from) })
+            .map(|e| dm_chart::LegendEntry { idx: e.idx, deleted: e.deleted, size: e.size, bold: e.bold, color: e.color.map(color_ref_from) })
             .collect(),
         text_size: c.text_size,
         title_size: c.title_size,

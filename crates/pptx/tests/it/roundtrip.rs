@@ -2406,3 +2406,59 @@ fn pptx_potx_ppsx_export_parity_preserves_masters_charts_themes_and_timing() {
         assert_eq!(chart.series[0].values, edited_values, "{ext}");
     }
 }
+
+/// #2359: a legend entry the file deletes (`c:legendEntry/c:delete`) stays deleted when the deck is
+/// saved, unedited (the chart part as read) or after a chart edit (the part rebuilt from the model).
+#[test]
+fn a_deleted_legend_entry_survives_a_save() {
+    use deckcraft_engine::Session;
+    let chart = |d: &Presentation| -> Chart {
+        d.slides
+            .iter()
+            .flat_map(|s| s.shapes.iter())
+            .find_map(|sh| match &sh.kind {
+                ShapeKind::Chart(c) => Some((**c).clone()),
+                _ => None,
+            })
+            .expect("a chart")
+    };
+    let entry = r#"<c:legendEntry><c:idx val="1"/><c:delete val="1"/></c:legendEntry>"#;
+    let mut s = Session::with_new();
+    s.execute("slide.new", &serde_json::json!({"layout": "blank"})).unwrap();
+    s.execute(
+        "insert.chart",
+        &serde_json::json!({"type": "line", "categories": ["1", "2", "3"], "series": [{"name": "Alpha", "values": [1, 2, 3]}, {"name": "Beta", "values": [3, 2, 1]}]}),
+    )
+    .unwrap();
+    let id = s.doc().unwrap().selection.shapes[0].0;
+    s.execute("chart.options", &serde_json::json!({"id": id, "legend": "r"})).unwrap();
+    let base = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+    let pptx = repack(
+        &base,
+        |name, x| {
+            if name == "ppt/charts/chart1.xml" {
+                assert!(x.contains(r#"<c:legendPos val="r"/>"#), "{x}");
+                x.replacen(r#"<c:legendPos val="r"/>"#, &format!(r#"<c:legendPos val="r"/>{entry}"#), 1)
+            } else {
+                x
+            }
+        },
+        &[],
+    );
+    let doc = deckcraft_pptx::import(&pptx).unwrap();
+    let read = chart(&doc);
+    assert!(read.legend_entries.iter().any(|e| e.idx == 1 && e.deleted), "{:?}", read.legend_entries);
+
+    let unedited = String::from_utf8(pkg_part(&deckcraft_pptx::export(&doc).unwrap(), "ppt/charts/chart1.xml").unwrap()).unwrap();
+    assert!(unedited.contains(entry), "unedited: {unedited}");
+
+    let mut edited = doc.clone();
+    for sh in edited.slides.iter_mut().flat_map(|s| Arc::make_mut(s).shapes.iter_mut()) {
+        if let ShapeKind::Chart(c) = &mut sh.kind {
+            c.title = Some("Units".into());
+        }
+    }
+    let rebuilt = String::from_utf8(pkg_part(&deckcraft_pptx::export(&edited).unwrap(), "ppt/charts/chart1.xml").unwrap()).unwrap();
+    assert!(rebuilt.contains("Units"), "the edit was written");
+    assert!(rebuilt.contains(entry), "edited: {rebuilt}");
+}
