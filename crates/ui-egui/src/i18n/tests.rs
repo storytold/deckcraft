@@ -94,6 +94,25 @@ fn a_callers_toolbar_label_stays_literal() {
     assert!(table_tip.starts_with("Home") && table_shown == "Home", "a caller's label stays literal: {table_tip}");
 }
 
+/// A toolbar saved before `literal` existed has no record of where a label came from. The built-in
+/// item still translates, a custom label that matches a catalog key stays as saved, and a ribbon
+/// caption saved by an older build is kept in English rather than guessed at.
+#[test]
+fn a_toolbar_saved_before_labels_recorded_their_origin_keeps_custom_labels() {
+    let de = fixture_lang("de", DE);
+    let old: UiState = serde_json::from_value(json!({"qat": [
+        {"id": "app.home", "label": "Home", "icon": "home"},
+        {"id": "insert.table", "label": "Home", "icon": "table"},
+        {"id": "insert.table", "params": {"rows": 2}, "label": "New Slide", "icon": "table"},
+    ]}))
+    .unwrap();
+    let new = crate::qat::QatItem::new("app.home", "Home", crate::icons::Icon::Home);
+    set_current(de);
+    let shown: Vec<String> = old.qat.iter().chain([&new]).map(|q| q.shown_label()).collect();
+    set_current(Lang::EN);
+    assert_eq!(shown, ["Start", "Home", "New Slide", "Start"]);
+}
+
 #[test]
 fn app_language_reports_and_changes_the_setting() {
     use_fixture("de", DE);

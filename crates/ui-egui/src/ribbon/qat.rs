@@ -18,25 +18,29 @@ pub struct QatItem {
     pub label: String,
     /// An [`Icon::name`].
     pub icon: String,
-    /// `label` is a caller's own text (`app.qat`'s `label`), shown as given; otherwise it is an
-    /// English interface string (a built-in or ribbon caption) shown in the interface language.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub literal: bool,
+    /// Whether `label` is a caller's own text (`app.qat`'s `label`), shown as given, or an English
+    /// interface string (a built-in or ribbon caption) shown in the interface language. `None` in
+    /// a toolbar saved before this was recorded: see [`QatItem::shown_label`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub literal: Option<bool>,
 }
 
 impl Default for QatItem {
     fn default() -> Self {
-        QatItem { id: String::new(), params: Value::Null, label: String::new(), icon: Icon::More.name().into(), literal: false }
+        QatItem { id: String::new(), params: Value::Null, label: String::new(), icon: Icon::More.name().into(), literal: None }
     }
 }
 
 impl QatItem {
     pub fn new(id: &str, label: &str, icon: Icon) -> Self {
-        QatItem { id: id.into(), params: Value::Null, label: label.into(), icon: icon.name().into(), literal: false }
+        QatItem { id: id.into(), params: Value::Null, label: label.into(), icon: icon.name().into(), literal: Some(false) }
     }
     /// The label as drawn: a caller's own text as given, an interface string in the current language.
+    /// An item saved before the origin was recorded translates only when its label is still the
+    /// built-in one for its command; anything else may be a caller's own text, so it stays as saved.
     pub(crate) fn shown_label(&self) -> String {
-        if self.literal { self.label.clone() } else { crate::i18n::t_flat(&self.label) }
+        let literal = self.literal.unwrap_or_else(|| !common().iter().any(|c| c.id == self.id && c.label == self.label));
+        if literal { self.label.clone() } else { crate::i18n::t_flat(&self.label) }
     }
     fn icon(&self) -> Icon {
         Icon::from_name(&self.icon).unwrap_or(Icon::More)
@@ -106,7 +110,7 @@ fn add(app: &mut SlideApp, id: &str, params: &Value, label: Option<(String, bool
         .or_else(|| deckcraft_engine::find_command(id).map(|c| (c.label.to_string(), false)))
         .unwrap_or_else(|| (id.to_string(), true));
     let icon = icon.or_else(|| base.map(|b| b.icon())).unwrap_or(Icon::More);
-    app.ui.qat.push(QatItem { id: id.into(), params: params.clone(), label, icon: icon.name().into(), literal });
+    app.ui.qat.push(QatItem { id: id.into(), params: params.clone(), label, icon: icon.name().into(), literal: Some(literal) });
     Ok(())
 }
 
