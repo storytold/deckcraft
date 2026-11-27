@@ -104,6 +104,14 @@ fn the_last_of_many_layouts_is_reachable_by_scrolling() {
     assert!(r.max.y <= 900.0 && r.min.y >= 0.0, "the last layout is off screen: {r:?}");
 }
 
+#[test]
+fn a_short_layout_list_fits_without_scrolling() {
+    let (mut h, last_name) = harness_with_layouts(11);
+    click(&mut h, "Layout options");
+    let last = h.query_all_by_label(last_name.as_str()).next().expect("the last default layout must be in the tree");
+    assert!(last.rect().max.y < 560.0, "the default layouts fit under the viewport cap");
+}
+
 /// Keyboard entry must recognize either named half as the menu's origin. In particular, Up
 /// enters at the last item rather than letting spatial focus navigation escape into the ribbon.
 #[test]
