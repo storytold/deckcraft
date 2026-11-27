@@ -173,6 +173,32 @@ See [ROADMAP.md](ROADMAP.md) for the stage, numbers by dimension and what's next
 [docs/gaps.md](docs/gaps.md) for every known shortfall and
 [docs/parity-checklist.md](docs/parity-checklist.md) for the feature-by-feature checklist.
 
+## Nightly builds (not released yet)
+
+DeckCraft has a separate **DeckCraft Nightly** channel for Launcher-managed nightly builds beside
+the stable app: its own application ID, package identity, data folder, taskbar entry and window
+class, so it never reads or writes stable DeckCraft's settings, recovery autosaves, logs, user
+dictionary or single window state. The Nightly app is started only by ArtCraft Launcher
+(`--launch-profile nightly-v1 --profile-root <dir> -- <files>`); the profile root is validated and
+fenced against every stable data and install folder, so a Nightly window cannot fall back to
+stable state. Nightly is managed by the Launcher and does not self-update.
+
+On Linux, the plain nightly `.tar.gz` starts through the canonical shared launcher template
+(`packaging/linux/nightly-launch.sh`, rendered from `craft-common-actions`'s
+`scripts/nightly-launcher.sh.in`): `deckcraft` starts `deckcraft-bin` beside it on the nightly-v1
+profile under the Nightly package identity. The distro formats keep their own launcher
+(`packaging/linux/nightly-package-launch.sh`) and their own profile folder; the AppImage, the deb/rpm
+package, the Flatpak and the Arch handoff all pass `--launch-profile nightly-v1 --profile-root <dir>
+-- <files>` to the GUI, so an unpacked or distro-installed copy is isolated without the Launcher.
+
+The channel's packaging lives in `packaging/nightly-common.sh`, `packaging/{linux,macos,windows}/nightly*`
+and `.github/workflows/nightly*.yml`. The producer and signer workflows are registered and can be
+dispatched by the reviewed release managers only; there is no schedule or automatic dispatch yet.
+Read [`docs/nightly-release-preparation.md`](docs/nightly-release-preparation.md) before the first
+supervised run. The channel is compiled with `DECKCRAFT_BUILD_CHANNEL=nightly-v1`, which also
+selects the deeper-background icons recorded in
+[`assets/app-icon/nightly-provenance.json`](assets/app-icon/nightly-provenance.json).
+
 ## Downloads
 
 **Download DeckCraft** from GitHub: the [latest release](https://github.com/storytold/deckcraft/releases/latest) has every build listed below, and [all releases](https://github.com/storytold/deckcraft/releases) has earlier versions and their notes. `<ver>` in the file names is the version number, and `SHA256SUMS.txt` lists a checksum for every file.

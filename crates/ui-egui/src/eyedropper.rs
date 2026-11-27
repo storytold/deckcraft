@@ -123,10 +123,11 @@ fn hex(c: [u8; 4]) -> String {
 }
 
 /// The slide canvas while the Eyedropper waits: the pointer is a crosshair with the colour under it
-/// beside it, a click takes it. Returns true when it used the pointer (the tools get none).
+/// beside it, a real click takes it (Enter and Space are egui's fake clicks of the focused canvas). Returns true when it
+/// used the pointer (the tools get none).
 pub fn canvas(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) -> bool {
     let Some(state) = app.eyedropper.as_ref() else { return false };
-    let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let escape = crate::framework::escape_pressed(ui.ctx());
     if escape || resp.secondary_clicked() {
         app.eyedropper = None;
         return true;
@@ -135,7 +136,7 @@ pub fn canvas(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) -> boo
     let on_slide = app.slide_rect.is_some_and(|r| r.contains(pos));
     if !on_slide {
         ui.ctx().set_cursor_icon(CursorIcon::NotAllowed);
-        if resp.clicked() {
+        if resp.clicked_by(egui::PointerButton::Primary) {
             app.eyedropper = None;
         }
         return true;
@@ -146,7 +147,7 @@ pub fn canvas(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) -> boo
     if let Some(c) = under {
         loupe(ui, pos, c);
     }
-    if resp.clicked() {
+    if resp.clicked_by(egui::PointerButton::Primary) {
         let (pick, slide) = (state.pick, state.slide);
         app.eyedropper = None;
         match pick {

@@ -17,7 +17,7 @@ fn harness() -> Harness<'static, SlideApp> {
     let mut app = SlideApp::new(s, Services::default());
     app.ui.pane = Some("format".into());
     app.ui.format_tab = "effects".into();
-    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

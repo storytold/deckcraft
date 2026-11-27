@@ -74,6 +74,9 @@ pub struct Services {
     /// The screens the computer shows to, read when a slide show starts. Without it (the web,
     /// tests) the show stays where the window is.
     pub screens: Option<Box<dyn FnMut() -> Option<Screens>>>,
+    /// Work that must finish on a clean quit. `eframe::App::on_exit` takes and runs it once: on
+    /// macOS ⌘Q ends the process inside AppKit's terminate, so nothing after `run_native` runs.
+    pub at_exit: Option<Box<dyn FnOnce()>>,
 }
 
 /// The screens connected, numbered as the windowing system lists them (the numbers a window is

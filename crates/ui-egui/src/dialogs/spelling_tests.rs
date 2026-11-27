@@ -17,7 +17,7 @@ fn spelling_dialog_changes_and_ignores_words() {
     let mut app = SlideApp::new(Session::with_new(), Services::default());
     app.session.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 500, 120], "text": "Our plna for teh quarter"})).unwrap();
     app.dialog = Some(crate::dialogs::Dialog::new("spelling"));
-    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 700.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1100.0, 700.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -82,7 +82,7 @@ fn squiggles_mark_misspelt_words_in_the_background() {
     let st = app.session.active().unwrap().clone();
     let lines = app.squiggles.settle(&st);
     assert_eq!(lines.len(), 3, "{lines:?}");
-    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 700.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1100.0, 700.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -153,7 +153,7 @@ fn squiggles_in_table_cells_and_notes_and_on_the_ui_thread() {
     // Each under its own cell: the first in the top-left one, the second in the bottom-right one.
     assert!(lines[0].0.x < 380.0 && lines[0].0.y < 160.0 && lines[1].0.x > 380.0 && lines[1].0.y > 160.0, "{lines:?}");
     assert_eq!(app.squiggles.settle_notes("Remmeber to show the totl", "xx-TB"), vec![(0, 8), (21, 25)]);
-    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 760.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1100.0, 760.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -226,7 +226,7 @@ fn notes_menu_language_dialog_and_repeated_words() {
     let st = app.session.active().unwrap().clone();
     // "is is" is flagged as repeated, "wrok" as misspelt.
     assert_eq!(app.squiggles.settle(&st).len(), 2);
-    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 760.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1100.0, 760.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

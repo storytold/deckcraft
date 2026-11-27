@@ -48,13 +48,14 @@ fn header_footer_apply_keeps_an_existing_date_format() {
             })
             .collect()
     };
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 900.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(session, crate::Services::default()),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(vec2(1200.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, crate::Services::default()),
+        );
     harness.run_steps(2);
     assert_eq!(date_fields(harness.state()), vec!["datetime4".to_string()]);
     harness.state_mut().run("app.dialog", json!({"id": "headerFooter"})).unwrap();
@@ -89,13 +90,14 @@ fn export_dialog_writes_an_animated_gif() {
     };
     let mut session = deckcraft_engine::Session::with_new();
     session.execute("slide.new", &json!({})).unwrap();
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 900.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(session, services),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(vec2(1200.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, services),
+        );
     harness.run_steps(2);
     harness.state_mut().run("app.exportDialog", json!({})).unwrap();
     harness.run_steps(2);
@@ -140,13 +142,14 @@ fn export_dialog_writes_a_png_with_a_transparent_background() {
     let path = dir.join("slide.png");
     let picked = path.to_string_lossy().to_string();
     let services = crate::Services { pick_save: Some(Box::new(move |_: &str| Some(picked.clone()))), ..Default::default() };
-    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 900.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(deckcraft_engine::Session::with_new(), services),
-    );
+    let mut harness =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(vec2(1200.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(deckcraft_engine::Session::with_new(), services),
+        );
     harness.run_steps(2);
     harness.state_mut().run("app.exportDialog", json!({})).unwrap();
     harness.run_steps(2);

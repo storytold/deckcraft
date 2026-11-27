@@ -145,7 +145,7 @@ impl SlideApp {
             && ctx.input(|i| i.viewport().focused.unwrap_or(true))
             && ctx.input(|i| i.viewport().visible() != Some(false))
             && !ctx.input(|i| i.viewport().close_requested())
-            && ctx.memory(|m| m.focused().is_none())
+            && !crate::framework::widget_has_keyboard(ctx)
             && self.dialog.as_ref().is_none_or(|d| !d.modal())
             && self.palette.is_none()
             && self.backstage.is_none()

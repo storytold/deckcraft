@@ -375,7 +375,7 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
     let media = crate::media::slide_media(doc, idx);
     let hidden: Vec<ShapeId> = media
         .iter()
-        .filter(|(id, _, clip)| clip.hide_while_not_playing && !app.media.status(*id).is_some_and(|s| s.state != deckcraft_media::PlayState::Ended))
+        .filter(|(id, _, clip)| clip.hidden_during_show(app.media.status(*id).is_some_and(|s| s.state != deckcraft_media::PlayState::Ended)))
         .map(|m| m.0)
         .collect();
     let gifs = app.media.gifs(doc_uid, doc, idx, now, &app.session.gif_paused);

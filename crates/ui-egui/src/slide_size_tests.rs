@@ -18,7 +18,7 @@ fn open_with_size(w: f64, h: f64) -> egui_kittest::Harness<'static, SlideApp> {
     let mut s = Session::new();
     s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
     let _ = std::fs::remove_file(&path);
-    egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 800.0)).build_ui_state(
+    egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1280.0, 800.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
