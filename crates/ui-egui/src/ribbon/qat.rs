@@ -18,17 +18,25 @@ pub struct QatItem {
     pub label: String,
     /// An [`Icon::name`].
     pub icon: String,
+    /// `label` is a caller's own text (`app.qat`'s `label`), shown as given; otherwise it is an
+    /// English interface string (a built-in or ribbon caption) shown in the interface language.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub literal: bool,
 }
 
 impl Default for QatItem {
     fn default() -> Self {
-        QatItem { id: String::new(), params: Value::Null, label: String::new(), icon: Icon::More.name().into() }
+        QatItem { id: String::new(), params: Value::Null, label: String::new(), icon: Icon::More.name().into(), literal: false }
     }
 }
 
 impl QatItem {
     pub fn new(id: &str, label: &str, icon: Icon) -> Self {
-        QatItem { id: id.into(), params: Value::Null, label: label.into(), icon: icon.name().into() }
+        QatItem { id: id.into(), params: Value::Null, label: label.into(), icon: icon.name().into(), literal: false }
+    }
+    /// The label as drawn: a caller's own text as given, an interface string in the current language.
+    pub(crate) fn shown_label(&self) -> String {
+        if self.literal { self.label.clone() } else { crate::i18n::t_flat(&self.label) }
     }
     fn icon(&self) -> Icon {
         Icon::from_name(&self.icon).unwrap_or(Icon::More)
@@ -72,21 +80,34 @@ pub fn command(app: &mut SlideApp, p: &Value) -> Result<Value, String> {
         app.ui.qat = defaults();
     }
     if let Some(id) = p.get("add").and_then(Value::as_str) {
-        if !crate::ribbon::known(id) {
-            return Err(format!("unknown command `{id}`"));
-        }
-        if !app.ui.qat.iter().any(|q| q.same(id, &params)) {
-            let base = common().into_iter().find(|q| q.id == id);
-            let label = p.get("label").and_then(Value::as_str).map(String::from).or_else(|| base.as_ref().map(|b| b.label.clone()));
-            let label = label.or_else(|| deckcraft_engine::find_command(id).map(|c| c.label.to_string())).unwrap_or_else(|| id.to_string());
-            let icon = p.get("icon").and_then(Value::as_str).and_then(Icon::from_name).or_else(|| base.map(|b| b.icon())).unwrap_or(Icon::More);
-            app.ui.qat.push(QatItem { id: id.into(), params: params.clone(), label, icon: icon.name().into() });
-        }
+        // A caller's `label` is its own text, not an interface string: it is never translated.
+        let label = p.get("label").and_then(Value::as_str).map(|l| (l.to_string(), true));
+        add(app, id, &params, label, p.get("icon").and_then(Value::as_str).and_then(Icon::from_name))?;
     }
     if let Some(id) = p.get("remove").and_then(Value::as_str) {
         app.ui.qat.retain(|q| !q.same(id, &params));
     }
     serde_json::to_value(&app.ui.qat).map_err(|e| e.to_string())
+}
+
+/// Adds `id` with `params` unless the toolbar has it. `label` is the text and whether it is literal
+/// (a caller's own) rather than an English interface string; without one, the built-in or command
+/// label is used, which follows the interface language.
+fn add(app: &mut SlideApp, id: &str, params: &Value, label: Option<(String, bool)>, icon: Option<Icon>) -> Result<(), String> {
+    if !crate::ribbon::known(id) {
+        return Err(format!("unknown command `{id}`"));
+    }
+    if app.ui.qat.iter().any(|q| q.same(id, params)) {
+        return Ok(());
+    }
+    let base = common().into_iter().find(|q| q.id == id);
+    let (label, literal) = label
+        .or_else(|| base.as_ref().map(|b| (b.label.clone(), false)))
+        .or_else(|| deckcraft_engine::find_command(id).map(|c| (c.label.to_string(), false)))
+        .unwrap_or_else(|| (id.to_string(), true));
+    let icon = icon.or_else(|| base.map(|b| b.icon())).unwrap_or(Icon::More);
+    app.ui.qat.push(QatItem { id: id.into(), params: params.clone(), label, icon: icon.name().into(), literal });
+    Ok(())
 }
 
 fn run(app: &mut SlideApp, q: &QatItem) {
@@ -120,15 +141,16 @@ pub fn run_index(app: &mut SlideApp, index: usize) -> bool {
     true
 }
 
-fn tip(q: &QatItem, index: usize, mac: bool) -> String {
+pub(crate) fn tip(q: &QatItem, index: usize, mac: bool) -> String {
     let sc =
         deckcraft_engine::find_command(&q.id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == q.id).and_then(|c| c.2));
     let qat_sc = if !mac && index < 9 { Some(format!("Alt+{}", index + 1)) } else { None };
+    let label = q.shown_label();
     match (sc, qat_sc) {
-        (Some(s), Some(qsc)) => format!("{} ({}, {})", crate::i18n::t_flat(&q.label), crate::ribbon::pretty_shortcut(s), qsc),
-        (Some(s), None) => format!("{} ({})", crate::i18n::t_flat(&q.label), crate::ribbon::pretty_shortcut(s)),
-        (None, Some(qsc)) => format!("{} ({})", crate::i18n::t_flat(&q.label), qsc),
-        (None, None) => crate::i18n::t_flat(&q.label),
+        (Some(s), Some(qsc)) => format!("{label} ({}, {qsc})", crate::ribbon::pretty_shortcut(s)),
+        (Some(s), None) => format!("{label} ({})", crate::ribbon::pretty_shortcut(s)),
+        (None, Some(qsc)) => format!("{label} ({qsc})"),
+        (None, None) => label,
     }
 }
 
@@ -165,7 +187,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.separator();
             for q in extra {
                 let mut on = true;
-                if ui.checkbox(&mut on, crate::i18n::t_flat(&q.label)).changed() {
+                if ui.checkbox(&mut on, q.shown_label()).changed() {
                     let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 }
             }
@@ -185,9 +207,12 @@ pub fn ribbon_menu(app: &mut SlideApp, r: &egui::Response, icon: Icon, label: &s
         let has = app.ui.qat.iter().any(|q| q.same(id, p));
         let text = if has { "Remove from Quick Access Toolbar" } else { "Add to Quick Access Toolbar" };
         if ui.button(tl!(text)).clicked() {
-            let label = label.replace('\n', " ");
-            let key = if has { "remove" } else { "add" };
-            let _ = command(app, &json!({key: id, "params": p, "label": label, "icon": icon.name()}));
+            if has {
+                app.ui.qat.retain(|q| !q.same(id, p));
+            } else {
+                // A ribbon caption is an English interface string, so it follows the language.
+                let _ = add(app, id, p, Some((label.replace('\n', " "), false)), Some(icon));
+            }
             ui.close();
         }
     });

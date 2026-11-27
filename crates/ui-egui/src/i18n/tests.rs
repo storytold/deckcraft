@@ -76,6 +76,24 @@ fn the_language_setting_is_auto_or_an_offered_code() {
     }
 }
 
+/// A Quick Access Toolbar label a caller supplies through `app.qat` is its own text: it stays as
+/// given even when it matches a catalog key, while a built-in label follows the language.
+#[test]
+fn a_callers_toolbar_label_stays_literal() {
+    let de = fixture_lang("de", DE);
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    app.run("app.qat", json!({"add": "insert.table", "label": "Home"})).unwrap();
+    let saved: UiState = serde_json::from_value(serde_json::to_value(&app.ui).unwrap()).unwrap();
+    let find = |id: &str| saved.qat.iter().find(|q| q.id == id).unwrap().clone();
+    let (home, table) = (find("app.home"), find("insert.table"));
+    set_current(de);
+    let (home_tip, table_tip) = (crate::qat::tip(&home, 0, true), crate::qat::tip(&table, 6, true));
+    let (home_shown, table_shown) = (home.shown_label(), table.shown_label());
+    set_current(Lang::EN);
+    assert!(home_tip.starts_with("Start") && home_shown == "Start", "a built-in label translates: {home_tip}");
+    assert!(table_tip.starts_with("Home") && table_shown == "Home", "a caller's label stays literal: {table_tip}");
+}
+
 #[test]
 fn app_language_reports_and_changes_the_setting() {
     use_fixture("de", DE);
