@@ -324,6 +324,10 @@ pub struct Chart {
     pub legend: Option<String>,
     /// `c:legend/c:overlay`: the legend is drawn over the plot instead of shrinking it.
     pub legend_overlay: bool,
+    /// `c:legend/c:legendEntry`: entries whose text has its own size, weight or colour, over
+    /// the legend's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub legend_entries: Vec<LegendEntry>,
     /// Text size in points of the axis labels and legend (from their `c:txPr`, else the chart's);
     /// `None`: the file gives none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -392,10 +396,28 @@ pub struct Chart {
     /// Original chart XML part kept for round-trip of unmodelled options.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
+    /// The chart was too large to model: `raw` and `kept` are written back unchanged on save.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub verbatim: bool,
     /// Package parts the original chart still points at (embedded workbook, styles, drawings).
     /// The PPTX writer clears this before comparing modelled state. Native saves keep it too.
     #[serde(skip_serializing_if = "ChartKept::is_empty")]
     pub kept: ChartKept,
+}
+
+/// One legend entry's own text (`c:legendEntry/c:txPr`): what it sets wins over the legend's.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LegendEntry {
+    /// The entry's place in the legend, from 0 (`c:idx`).
+    pub idx: u32,
+    /// Text size in points.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<ColorRef>,
 }
 
 /// One relationship of a chart part, with the target string as it was written.
@@ -450,6 +472,7 @@ impl Default for Chart {
             series: vec![],
             legend: Some("b".into()),
             legend_overlay: false,
+            legend_entries: vec![],
             text_size: None,
             title_size: None,
             data_labels: false,
@@ -485,6 +508,7 @@ impl Default for Chart {
             bin_count: None,
             bin_size: None,
             raw: None,
+            verbatim: false,
             kept: ChartKept::default(),
         }
     }
@@ -1157,7 +1181,8 @@ mod tests {
         c.y_format = Some(r#"_-* #\ ##0\ "₽"_-;\-* #\ ##0\ "₽"_-;_-* "-"??\ "₽"_-;_-@_-"#.into());
         c.lang = Some("ru-RU".into());
         assert_eq!(c.axis_label(false, 800_000.0), "800\u{a0}000 ₽");
-        assert_eq!(c.axis_label(false, 0.0), "- ₽");
+        // Excel shows each `?` of the zero section as a space.
+        assert_eq!(c.axis_label(false, 0.0), "-   ₽");
         // No format: General.
         assert_eq!(c.axis_label(true, 2.5), "2,5");
         c.lang = None;
@@ -1166,7 +1191,7 @@ mod tests {
         c.lang = Some("ru-RU".into());
         c.series[0].number_format = Some(r#"#,##0\ "₽""#.into());
         assert_eq!(c.data_label(&c.series[0], 516_600_000.0), "516\u{a0}600\u{a0}000 ₽");
-        assert_eq!(c.data_label(&c.series[1], 0.0), "- ₽");
+        assert_eq!(c.data_label(&c.series[1], 0.0), "-   ₽");
     }
 
     #[test]
@@ -1311,6 +1336,7 @@ impl Chart {
             series: vec![],
             gap_width: 0.0,
             raw: None,
+            verbatim: false,
             subtotals: vec![],
             ..self.clone()
         };
@@ -1337,6 +1363,7 @@ impl Chart {
                     .collect(),
                 kind: Some(ChartType::Line),
                 secondary_axis: true,
+                data_labels: Some(false),
                 ..Default::default()
             });
             v.y2_min = Some(0.0);

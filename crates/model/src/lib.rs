@@ -12,7 +12,7 @@ pub mod bidi;
 pub mod chart;
 pub mod defaults;
 pub mod edit;
-pub mod numfmt;
+pub use craft_drawingml::numfmt;
 pub mod resolve;
 pub mod style;
 pub mod table;
@@ -252,6 +252,16 @@ pub struct MediaClip {
     /// Probed picture size of a video in pixels (0 = unknown).
     pub width: u32,
     pub height: u32,
+}
+
+impl MediaClip {
+    /// Whether the clip's frame (an audio icon, or a video's poster) stays out of the
+    /// show picture. `playing` is true while the voice exists and has not ended.
+    /// Audio with "Hide During Show" set stays hidden even while it plays; video with
+    /// "Hide While Not Playing" set shows its frame while it plays.
+    pub fn hidden_during_show(&self, playing: bool) -> bool {
+        self.hide_while_not_playing && (!self.video || !playing)
+    }
 }
 
 /// One ink stroke (Draw tab): points in slide coordinates with pressure (`0..=1`,
@@ -626,6 +636,9 @@ pub struct Slide {
     pub animations: Vec<Animation>,
     /// Speaker notes.
     pub notes: TextBody,
+    /// Whether the slide has an associated notes slide even if its text is empty.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_notes_slide: bool,
     pub comments: Vec<Comment>,
     /// `clrMapOvr`: a colour map replacing the layout's or master's (`bg1`→`dk1`…); None follows
     /// the layout.
@@ -652,6 +665,7 @@ impl Default for Slide {
             transition: None,
             animations: vec![],
             notes: TextBody::default(),
+            has_notes_slide: false,
             comments: vec![],
             color_map: None,
             tags: vec![],

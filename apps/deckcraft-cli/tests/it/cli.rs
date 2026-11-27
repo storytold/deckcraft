@@ -1,7 +1,7 @@
 use std::process::{Command, Output};
 
 fn cli(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).args(args).output().unwrap()
+    Command::new(crate::deckcraft_cli()).args(args).output().unwrap()
 }
 
 fn stdout(o: &Output) -> String {
@@ -197,7 +197,7 @@ fn every_subcommand_answers_help_and_does_nothing_else() {
     std::fs::create_dir_all(&dir).unwrap();
     for sub in SUBCOMMANDS {
         for args in [vec![sub, "--help"], vec![sub, "-h", "out.png"], vec!["help", sub]] {
-            let o = Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).current_dir(&dir).args(&args).output().unwrap();
+            let o = Command::new(crate::deckcraft_cli()).current_dir(&dir).args(&args).output().unwrap();
             assert!(stdout(&o).starts_with(&format!("usage: deckcraft-cli {sub}")), "{args:?}");
         }
     }
@@ -286,4 +286,23 @@ fn commands_lists_one_line_per_command() {
     assert_eq!(stdout(&cli(&["commands", "format.size"])), "format.size — Font Size: {size: pt}\n");
     assert_eq!(stdout(&cli(&["commands", "slide.next"])), "slide.next — Next Slide\n");
     assert_eq!(stdout(&cli(&["commands", "shape.presets"])), "shape.presets — Shape Gallery → [{name, label, category}]\n");
+}
+
+/// The desktop-only Nightly launcher protocol never falls through to the CLI's stable directory
+/// discovery: every spelling leaves with exit 2 and says so.
+#[test]
+fn the_desktop_launcher_protocol_is_refused() {
+    for args in [
+        &["--launch-profile", "nightly-v1", "--profile-root", "/nightly-data/profiles/deckcraft", "--", "deck.pptx"][..],
+        &["--launch-profile", "nightly-v1", "info"][..],
+        &["--profile-root=/nightly-data/profiles/deckcraft", "info"][..],
+    ] {
+        let o = cli(args);
+        assert_eq!(o.status.code(), Some(2), "{args:?}");
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(err.contains("desktop launcher protocol"), "{args:?}: {err}");
+    }
+    // Everything after the delimiter is a file name, so the flags there are not the protocol.
+    let o = cli(&["--", "--launch-profile"]);
+    assert_eq!(o.status.code(), Some(1), "`--` is an unknown subcommand, not a profile");
 }

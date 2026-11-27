@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::{Services, SlideApp};
 
 fn harness() -> Harness<'static, SlideApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1600.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

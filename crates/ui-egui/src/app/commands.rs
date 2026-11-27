@@ -227,8 +227,9 @@ impl SlideApp {
             }
             "app.about" => self.dialog = Some(dialogs::Dialog::new("about")),
             "app.checkUpdates" => {
+                // Nightly is updated by ArtCraft Launcher; its stable updater must stay idle.
                 #[cfg(not(target_arch = "wasm32"))]
-                updates_ui::request_check(self);
+                updates_ui::request_check(self)?;
                 #[cfg(target_arch = "wasm32")]
                 return Err("updates are handled by the browser: reload the page".into());
             }
@@ -238,7 +239,7 @@ impl SlideApp {
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
             "app.smartArtPictureDialog" => {
                 if self.services.pick_open.is_none() {
-                    return Err("picking a SmartArt picture needs the desktop app".into());
+                    return Err("picking a Diagram picture needs the desktop app".into());
                 }
                 self.pick_and_run("picture", "smartArt.picture", p);
             }
