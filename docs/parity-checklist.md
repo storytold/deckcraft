@@ -50,8 +50,8 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 ## Rows
 
-| Area | Feature | Priority | Status |
-|---|---|---|---|
+| Area | Feature | Priority | Status | Headless |
+|---|---|---|---|---|
 | Application shell | Start screen (new, templates/themes, recent) | P0 | D |
 | Application shell | Ribbon with Home/Insert/Draw/Design/Transitions/Animations/Slide Show/Review/View tabs | P0 | D |
 | Application shell | Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design) | P0 | P |
