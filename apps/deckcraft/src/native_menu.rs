@@ -14,6 +14,7 @@ pub struct NativeMenu {
     _menu: Menu,
     events: Receiver<MenuEvent>,
     view_items: Vec<(&'static str, CheckMenuItem)>,
+    edit_items: Vec<MenuItem>,
 }
 
 fn item(id: &'static str, label: &'static str, acc: Option<&'static str>) -> MenuItem {
@@ -59,6 +60,7 @@ impl NativeMenu {
     pub fn install(ctx: &egui::Context) -> NativeMenu {
         let menu = Menu::new();
         let mut view_items = Vec::new();
+        let mut edit_items = Vec::new();
 
         let _ = menu.append(&build_app_menu());
 
@@ -93,7 +95,11 @@ impl NativeMenu {
                     let _ = sub.append(&chk);
                     view_items.push((id, chk));
                 } else {
-                    let _ = sub.append(&item(id, label, None));
+                    let entry = item(id, label, None);
+                    if matches!(id, "edit.undo" | "edit.redo" | "edit.selectAll") {
+                        edit_items.push(entry.clone());
+                    }
+                    let _ = sub.append(&entry);
                 }
             }
             let _ = menu.append(&sub);
@@ -116,14 +122,19 @@ impl NativeMenu {
             ctx_clone.request_repaint();
         }));
 
-        NativeMenu { _menu: menu, events: rx, view_items }
+        NativeMenu { _menu: menu, events: rx, view_items, edit_items }
     }
 
     /// Polls pending native menu events, dispatches commands to SlideApp, and syncs view states.
     pub fn poll(&self, app: &mut SlideApp, ctx: &egui::Context) {
+        let text_edit_focused = app.dialog.is_some() || ctx.text_edit_focused();
+        for item in &self.edit_items {
+            if item.is_enabled() == text_edit_focused {
+                item.set_enabled(!text_edit_focused);
+            }
+        }
         while let Ok(event) = self.events.try_recv() {
             let id = event.id().as_ref();
-            let text_edit_focused = app.dialog.is_some() || ctx.text_edit_focused();
             if text_edit_focused {
                 let clipboard = match id {
                     "edit.copy" => Some(egui::ViewportCommand::RequestCopy),
@@ -133,6 +144,9 @@ impl NativeMenu {
                 };
                 if let Some(cmd) = clipboard {
                     ctx.send_viewport_cmd(cmd);
+                    continue;
+                }
+                if matches!(id, "edit.undo" | "edit.redo" | "edit.selectAll") {
                     continue;
                 }
             }

@@ -54,10 +54,12 @@ impl eframe::App for App {
             if self.1.is_none() && std::env::var_os("DECKCRAFT_NO_NATIVE_MENU").is_none() {
                 self.1 = Some(native_menu::NativeMenu::install(ctx));
             }
-            if let Some(m) = &self.1 {
-                m.poll(&mut self.0, ctx);
+            if !self.0.synthetic_batch_is_live(ctx) {
+                if let Some(m) = &self.1 {
+                    m.poll(&mut self.0, ctx);
+                }
+                apple_events::poll(&self.2, &mut self.0, ctx);
             }
-            apple_events::poll(&self.2, &mut self.0, ctx);
         }
         self.0.logic(ctx);
         self.0.close_path(ctx);
