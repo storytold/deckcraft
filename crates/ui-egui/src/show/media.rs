@@ -73,21 +73,19 @@ pub(super) fn shown_slide_rect(ui: &Ui, show: &Show, doc: &Presentation) -> Rect
 
 /// Playback bar for one clip: centred along the bottom inside a large shape, just under a small
 /// icon, and kept on screen. Where it would meet the show's tool bar (a clip filling the slide),
-/// it sits above it; reading view draws no tool bar.
+/// it sits above it. Reading view draws no tool bar and keeps the bar's earlier place.
 fn media_bar_rect(shape: Rect, full: Rect, reading: bool) -> Rect {
     let h = 26.0f32;
     let w = shape.width().clamp(160.0, 420.0);
-    let (w, y) = if shape.height() >= h + 16.0 && shape.width() >= 160.0 {
-        ((shape.width() - 8.0).min(w), shape.max.y - h - 4.0)
-    } else {
-        (w, shape.max.y + 4.0)
-    };
+    let inside = shape.height() >= h + 16.0 && shape.width() >= 160.0;
+    let (w, y) = if inside { ((shape.width() - 8.0).min(w), shape.max.y - h - 4.0) } else { (w, shape.max.y + 4.0) };
+    if reading {
+        let x = if inside { shape.min.x + 4.0 } else { shape.center().x - w / 2.0 };
+        return Rect::from_min_size(pos2(x, y), vec2(w, h));
+    }
     // Not `clamp`: it panics when the window is narrower than the bar.
     let x = (shape.center().x - w / 2.0).min(full.max.x - w - 4.0).max(full.min.x + 4.0);
     let bar = Rect::from_min_size(pos2(x, y), vec2(w, h));
-    if reading {
-        return bar;
-    }
     // The tool bar takes clicks 8 px around it (`reading_bar_hit`).
     let tool = tool_bar_rect(full).expand(8.0);
     if bar.intersects(tool) { bar.translate(vec2(0.0, tool.min.y - 4.0 - bar.max.y)) } else { bar }
@@ -308,9 +306,11 @@ mod hit_tests {
         // Wide enough to clear it by centring alone: the bar stays at the bottom of the clip.
         let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(2560.0, 1440.0));
         assert_eq!(media_bar_rect(full, full, false).max.y, full.max.y - 4.0);
-        // Reading view draws no tool bar: the bar stays at the bottom of the clip.
+        // Reading view draws no tool bar: the bar stays where it was, at the bottom left of the clip.
         let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 720.0));
-        assert_eq!(media_bar_rect(full, full, true).max.y, full.max.y - 4.0);
+        let bar = media_bar_rect(full, full, true);
+        assert_eq!(bar.max.y, full.max.y - 4.0);
+        assert!(bar.center().x < full.center().x, "reading view: left, not centred: {bar:?}");
         // A clip running past the screen keeps its bar on screen, also in a window narrower than the bar.
         for w in [800.0, 300.0] {
             let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(w, 600.0));
