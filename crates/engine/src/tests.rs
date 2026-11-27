@@ -7452,6 +7452,52 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn unsupported_save_paths_are_refused_and_write_nothing() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-ext-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["a.pptm", "a.ppt", "a.pot", "a.potm", "a.pps", "a.ppsm", "a.odp", "a.xml", "a.svg", "a.bmp", "a"] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        let before = s.doc().unwrap().path.clone();
+        let err = s.execute("file.saveAs", &json!({"path": path})).unwrap_err();
+        assert!(err.to_string().contains("cannot save"), "{name}: {err}");
+        assert!(!std::path::Path::new(&path).exists(), "{name} must not be written");
+        assert_eq!(s.doc().unwrap().path, before, "{name}: the document keeps its path");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsupported_paths_are_refused_even_with_an_explicit_format() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-ext-fmt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptm").to_string_lossy().to_string();
+    let err = s.execute("file.saveAs", &json!({"path": path, "format": "pptx"})).unwrap_err();
+    assert!(err.to_string().contains("cannot save"), "{err}");
+    assert!(!std::path::Path::new(&path).exists(), "the path guard wins over the explicit format");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsupported_extensionless_save_is_refused_even_with_an_explicit_format() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-extless-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("no-extension").to_string_lossy().to_string();
+    let err = s.execute("file.saveAs", &json!({"path": path, "format": "pptx"})).unwrap_err();
+    assert!(err.to_string().contains("cannot save"), "{err}");
+    assert!(!std::path::Path::new(&path).exists(), "the path guard wins over the explicit format");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
