@@ -250,7 +250,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             ("Long Dash", "lgDash"),
             ("Long Dash Dot", "lgDashDot"),
         ] {
-            if ui.button(tl!(l)).clicked() {
+            if ui.button(dash_label(l)).clicked() {
                 run(app, "shape.line", json!({"dash": d}));
                 ui.close();
             }
@@ -295,12 +295,12 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    ui.menu_button("Glow", |ui| {
+    ui.menu_button(tl!("Glow"), |ui| {
         if ui.button(tl!("No Glow")).clicked() {
             run(app, "shape.effects", json!({"glow": null}));
         }
         for r in [5.0, 8.0, 11.0, 18.0] {
-            if ui.button(format!("{r} pt glow")).clicked() {
+            if ui.button(crate::i18n::fmt(tl!("{n} pt glow"), &[("n", &r.to_string())])).clicked() {
                 run(app, "shape.effects", json!({"glow": r}));
             }
         }
@@ -388,4 +388,10 @@ fn paint_freeform_icon(p: &egui::Painter, r: Rect, name: &str, ink: Color32) {
         _ => (0..=40).map(|i| i as f32 / 40.0).map(|u| at(u, 0.5 + 0.35 * (u * 19.0).sin() * (1.0 - u * 0.4))).collect(),
     };
     p.add(egui::Shape::line(pts, egui::Stroke::new(1.3, ink)));
+}
+
+/// A line style's name in a list of choices. "Dash" is also the Format Shape field label, and a
+/// language may word the field and the list item differently, so the item has its own context.
+pub fn dash_label(l: &str) -> &str {
+    crate::i18n::tc("dash style", l)
 }

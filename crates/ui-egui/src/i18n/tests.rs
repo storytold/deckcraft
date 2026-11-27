@@ -19,6 +19,9 @@ const DE: &str = "@id\tlanguage.name\tDeutsch
 \tNotes\tNotizen
 \t{name} options\tOptionen für {name}
 \tSystem language\tSystemsprache
+\tDash\tStrichart
+dash style\tDash\tStrich
+\tSolid\tDurchgehend
 ";
 
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
@@ -74,6 +77,20 @@ fn the_language_setting_is_auto_or_an_offered_code() {
         assert_eq!(ui.language, kept.to_ascii_lowercase());
         assert_eq!(Lang::from_pref(&ui.language), Lang::EN);
     }
+}
+
+/// "Dash" is the Format Shape field label and also a line style in lists of choices; the list item
+/// has its own context, so a language can word them differently, and falls back to the plain row.
+#[test]
+fn a_line_style_in_a_list_uses_its_own_wording() {
+    let de = fixture_lang("de", DE);
+    set_current(de);
+    let field = t("Dash").to_string();
+    let item = crate::ribbon::dash_label("Dash").to_string();
+    let plain = crate::ribbon::dash_label("Solid").to_string();
+    set_current(Lang::EN);
+    assert_ne!(item, field, "the list item is not the field label");
+    assert_eq!(plain, "Durchgehend", "a style without a context row uses its plain row");
 }
 
 #[test]

@@ -132,7 +132,7 @@ fn new_slide_menu(app: &mut SlideApp, ui: &mut Ui) {
     }
     let desktop = app.services.pick_open.is_some();
     for (label, keep) in [("Reuse Slides…", false), ("Reuse Slides (Keep Source Formatting)…", true)] {
-        let r = ui.add_enabled(desktop, egui::Button::new(label));
+        let r = ui.add_enabled(desktop, egui::Button::new(tl!(label)));
         if r.clicked() {
             run(app, "app.reuseSlidesDialog", json!({"keepFormatting": keep}));
         }

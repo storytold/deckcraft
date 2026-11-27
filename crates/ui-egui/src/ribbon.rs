@@ -41,7 +41,7 @@ use chart::chart_design;
 use design::design;
 pub use design::paint_theme_tile;
 use draw::draw;
-pub use galleries::{cref_param, effects_menu, outline_menu, paint_preset, shapes_gallery};
+pub use galleries::{cref_param, dash_label, effects_menu, outline_menu, paint_preset, shapes_gallery};
 pub use home::font_families;
 use home::home;
 use insert::insert;

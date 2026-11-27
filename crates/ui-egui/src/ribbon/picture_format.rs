@@ -158,7 +158,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                     ("Dash Dot", "dashDot"),
                     ("Long Dash", "lgDash"),
                 ] {
-                    if ui.button(tl!(l)).clicked() {
+                    if ui.button(crate::ribbon::dash_label(l)).clicked() {
                         run(app, "shape.line", json!({"dash": d}));
                     }
                 }

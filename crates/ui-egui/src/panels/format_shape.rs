@@ -217,11 +217,13 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
     ui.add_enabled_ui(single, |ui| {
         ui.horizontal(|ui| {
             ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!("From")));
-            let combo =
-                craft_ui::ComboBox::from_id_salt("fmt-origin").selected_text(if center { "Center" } else { "Top Left Corner" }).show_ui(ui, |ui| {
+            let combo = craft_ui::ComboBox::from_id_salt("fmt-origin").selected_text(tl!(if center { "Center" } else { "Top Left Corner" })).show_ui(
+                ui,
+                |ui| {
                     ui.selectable_value(&mut center, false, tl!("Top Left Corner"));
                     ui.selectable_value(&mut center, true, tl!("Center"));
-                });
+                },
+            );
             combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "From"));
         })
     });
@@ -718,8 +720,15 @@ fn three_d_combo(app: &mut SlideApp, ui: &mut Ui, id: u32, label: &str, key: &st
 
 /// A number field running `shape.effects` with `{threeD: {key: value}}` when it changes.
 fn three_d_drag(app: &mut SlideApp, ui: &mut Ui, label: &str, value: f64, suffix: &str, key: &str) {
+    three_d_field(app, ui, label, 0.0, value, suffix, key);
+}
+
+/// [`three_d_drag`] with the label indented by `indent` points (the bevel's size under its preset).
+/// The indent is space, not leading blanks in `label`, which would never match a catalog row.
+fn three_d_field(app: &mut SlideApp, ui: &mut Ui, label: &str, indent: f32, value: f64, suffix: &str, key: &str) {
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
+        ui.add_space(indent);
+        let field = ui.add_sized(vec2(90.0 - indent, 20.0), egui::Label::new(tl!(label)));
         let mut v = value;
         let r = ui.add(egui::DragValue::new(&mut v).suffix(suffix).max_decimals(1)).labelled_by(field.id);
         if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
@@ -738,8 +747,8 @@ fn three_d_options(app: &mut SlideApp, ui: &mut Ui, id: u32, raw: Option<&str>) 
     for (label, key, b) in [("Top bevel", "bevelTop", &s3.top), ("Bottom bevel", "bevelBottom", &s3.bottom)] {
         three_d_combo(app, ui, id, label, key, b.as_ref().map_or("none", |b| b.preset.as_str()), &with_none);
         if let Some(b) = b {
-            three_d_drag(app, ui, "   Width", b.w, " pt", &format!("{key}W"));
-            three_d_drag(app, ui, "   Height", b.h, " pt", &format!("{key}H"));
+            three_d_field(app, ui, "Width", 12.0, b.w, " pt", &format!("{key}W"));
+            three_d_field(app, ui, "Height", 12.0, b.h, " pt", &format!("{key}H"));
         }
     }
     three_d_drag(app, ui, "Depth", s3.depth, " pt", "depth");

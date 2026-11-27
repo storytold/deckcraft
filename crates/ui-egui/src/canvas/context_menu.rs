@@ -19,7 +19,7 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
         }
         let has_sel = app.session.active().is_some_and(|d| !d.selection.shapes.is_empty());
         for (l, id) in [("Cut", "edit.cut"), ("Copy", "edit.copy"), ("Paste", "edit.paste")] {
-            if ui.add_enabled(crate::ribbon::enabled(app, id), egui::Button::new(l)).clicked() {
+            if ui.add_enabled(crate::ribbon::enabled(app, id), egui::Button::new(tl!(l))).clicked() {
                 let _ = app.run(id, json!({}));
                 ui.close();
             }
@@ -177,7 +177,7 @@ fn text_items(app: &mut SlideApp, ui: &mut egui::Ui) {
         ui.close();
     }
     for (l, id) in [("Bullets", "format.bullets"), ("Numbering", "format.numbering")] {
-        if ui.add_enabled(crate::ribbon::enabled(app, id), egui::Button::new(l)).clicked() {
+        if ui.add_enabled(crate::ribbon::enabled(app, id), egui::Button::new(tl!(l))).clicked() {
             let _ = app.run(id, json!({}));
             ui.close();
         }
@@ -226,7 +226,7 @@ fn shape_items(app: &mut SlideApp, ui: &mut egui::Ui) {
         crate::ribbon::menu_item(app, ui, crate::icons::Icon::Ungroup, "Ungroup", "arrange.ungroup", json!({}));
     });
     let locked = app.session.active().is_some_and(|d| d.selected_shapes().iter().all(|s| s.locked));
-    if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
+    if ui.button(tl!(if locked { "Unlock" } else { "Lock" })).clicked() {
         let _ = app.run("shape.lock", json!({"locked": !locked}));
         ui.close();
     }

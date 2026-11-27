@@ -129,7 +129,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
             ui.menu_button(tl!("Pen Style"), |ui| {
                 for (l, d) in [("Solid", "solid"), ("Dash", "dash"), ("Dot", "sysDot"), ("Dash Dot", "dashDot"), ("Long Dash", "lgDash")] {
                     let cur = app.table_pen.get("dash").and_then(Value::as_str).unwrap_or("solid") == d;
-                    if ui.radio(cur, tl!(l)).clicked() {
+                    if ui.radio(cur, crate::ribbon::dash_label(l)).clicked() {
                         app.table_pen["dash"] = json!(d);
                     }
                 }
