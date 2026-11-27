@@ -7498,6 +7498,15 @@ fn unsupported_extensionless_save_is_refused_even_with_an_explicit_format() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn save_bytes_rejects_an_unknown_format() {
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let err = s.execute("file.saveBytes", &json!({"format": "odp"})).unwrap_err();
+    assert!(err.to_string().contains("unknown save format"), "{err}");
+    assert!(s.execute("file.saveBytes", &json!({"format": "deckcraft"})).is_ok());
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
