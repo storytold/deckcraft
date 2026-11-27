@@ -1394,6 +1394,21 @@ fn txt_export_does_not_double_existing_crlf() {
 }
 
 #[test]
+fn save_as_txt_uses_crlf() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-txt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("outline.txt").to_string_lossy().to_string();
+    s.execute("file.saveAs", &json!({"path": path})).unwrap();
+    let text = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+    assert!(text.contains("\r\n"), "TXT must use CRLF");
+    assert!(!text.replace("\r\n", "").contains('\n'), "no bare LF");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn save_and_reopen_native() {
     let mut s = Session::new();
     sample::open_sample(&mut s).unwrap();
