@@ -218,12 +218,17 @@ fn fmt_num(v: f64) -> String {
 /// A scatter or bubble chart's value x axis (min, max, major unit): one scale over every series'
 /// x values, from zero when they're all positive. `None` for other charts and when there are no x values.
 fn value_x_scale(c: &Chart, max_intervals: usize) -> Option<(f64, f64, f64)> {
-    if c.series.is_empty() || !c.series.iter().all(|s| matches!(c.series_kind(s), ChartType::Scatter | ChartType::Bubble)) {
+    if !c.series.iter().any(|s| matches!(c.series_kind(s), ChartType::Scatter | ChartType::Bubble)) {
         return None;
     }
-    let xs = c.series.iter().flat_map(|s| s.x_values.iter().flatten().copied()).filter(|v| v.is_finite());
+    let xs = c
+        .series
+        .iter()
+        .filter(|s| matches!(c.series_kind(s), ChartType::Scatter | ChartType::Bubble))
+        .flat_map(|s| s.x_values.iter().flatten().copied())
+        .filter(|v| v.is_finite());
     let (lo, hi) = xs.fold(None, |r: Option<(f64, f64)>, v| Some(r.map_or((v, v), |(a, b)| (a.min(v), b.max(v)))))?;
-    Some(axis_scale(lo.min(0.0), hi, None, None, None, max_intervals, false))
+    Some(axis_scale(lo.min(0.0), hi, c.x_min, c.x_max, None, max_intervals, false))
 }
 
 /// Where the legend goes for `c:legendPos`, and the plot area left over.
@@ -391,8 +396,8 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
         Some((b, _)) => v.max(f64::MIN_POSITIVE).log(b).max(min - 1.0),
         None => v,
     };
-    // A combo chart's secondary value axis, on the right (vertical value axes only).
-    let second = if horiz { None } else { c.axis_scale(true, max_intervals) };
+    // A combo chart's secondary vertical value axis, including scatter overlays on bars.
+    let second = c.axis_scale(true, max_intervals);
     let ticks = axis_ticks;
     // Label gutters as wide as the longest value label.
     let primary_ticks: Vec<f64> = ticks((min, max, step)).map(|k| log.map_or(k, |(b, _)| b.powf(k))).collect();
@@ -401,7 +406,8 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
         vals.iter().map(|v| c.axis_label(sec, *v).chars().count()).max().unwrap_or(1) as f64 * base * 0.55 + base * 0.6
     };
     let gutter = if horiz {
-        base * 4.5
+        let label_width = c.categories.iter().map(|name| name.chars().count()).max().unwrap_or(0) as f64 * base * 0.55 + base;
+        clamp_soft(label_width, base * 4.5, area.width() * 0.4)
     } else if c.y_hidden {
         base * 0.5
     } else {
@@ -463,11 +469,23 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let slot = |i: usize| if backwards { ncat.saturating_sub(i + 1) as f64 + fwd } else { i as f64 + back };
     // Scatter and bubble charts have a value x axis: one scale over every series' x values, with its
     // own tick labels in place of category names.
-    let xscale = if horiz { None } else { value_x_scale(c, (plot.width() / (base * 2.5)).floor().clamp(2.0, 12.0) as usize) };
+    let xscale = value_x_scale(c, (plot.width() / (base * 2.5)).floor().clamp(2.0, 12.0) as usize);
     let to_x = |v: f64| xscale.map(|(lo, hi, _)| plot.x0 + (v - lo) / positive_span(hi - lo) * plot.width());
     draw_category_labels(
         ctx,
-        &CategoryLabelDrawing { rctx, chart: c, transform: m, area, plot, horiz, band, slot: &slot, xscale, base, text_color: text_col },
+        &CategoryLabelDrawing {
+            rctx,
+            chart: c,
+            transform: m,
+            area,
+            plot,
+            horiz,
+            band,
+            slot: &slot,
+            xscale: if combo { None } else { xscale },
+            base,
+            text_color: text_col,
+        },
     );
     if let Some(b) = boxes {
         crate::chartex::draw_boxes(ctx, rctx, c, b, m, plot, band, horiz, &to_v);
@@ -993,13 +1011,13 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
             }
             ctx.set_paint(color(col, 0.85));
             ctx.fill_path(&a);
-        } else if kind != ChartType::Scatter {
+        } else if kind != ChartType::Scatter || s.scatter_lines {
             let lw = s.line.as_ref().and_then(|l| l.width).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(2.25).clamp(0.25, 20.0);
             ctx.set_paint(color(col, 1.0));
             ctx.set_stroke(kurbo::Stroke::new(lw).with_join(kurbo::Join::Round).with_caps(kurbo::Cap::Round));
             ctx.stroke_path(&p);
         }
-        if matches!(kind, ChartType::LineMarkers | ChartType::Scatter | ChartType::Bubble) {
+        if matches!(kind, ChartType::LineMarkers | ChartType::Scatter | ChartType::Bubble) && s.marker.as_deref() != Some("none") {
             ctx.set_paint(color(col, 1.0));
             for q in &pts {
                 ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
