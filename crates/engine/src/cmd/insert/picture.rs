@@ -261,3 +261,23 @@ pub(super) fn audio(s: &mut Session, p: &Value) -> Result<Value> {
 pub(super) fn video(s: &mut Session, p: &Value) -> Result<Value> {
     media(s, p, true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::audio_content_type;
+
+    #[test]
+    fn audio_content_type_maps_every_audio_only_container() {
+        for (video, audio) in [
+            ("video/x-ms-wmv", "audio/x-ms-wma"),
+            ("video/mp4", "audio/mp4"),
+            ("video/webm", "audio/webm"),
+            ("video/ogg", "audio/ogg"),
+            ("video/quicktime", "audio/mp4"),
+        ] {
+            assert_eq!(audio_content_type(video), audio, "{video}");
+        }
+        assert_eq!(audio_content_type("audio/mpeg"), "audio/mpeg");
+        assert_eq!(audio_content_type("application/octet-stream"), "application/octet-stream");
+    }
+}
