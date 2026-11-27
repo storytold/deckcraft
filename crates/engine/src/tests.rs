@@ -7507,6 +7507,32 @@ fn save_bytes_rejects_an_unknown_format() {
     assert!(s.execute("file.saveBytes", &json!({"format": "deckcraft"})).is_ok());
 }
 
+#[test]
+fn unsupported_export_paths_are_refused() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-export-ext-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptm").to_string_lossy().to_string();
+    assert!(s.execute("file.export", &json!({"path": path})).is_err());
+    assert!(!std::path::Path::new(&path).exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn extensionless_export_with_an_explicit_format_still_writes() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-export-fmt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("out").to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path, "format": "png", "slide": 0})).unwrap();
+    assert!(std::path::Path::new(&path).exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,

@@ -621,7 +621,10 @@ fn color_at(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.export", "missing `path`"))?.to_string();
-    let format = str_param(p, "format").unwrap_or(format_for_path(&path)).to_string();
+    let format = match str_param(p, "format") {
+        Some(f) => f.to_string(),
+        None => writable_format(&path)?.to_string(),
+    };
     let st = s.doc()?;
     let scale = finite_scale(f64_or(p, "scale", 2.0));
     let transparent = bool_or(p, "transparentBackground", false);
