@@ -120,30 +120,26 @@ pub(super) fn line_spacing(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn paragraph(s: &mut Session, p: &Value) -> Result<Value> {
-    if let Err(e) =
-        require_any(p, "format.paragraph", &["align", "indentLeft", "indentFirst", "spaceBefore", "spaceAfter", "lineSpacing", "lineSpacingPt"])
+    // The Paragraph dialog's other fields are format.paragraphDialog's; say so instead of
+    // calling the call empty.
+    if let Some(k) =
+        ["special", "specialBy", "indentRight", "spaceBeforeKind", "spaceAfterKind"].into_iter().find(|k| p.get(*k).is_some_and(|v| !v.is_null()))
     {
-        // The Paragraph dialog's other fields are format.paragraphDialog's; say so instead of
-        // calling the call empty.
-        if let Some(k) =
-            ["special", "specialBy", "indentRight", "spaceBeforeKind", "spaceAfterKind"].into_iter().find(|k| p.get(*k).is_some_and(|v| !v.is_null()))
-        {
-            // The dialog applies a kind or `specialBy` only with the value it qualifies.
-            let with = match k {
-                "spaceBeforeKind" => " together with `spaceBefore`",
-                "spaceAfterKind" => " together with `spaceAfter`",
-                "specialBy" => " together with `special`",
-                _ => "",
-            };
-            return Err(bad(
-                "format.paragraph",
-                format!(
-                    "`{k}` is a field of format.paragraphDialog (the whole Paragraph dialog); pass it there{with}. format.paragraph does not read it"
-                ),
-            ));
-        }
-        return Err(e);
+        // The dialog applies a kind or `specialBy` only with the value it qualifies.
+        let with = match k {
+            "spaceBeforeKind" => " together with `spaceBefore`",
+            "spaceAfterKind" => " together with `spaceAfter`",
+            "specialBy" => " together with `special`",
+            _ => "",
+        };
+        return Err(bad(
+            "format.paragraph",
+            format!(
+                "`{k}` is a field of format.paragraphDialog (the whole Paragraph dialog); pass it there{with}. format.paragraph does not read it"
+            ),
+        ));
     }
+    require_any(p, "format.paragraph", &["align", "indentLeft", "indentFirst", "spaceBefore", "spaceAfter", "lineSpacing", "lineSpacingPt"])?;
     let a = str_param(p, "align").map(|a| parse_align("format.paragraph", a)).transpose()?;
     let ml = f64_param(p, "indentLeft");
     let ind = f64_param(p, "indentFirst");
