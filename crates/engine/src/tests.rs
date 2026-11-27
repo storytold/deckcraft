@@ -1335,6 +1335,36 @@ fn writable_format_for_path_rejects_formats_deckcraft_does_not_write() {
 }
 
 #[test]
+fn txt_export_uses_crlf_even_with_explicit_outline() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-txt-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("outline.txt").to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path, "format": "outline"})).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("\r\n"), "TXT must use CRLF: {text:?}");
+    assert!(!text.replace("\r\n", "").contains('\n'), "no bare LF: {text:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn md_export_keeps_lf() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-md-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("outline.md").to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path, "format": "outline"})).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(!bytes.windows(2).any(|w| w == b"\r\n"), "Markdown must stay LF");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn save_and_reopen_native() {
     let mut s = Session::new();
     sample::open_sample(&mut s).unwrap();

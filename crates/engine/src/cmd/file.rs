@@ -485,6 +485,12 @@ fn writable_format(path: &str) -> Result<&'static str> {
     })
 }
 
+/// `.txt` needs CRLF for the reference app's outline importer; every other outline target
+/// keeps LF.
+fn outline_format<'a>(path: &str, format: &'a str) -> &'a str {
+    if format == "outline" && path.to_ascii_lowercase().ends_with(".txt") { "txt" } else { format }
+}
+
 /// Animated GIF bytes for `doc` with the options in `p` (see [`crate::gif_export::GifOptions::from_params`]).
 pub fn gif_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
     Ok(crate::gif_export::encode(doc, &crate::gif_export::GifOptions::from_params(p)?)?.bytes)
@@ -546,6 +552,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let path_format = writable_format(&path)?;
     let format = str_param(p, "format").unwrap_or(path_format);
+    let format = outline_format(&path, format);
     let bytes = save_bytes(&s.doc()?.doc, format)?;
     write_file(&path, &bytes)?;
     mark_saved(s, Some(path.clone()))?;
@@ -636,6 +643,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         Some(f) => f.to_string(),
         None => writable_format(&path)?.to_string(),
     };
+    let format = outline_format(&path, &format).to_string();
     let st = s.doc()?;
     let scale = finite_scale(f64_or(p, "scale", 2.0));
     let transparent = bool_or(p, "transparentBackground", false);
