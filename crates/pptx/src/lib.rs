@@ -59,10 +59,6 @@ impl craft_pptx::Defaults for DeckDefaults {
         Default::default()
     }
 
-    fn default_text_style(&self) -> craft_drawingml::text::ListStyle {
-        convert::list_style_to_craft(&defaults::default_text_style())
-    }
-
     fn application(&self) -> &str {
         "DeckCraft"
     }
