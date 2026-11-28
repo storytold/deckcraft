@@ -367,11 +367,25 @@ impl Session {
         }
         let st = self.doc()?;
         if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == shape) {
+            if let Some(cur_math) = st.selection.math.as_ref()
+                && let Some(hit_math) = super::click::math_hit_at(st, t, p)
+                && hit_math.pos == cur_math.pos
+            {
+                self.select(|_, sel| {
+                    if let Some(tt) = sel.text.as_mut() {
+                        tt.anchor = hit_math.pos;
+                        tt.caret = hit_math.pos;
+                    }
+                    sel.math = Some(hit_math);
+                })?;
+                return Ok(Value::Null);
+            }
             let pos = cmd::text::text_pos_at(st, t, p);
             self.select(|_, sel| {
                 if let Some(t) = sel.text.as_mut() {
                     t.caret = pos;
                 }
+                sel.math = None;
             })?;
         }
         Ok(Value::Null)

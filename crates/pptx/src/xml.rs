@@ -87,6 +87,130 @@ impl El {
     pub fn path(&self, path: &[&str]) -> Option<&El> {
         path.iter().try_fold(self, |cur, name| cur.child(name))
     }
+
+    pub fn f64(&self, name: &str) -> Option<f64> {
+        self.attr(name).and_then(|v| v.trim().parse::<f64>().ok())
+    }
+
+    pub fn find(&self, local: &str) -> Option<&El> {
+        self.find_bounded(local, 0)
+    }
+
+    fn find_bounded(&self, local: &str, depth: usize) -> Option<&El> {
+        if depth > 64 {
+            return None;
+        }
+        for c in self.elements() {
+            if c.local() == local {
+                return Some(c);
+            }
+            if let Some(found) = c.find_bounded(local, depth + 1) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        self.push_text(&mut out);
+        out
+    }
+
+    fn push_text(&self, out: &mut String) {
+        for c in &self.children {
+            match c {
+                Node::El(e) => e.push_text(out),
+                Node::Text(t) => out.push_str(t),
+            }
+        }
+    }
+}
+
+/// Attribute list builder for lightweight XML serialization (OMML fragments).
+#[derive(Default)]
+pub(crate) struct A(Vec<(String, String)>);
+
+impl A {
+    pub(crate) fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub(crate) fn a(mut self, k: &str, v: impl std::fmt::Display) -> Self {
+        self.0.push((k.to_owned(), v.to_string()));
+        self
+    }
+
+    pub(crate) fn o(self, k: &str, v: Option<impl std::fmt::Display>) -> Self {
+        match v {
+            Some(v) => self.a(k, v),
+            None => self,
+        }
+    }
+}
+
+/// Lightweight XML string writer for OMML fragments.
+#[derive(Default)]
+pub(crate) struct W(String);
+
+impl W {
+    pub(crate) fn new() -> Self {
+        Self(String::new())
+    }
+
+    pub(crate) fn into_string(self) -> String {
+        self.0
+    }
+
+    pub(crate) fn open(&mut self, tag: &str, attrs: A) {
+        self.0.push('<');
+        self.0.push_str(tag);
+        for (k, v) in &attrs.0 {
+            self.0.push(' ');
+            self.0.push_str(k);
+            self.0.push_str("=\"");
+            craft_xml::push_esc_attr(&mut self.0, v);
+            self.0.push('"');
+        }
+        self.0.push('>');
+    }
+
+    pub(crate) fn open0(&mut self, tag: &str) {
+        self.0.push('<');
+        self.0.push_str(tag);
+        self.0.push('>');
+    }
+
+    pub(crate) fn close(&mut self, tag: &str) {
+        self.0.push_str("</");
+        self.0.push_str(tag);
+        self.0.push('>');
+    }
+
+    pub(crate) fn empty(&mut self, tag: &str, attrs: A) {
+        self.0.push('<');
+        self.0.push_str(tag);
+        for (k, v) in &attrs.0 {
+            self.0.push(' ');
+            self.0.push_str(k);
+            self.0.push_str("=\"");
+            craft_xml::push_esc_attr(&mut self.0, v);
+            self.0.push('"');
+        }
+        self.0.push_str("/>");
+    }
+
+    pub(crate) fn empty0(&mut self, tag: &str) {
+        self.0.push('<');
+        self.0.push_str(tag);
+        self.0.push_str("/>");
+    }
+
+    pub(crate) fn elt(&mut self, tag: &str, text: &str) {
+        self.open0(tag);
+        craft_xml::push_esc(&mut self.0, text);
+        self.close(tag);
+    }
 }
 
 #[derive(Clone, Debug, Default)]

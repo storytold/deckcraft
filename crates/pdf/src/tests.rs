@@ -398,6 +398,109 @@ fn line_break_keeps_the_text_layer_aligned_with_the_layout() {
     assert_eq!(page_text(&bytes, 0), "onetwo");
 }
 
+#[test]
+fn equations_are_included_in_page_text_layer() {
+    use deckcraft_model::text::{Paragraph, Run, RunKind};
+    use deckcraft_model::{Shape, ShapeId, Xfrm};
+    use hayro_syntax::content::ops::TypedInstruction;
+    use hayro_syntax::object::{Dict, Object, Stream};
+
+    let mut body = TextBody::default();
+    let math = deckcraft_model::math::Math { nodes: deckcraft_model::math::parse_linear("x+y=z"), ..Default::default() };
+    body.paragraphs = vec![Paragraph {
+        runs: vec![
+            Run { text: "Solve: ".into(), props: Default::default(), kind: RunKind::Text },
+            Run { text: "x+y=z".into(), props: Default::default(), kind: RunKind::Math { math, display: false, omml: String::new() } },
+        ],
+        ..Default::default()
+    }];
+    let mut p = deck(1);
+    Arc::make_mut(&mut p.slides[0]).shapes =
+        vec![Shape { id: ShapeId(9002), xfrm: Some(Xfrm::new(20.0, 20.0, 920.0, 100.0)), text: Some(body), ..Default::default() }];
+
+    let placed = deckcraft_render::place_slide(&p, 0);
+    assert!(!placed.texts.is_empty());
+    assert!(!placed.texts[0].layout.equations.is_empty());
+
+    let bytes = export(&p, &opts(PageLayout::Slides)).unwrap();
+    let pdf = hayro_syntax::Pdf::new(bytes.clone()).unwrap();
+    let page = &pdf.pages()[0];
+    let resources = page.raw().get::<Dict<'_>>(b"Resources").unwrap();
+    let fonts = resources.get::<Dict<'_>>(b"Font").unwrap();
+    assert!(!fonts.is_empty());
+
+    let mut mapping = HashMap::<(String, u16), String>::new();
+    for key in fonts.keys() {
+        let font_name = std::str::from_utf8(key.as_ref()).unwrap().to_string();
+        let font = fonts.get::<Dict<'_>>(key).unwrap();
+        if let Some(stream) = font.get::<Stream<'_>>(b"ToUnicode") {
+            let cmap = stream.decoded().unwrap().into_owned();
+            let cmap = std::str::from_utf8(&cmap).unwrap();
+            let mut in_char_map = false;
+            for line in cmap.lines() {
+                if line.ends_with("beginbfchar") {
+                    in_char_map = true;
+                } else if line == "endbfchar" {
+                    in_char_map = false;
+                } else if in_char_map {
+                    let parts: Vec<_> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let cid = u16::from_str_radix(parts[0].trim_matches(['<', '>']), 16).unwrap();
+                        let value = parts[1].trim_matches(['<', '>']);
+                        let units: Vec<_> = value
+                            .as_bytes()
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .map(|chunk| u16::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap())
+                            .collect();
+                        mapping.insert((font_name.clone(), cid), String::from_utf16(&units).unwrap());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut current_font = String::new();
+    let mut extracted = String::new();
+    let mut append = |font: &str, bytes: &[u8]| {
+        if bytes.len().is_multiple_of(2) {
+            for pair in bytes.as_chunks::<2>().0 {
+                let cid = u16::from_be_bytes([pair[0], pair[1]]);
+                if let Some(s) = mapping.get(&(font.to_string(), cid)) {
+                    extracted.push_str(s);
+                }
+            }
+        }
+    };
+    let mut operations = page.typed_operations();
+    while let Some(operation) = operations.next() {
+        match operation {
+            TypedInstruction::TextFont(tf) => {
+                current_font = std::str::from_utf8(tf.0.as_ref()).unwrap().to_string();
+            }
+            TypedInstruction::ShowText(value) => append(&current_font, value.0.as_bytes()),
+            TypedInstruction::ShowTexts(values) => {
+                for value in values.0.iter::<Object<'_>>() {
+                    if let Object::String(value) = value {
+                        append(&current_font, value.as_bytes());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(extracted.contains("Solve:"), "extracted: {extracted}");
+    assert!(
+        (extracted.contains('𝑥') || extracted.contains('x'))
+            && extracted.contains('+')
+            && (extracted.contains('𝑦') || extracted.contains('y'))
+            && extracted.contains('=')
+            && (extracted.contains('𝑧') || extracted.contains('z')),
+        "extracted: {extracted}"
+    );
+}
+
 /// Notes pages and handouts print on the chosen paper, landscape included, with every slide box
 /// on the page and room left for the notes.
 #[test]

@@ -9,6 +9,12 @@
 
 mod cfb;
 mod convert;
+mod read {
+    pub(crate) mod math;
+}
+mod write {
+    pub(crate) mod math;
+}
 mod xml;
 
 pub use craft_pptx::MAX_TAG_BYTES;

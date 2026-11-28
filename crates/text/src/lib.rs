@@ -37,6 +37,7 @@ use unicode_segmentation::UnicodeSegmentation;
 mod autonum;
 mod breaking;
 mod layout;
+pub mod math;
 mod run;
 mod shape;
 mod style;
@@ -61,6 +62,20 @@ pub use style::{Fields, NoFields, Opts};
 #[cfg(test)]
 use symbol::{covers_symbol, is_symbol_font, symbol_font_char, symbol_font_draw, symbol_unicode, symbol_unicode_alts};
 pub use symbol::{map_symbol_bullet, symbol_char};
+
+/// A laid-out equation on a line, in shape-local points.
+#[derive(Clone, Debug)]
+pub struct PlacedEquation {
+    pub para: usize,
+    pub ch: usize,
+    pub end_ch: usize,
+    pub x: f64,
+    pub base: f64,
+    pub top: f64,
+    pub bottom: f64,
+    pub display: bool,
+    pub math: Arc<math::MathLayout>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct LineInfo {
@@ -99,6 +114,9 @@ pub struct TextLayout {
     /// Their space is still reserved so the caret starts where the first character will.
     pub empty_bullets: Vec<GlyphRun>,
     pub decos: Vec<Deco>,
+    pub equations: Vec<PlacedEquation>,
+    /// Show empty-slot dotted boxes and the "Type an equation" hint (editor only).
+    pub show_math_placeholders: bool,
     pub lines: Vec<LineInfo>,
     /// Inner text box (insets applied), shape-local.
     pub inner: Rect,

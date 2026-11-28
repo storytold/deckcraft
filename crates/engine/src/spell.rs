@@ -804,7 +804,11 @@ const MAX_LANG_LEN: usize = 64;
 pub fn paragraph_words(p: &deckcraft_model::Paragraph, default: &str) -> Vec<Word> {
     let mut chars: Vec<(char, usize)> = vec![];
     for (ri, r) in p.runs.iter().enumerate() {
-        chars.extend(r.content().chars().map(|c| (c, ri)));
+        if r.kind == deckcraft_model::text::RunKind::Text {
+            chars.extend(r.content().chars().map(|c| (c, ri)));
+        } else {
+            chars.extend(std::iter::repeat_n(('\u{fffc}', ri), r.char_len()));
+        }
     }
     let default = if default.len() > MAX_LANG_LEN { "" } else { default };
     let lang_of = |ri: usize| {
@@ -868,7 +872,13 @@ pub fn paragraph_words(p: &deckcraft_model::Paragraph, default: &str) -> Vec<Wor
 /// PowerPoint flags them. Hyphenated parts and different languages don't count.
 pub fn repeated(p: &deckcraft_model::Paragraph, default: &str) -> Vec<Word> {
     let words = paragraph_words(p, default);
-    let chars: Vec<char> = p.runs.iter().flat_map(|r| r.content().chars()).collect();
+    let chars: Vec<char> = p
+        .runs
+        .iter()
+        .flat_map(|r| {
+            if r.kind == deckcraft_model::text::RunKind::Text { r.content().chars().collect::<Vec<_>>() } else { vec!['\u{fffc}'; r.char_len()] }
+        })
+        .collect();
     let mut out = vec![];
     for pair in words.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
@@ -1137,6 +1147,39 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert_eq!(stem("en-US").as_deref(), Some("en_GB"));
         assert_eq!(stem("fr-FR"), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn equations_are_skipped_by_spell_checker() {
+        use deckcraft_model::math::{Math, parse_linear};
+        use deckcraft_model::text::RunKind;
+        use deckcraft_model::{Paragraph, Run, RunProps};
+        install("xx-EQTEST", Dictionary::parse(tests::AFF.as_bytes(), tests::DIC.as_bytes()));
+        let eq_run = |lin: &str| Run {
+            text: lin.into(),
+            props: RunProps::default(),
+            kind: RunKind::Math { omml: String::new(), math: Math { nodes: parse_linear(lin), ..Default::default() }, display: false },
+        };
+        let r0 = Run::new("make ");
+        let m1 = eq_run("u(x,t+dt)");
+        let r1 = Run::new(" work ");
+        let m2 = eq_run("u(x,t-dt)");
+        let r2 = Run::new(" happy sldie");
+        let expected_start = r0.char_len() + m1.char_len() + r1.char_len() + m2.char_len() + " happy ".chars().count();
+        let expected_end = expected_start + "sldie".chars().count();
+        let p = Paragraph { runs: vec![r0, m1, r1, m2, r2], ..Default::default() };
+
+        let words: Vec<String> = paragraph_words(&p, "xx-EQTEST").into_iter().map(|w| w.text).collect();
+        assert_eq!(words, vec!["make", "work", "happy", "sldie"]);
+
+        let bad = misspelt(&p, "xx-EQTEST", &[]);
+        assert_eq!(bad.len(), 1);
+        assert_eq!(bad[0].text, "sldie");
+        assert_eq!((bad[0].start, bad[0].end), (expected_start, expected_end));
+
+        // Adjacent display/inline math runs with identical words do not trigger a repeated-word match across math.
+        let p_rep = Paragraph { runs: vec![Run::new("make "), eq_run("dt"), Run::new(" make")], ..Default::default() };
+        assert!(repeated(&p_rep, "xx-EQTEST").is_empty());
     }
 
     /// Serbian is written in two scripts, and each finds its own dictionary: LibreOffice names

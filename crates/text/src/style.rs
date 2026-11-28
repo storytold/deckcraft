@@ -83,6 +83,8 @@ pub(crate) struct Cell {
     pub(crate) boundary: bool,
     /// Drawn upright in East Asian vertical text.
     pub(crate) upright: bool,
+    /// A laid-out equation starting at this cell: (layout, end_ch, display).
+    pub(crate) math: Option<(Arc<crate::math::MathLayout>, usize, bool)>,
 }
 
 impl Cell {

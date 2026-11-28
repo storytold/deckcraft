@@ -108,6 +108,7 @@ impl SlideApp {
             sorter: sorter::State::default(),
             slides_focused: false,
             v_seen: false,
+            swallow_text: false,
             recent_checked: HashMap::new(),
             twisting: false,
             next_file_id: 1,

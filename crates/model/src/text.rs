@@ -577,9 +577,14 @@ pub enum RunKind {
     Field {
         field: String,
     },
-    /// An inline equation (OMML kept as XML; `text` is its linear form).
+    /// An inline or display equation (OMML kept as XML when untouched; `text` is its linear form).
     Math {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         omml: String,
+        #[serde(default, skip_serializing_if = "crate::math::Math::is_empty")]
+        math: crate::math::Math,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        display: bool,
     },
 }
 
@@ -615,6 +620,7 @@ impl Run {
     pub fn content(&self) -> &str {
         match self.kind {
             RunKind::Break => "\u{b}",
+            RunKind::Math { .. } if self.text.is_empty() => "\u{fffc}",
             _ => &self.text,
         }
     }

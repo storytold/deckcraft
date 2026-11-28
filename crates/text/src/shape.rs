@@ -17,6 +17,7 @@ pub(crate) fn shape_para(
     opts: &Opts,
     number: Option<u32>,
     vertical: Upright,
+    eq_counter: &mut u32,
 ) -> ParaShaped {
     let db = FontDb::global();
     let Some(para) = body.paragraphs.get(pi) else {
@@ -39,24 +40,59 @@ pub(crate) fn shape_para(
     let rtl = props.rtl.unwrap_or(false);
     let mut styles: Vec<Style> = vec![];
     let mut faces: Vec<Arc<FontFace>> = vec![];
-    // The logical paragraph: its text and each character's style.
     let mut text = String::new();
     let mut char_style: Vec<usize> = vec![];
+    let mut math_runs: Vec<(usize, usize, Arc<crate::math::MathLayout>, bool)> = vec![];
+    let avail_w = (opts.rect.width() - 14.4).max(1.0) as f32;
     for run in &para.runs {
         let rp = resolve::run(ctx, shape, para, &run.props);
         let st = make_style(ctx, &rp, scale, opts.prompt_color);
+        let start_ch = char_style.len();
         let t: String = match &run.kind {
             RunKind::Text => run.text.clone(),
             RunKind::Break => "\u{b}".into(),
             RunKind::Field { field } => opts.fields.field_in(field, rp.lang.as_deref()).unwrap_or_else(|| run.text.clone()),
-            RunKind::Math { .. } => run.text.clone(),
+            RunKind::Math { math, display, .. } => {
+                let s = if run.text.is_empty() { "\u{fffc}".to_string() } else { run.text.clone() };
+                let end_ch = start_ch + s.chars().count();
+                let color = deckcraft_model::math::Rgb::from_rgba(st.color);
+                let ml = crate::math::layout_equation(
+                    math,
+                    &run.text,
+                    st.size as f32,
+                    color,
+                    &st.face.family,
+                    *display,
+                    avail_w,
+                    &deckcraft_model::math::MathProps::default(),
+                    eq_counter,
+                );
+                math_runs.push((start_ch, end_ch, Arc::new(ml), *display));
+                s
+            }
         };
         let si = styles.len();
         styles.push(st);
         char_style.extend(std::iter::repeat_n(si, t.chars().count()));
         text.push_str(&t);
     }
-    let cells = shape_cells(ctx, &text, &char_style, &styles, &mut faces, rtl, vertical);
+    let mut cells = shape_cells(ctx, &text, &char_style, &styles, &mut faces, rtl, vertical);
+    for (start_ch, end_ch, ml, display) in math_runs {
+        if let Some(c) = cells.get_mut(start_ch) {
+            c.glyphs.clear();
+            c.adv = f64::from(ml.width);
+            c.head = start_ch;
+            c.boundary = true;
+            c.math = Some((ml, end_ch, display));
+        }
+        for c in cells.get_mut((start_ch + 1)..end_ch).into_iter().flatten() {
+            c.glyphs.clear();
+            c.adv = 0.0;
+            c.head = start_ch;
+            c.boundary = false;
+            c.math = None;
+        }
+    }
     let lead = para.runs.first().map(|r| resolve::run(ctx, shape, para, &r.props)).unwrap_or_else(|| resolve::run(ctx, shape, para, &para.end_props));
     let lead_style = make_style(ctx, &lead, scale, opts.prompt_color);
     let lead_size = lead_style.size;
@@ -234,6 +270,7 @@ fn shape_cells(
             head: i,
             boundary: boundary.get(i).copied().unwrap_or(true),
             upright: false,
+            math: None,
         })
         .collect();
     // In East Asian vertical text, ideographs, kana, Hangul, full-width forms and the like stand

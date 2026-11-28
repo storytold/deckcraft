@@ -54,14 +54,150 @@ pub struct Textures {
     /// SmartArt gallery pictures by layout, style and colours (and, for hover previews, the
     /// outline's hash).
     smartart: HashMap<String, TextureHandle>,
+    math: MathAtlas,
+    math_frame: u64,
+    math_budget: u32,
     clock: u64,
     pub last_render_ms: f64,
+}
+
+const MATH_ATLAS: usize = 2048;
+const MATH_ATLAS_PAGES: usize = 4;
+const MATH_ATLAS_GAP: usize = 2;
+
+#[derive(Default)]
+struct MathAtlas {
+    pages: Vec<AtlasPage>,
+    uv: HashMap<String, (usize, egui::Rect)>,
+}
+
+#[derive(Default)]
+struct AtlasPage {
+    tex: Option<TextureHandle>,
+    x: usize,
+    y: usize,
+    row_h: usize,
+    used: u64,
+}
+
+impl AtlasPage {
+    fn place(&mut self, w: usize, h: usize) -> Option<[usize; 2]> {
+        if w == 0 || h == 0 || w > MATH_ATLAS || h > MATH_ATLAS {
+            return None;
+        }
+        let (mut x, mut y, mut row_h) = (self.x, self.y, self.row_h);
+        if x.saturating_add(w) > MATH_ATLAS {
+            x = 0;
+            y = y.saturating_add(row_h).saturating_add(MATH_ATLAS_GAP);
+            row_h = 0;
+        }
+        if y.saturating_add(h) > MATH_ATLAS {
+            return None;
+        }
+        self.x = x.saturating_add(w).saturating_add(MATH_ATLAS_GAP);
+        self.y = y;
+        self.row_h = row_h.max(h);
+        Some([x, y])
+    }
+
+    fn reset(&mut self) {
+        self.x = 0;
+        self.y = 0;
+        self.row_h = 0;
+        if let Some(tex) = &mut self.tex {
+            tex.set(ColorImage::filled([MATH_ATLAS, MATH_ATLAS], egui::Color32::TRANSPARENT), TextureOptions::LINEAR);
+        }
+    }
+}
+
+impl MathAtlas {
+    fn get(&mut self, frame: u64, key: &str) -> Option<(egui::TextureId, egui::Rect)> {
+        let (page, uv) = *self.uv.get(key)?;
+        let p = self.pages.get_mut(page)?;
+        let id = p.tex.as_ref()?.id();
+        p.used = frame;
+        Some((id, uv))
+    }
+
+    fn add(&mut self, ctx: &egui::Context, frame: u64, key: &str, img: ColorImage) -> Option<(egui::TextureId, egui::Rect)> {
+        let [w, h] = img.size;
+        if w == 0 || h == 0 || w > MATH_ATLAS || h > MATH_ATLAS {
+            return None;
+        }
+        let mut spot = self.pages.iter_mut().enumerate().find_map(|(i, p)| p.place(w, h).map(|at| (i, at)));
+        if spot.is_none() && self.pages.len() < MATH_ATLAS_PAGES {
+            let mut p = AtlasPage::default();
+            spot = p.place(w, h).map(|at| (self.pages.len(), at));
+            self.pages.push(p);
+        }
+        if spot.is_none() {
+            let (i, p) = self.pages.iter_mut().enumerate().filter(|(_, p)| p.used != frame).min_by_key(|(_, p)| p.used)?;
+            p.reset();
+            self.uv.retain(|_, (page, _)| *page != i);
+            spot = p.place(w, h).map(|at| (i, at));
+        }
+        let (i, at) = spot?;
+        let p = self.pages.get_mut(i)?;
+        let tex = p.tex.get_or_insert_with(|| {
+            ctx.load_texture(
+                format!("math_atlas_{i}"),
+                ColorImage::filled([MATH_ATLAS, MATH_ATLAS], egui::Color32::TRANSPARENT),
+                TextureOptions::LINEAR,
+            )
+        });
+        tex.set_partial(at, img, TextureOptions::LINEAR);
+        p.used = frame;
+        let s = MATH_ATLAS as f32;
+        let uv = egui::Rect::from_min_max(egui::pos2(at[0] as f32 / s, at[1] as f32 / s), egui::pos2((at[0] + w) as f32 / s, (at[1] + h) as f32 / s));
+        self.uv.insert(key.to_string(), (i, uv));
+        Some((tex.id(), uv))
+    }
 }
 
 impl Textures {
     /// SmartArt gallery pictures cached so far (tests).
     pub fn smartart_cached(&self) -> usize {
         self.smartart.len()
+    }
+
+    /// An equation rasterised for a gallery tile or button, with empty slots shown, packed into
+    /// [`MathAtlas`] as a white ink mask tinted with the theme's text colour.
+    pub fn math_preview(
+        &mut self,
+        ctx: &egui::Context,
+        key: &str,
+        nodes: &[deckcraft_model::math::MNode],
+        display: bool,
+        pt: f32,
+        size: egui::Vec2,
+    ) -> Option<(egui::TextureId, egui::Rect)> {
+        let ppp = ctx.pixels_per_point();
+        let k = format!("math:{key}:{pt}:{}x{}:{ppp}", size.x, size.y);
+        let frame = ctx.cumulative_frame_nr();
+        if let Some(hit) = self.math.get(frame, &k) {
+            return Some(hit);
+        }
+        if frame != self.math_frame {
+            self.math_frame = frame;
+            self.math_budget = 0;
+        }
+        if self.math_budget > 8 {
+            ctx.request_repaint();
+            return None;
+        }
+        self.math_budget += 1;
+        let img = deckcraft_render::render_math_preview(nodes, display, pt, size.x, size.y, ppp);
+        let w = img.width as usize;
+        let h = img.height as usize;
+        let mut px = Vec::with_capacity(w * h);
+        for c in img.pixels.as_chunks::<4>().0 {
+            let [r, g, b, a] = *c;
+            let lum = (u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000;
+            let ink = 255u32.saturating_sub(lum.min(255)) * u32::from(a) / 255;
+            px.push(egui::Color32::from_white_alpha(u8::try_from(ink).unwrap_or(u8::MAX)));
+        }
+        px.resize(w * h, egui::Color32::TRANSPARENT);
+        self.math.add(ctx, frame, &k, ColorImage::new([w, h], px))
     }
 
     /// A SmartArt layout drawn small for a gallery (`nodes` for a preview of the selected

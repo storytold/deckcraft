@@ -793,30 +793,51 @@ fn run_props_from(r: cd_text::RunProps) -> dm_text::RunProps {
     }
 }
 
+fn parse_omml_fragment(omml: &str) -> (deckcraft_model::math::Math, bool) {
+    if omml.is_empty() {
+        return (deckcraft_model::math::Math::default(), true);
+    }
+    let wrapped = format!("<a14:m>{omml}</a14:m>");
+    match crate::xml::parse(wrapped.as_bytes()) {
+        Ok(doc) => crate::read::math::read_math_container(&doc.root),
+        Err(_) => (deckcraft_model::math::Math::default(), true),
+    }
+}
+
 fn run_to(r: &dm_text::Run) -> cd_text::Run {
-    cd_text::Run {
-        text: r.text.clone(),
-        props: run_props_to(&r.props),
-        kind: match &r.kind {
-            dm_text::RunKind::Text => cd_text::RunKind::Text,
-            dm_text::RunKind::Break => cd_text::RunKind::Break,
-            dm_text::RunKind::Field { field } => cd_text::RunKind::Field { field: field.clone() },
-            dm_text::RunKind::Math { omml } => cd_text::RunKind::Math { omml: omml.clone() },
-        },
+    let props = run_props_to(&r.props);
+    match &r.kind {
+        dm_text::RunKind::Text => cd_text::Run { text: r.text.clone(), props, kind: cd_text::RunKind::Text },
+        dm_text::RunKind::Break => cd_text::Run { text: r.text.clone(), props, kind: cd_text::RunKind::Break },
+        dm_text::RunKind::Field { field } => cd_text::Run { text: r.text.clone(), props, kind: cd_text::RunKind::Field { field: field.clone() } },
+        dm_text::RunKind::Math { omml, math: m, display } => {
+            let out_omml = if !omml.is_empty() {
+                omml.clone()
+            } else if !m.is_empty() || !r.text.is_empty() {
+                let mut w = crate::xml::W::new();
+                crate::write::math::write_equation(&mut w, &r.text, *display, m);
+                w.into_string()
+            } else {
+                String::new()
+            };
+            let fallback =
+                if !m.is_empty() && (!m.linear || r.text.is_empty()) { deckcraft_model::math::to_linear(&m.nodes) } else { r.text.clone() };
+            cd_text::Run { text: fallback, props, kind: cd_text::RunKind::Math { omml: out_omml } }
+        }
     }
 }
 
 fn run_from(r: cd_text::Run) -> dm_text::Run {
-    dm_text::Run {
-        text: r.text,
-        props: run_props_from(r.props),
-        kind: match r.kind {
-            cd_text::RunKind::Text => dm_text::RunKind::Text,
-            cd_text::RunKind::Break => dm_text::RunKind::Break,
-            cd_text::RunKind::Field { field } => dm_text::RunKind::Field { field },
-            cd_text::RunKind::Math { omml } => dm_text::RunKind::Math { omml },
-        },
-    }
+    let kind = match r.kind {
+        cd_text::RunKind::Text => dm_text::RunKind::Text,
+        cd_text::RunKind::Break => dm_text::RunKind::Break,
+        cd_text::RunKind::Field { field } => dm_text::RunKind::Field { field },
+        cd_text::RunKind::Math { omml } => {
+            let (math, display) = parse_omml_fragment(&omml);
+            dm_text::RunKind::Math { omml, math, display }
+        }
+    };
+    dm_text::Run { text: r.text, props: run_props_from(r.props), kind }
 }
 
 fn paragraph_to(p: &dm_text::Paragraph) -> cd_text::Paragraph {
