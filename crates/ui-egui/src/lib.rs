@@ -24,6 +24,7 @@ pub mod doc_window;
 pub mod eyedropper;
 pub mod flavor;
 pub mod framework;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -50,6 +51,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub use control::{ControlRequest, ControlResponse};
+pub use i18n::UiLanguage;
 
 mod app;
 mod clock;
