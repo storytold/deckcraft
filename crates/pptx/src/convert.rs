@@ -2164,6 +2164,7 @@ pub(crate) fn pres_to_craft(p: &deckcraft_model::Presentation) -> craft_pptx::Pr
         media: p.media.iter().map(media_item_to).collect(),
         first_slide_number: p.first_slide_number,
         next_id: p.next_id,
+        save_subset_fonts: p.save_subset_fonts,
         embedded_fonts: p
             .embedded_fonts
             .iter()
@@ -2291,6 +2292,7 @@ pub(crate) fn pres_from_craft(p: craft_pptx::Presentation) -> deckcraft_model::P
         media: p.media.into_iter().map(media_item_from_craft).collect(),
         first_slide_number: p.first_slide_number,
         next_id: p.next_id,
+        save_subset_fonts: p.save_subset_fonts,
         embedded_fonts: p
             .embedded_fonts
             .into_iter()
