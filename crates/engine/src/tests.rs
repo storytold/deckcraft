@@ -4687,6 +4687,129 @@ fn artistic_effects_apply_change_remove_and_round_trip() {
 }
 
 #[test]
+fn artistic_reset_preserves_display_png_when_wdp_original_is_undecodable() {
+    use deckcraft_model::ShapeKind;
+    use deckcraft_model::style::Artistic;
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(12, 12, image::Rgba([40, 160, 80, 255])))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.picture", &json!({"name": "baked.png", "data": cmd::base64_encode(&png)})).unwrap();
+    let (shape_id, display_id, wdp_id) = s
+        .edit(|doc, sel| {
+            let wdp_id = doc.add_media("hdphoto1.wdp", "image/vnd.ms-photo", b"II\xbc\x01\x08\x00\x00\x00".to_vec()).unwrap();
+            let list = crate::shapes_mut(doc, sel).unwrap();
+            let sh = &mut list[0];
+            let display_id = match &mut sh.kind {
+                ShapeKind::Picture { fill } => {
+                    fill.artistic = Some(Artistic { effect: "artisticPaintBrush".into(), original: wdp_id });
+                    fill.crop = [0.1, 0.0, 0.0, 0.0];
+                    fill.media
+                }
+                other => panic!("{other:?}"),
+            };
+            Ok((sh.id, display_id, wdp_id))
+        })
+        .unwrap();
+    assert_ne!(display_id, wdp_id);
+    // Clearing artisticEffect refuses instead of swapping in the undecodable .wdp original.
+    assert!(s.execute("picture.artisticEffect", &json!({"ids": [shape_id], "effect": "none"})).is_err());
+    // picture.reset still resets crop/adjustments while keeping the decodable baked PNG intact.
+    s.execute("picture.reset", &json!({"ids": [shape_id]})).unwrap();
+    let fill = match &s.doc().unwrap().shape(shape_id).unwrap().kind {
+        ShapeKind::Picture { fill } => fill.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(fill.media, display_id);
+    assert_eq!(fill.crop, [0.0; 4]);
+    assert_eq!(fill.artistic.as_ref().map(|a| a.original), Some(wdp_id));
+}
+
+#[test]
+fn artistic_effect_and_reset_restore_emf_original() {
+    use deckcraft_model::style::PictureFill;
+    use deckcraft_model::{Shape, ShapeId, ShapeKind};
+
+    // Minimal valid EMF: 88-byte EMR_HEADER (25x25 mm frame, 100x100 bounds), EMR_RECTANGLE, EMR_EOF.
+    let mut rect = Vec::with_capacity(24);
+    rect.extend_from_slice(&43u32.to_le_bytes()); // EMR_RECTANGLE
+    rect.extend_from_slice(&24u32.to_le_bytes());
+    for v in [0i32, 0, 100, 100] {
+        rect.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut eof = Vec::with_capacity(20);
+    eof.extend_from_slice(&14u32.to_le_bytes()); // EMR_EOF
+    eof.extend_from_slice(&20u32.to_le_bytes());
+    eof.extend_from_slice(&[0u8; 12]);
+    let total = 88 + rect.len() + eof.len();
+    let mut emf = vec![0u8; 88];
+    emf[0..4].copy_from_slice(&1u32.to_le_bytes()); // EMR_HEADER
+    emf[4..8].copy_from_slice(&88u32.to_le_bytes());
+    for (i, v) in [0i32, 0, 100, 100].into_iter().enumerate() {
+        emf[8 + i * 4..12 + i * 4].copy_from_slice(&v.to_le_bytes());
+    }
+    for (i, v) in [0i32, 0, 2500, 2500].into_iter().enumerate() {
+        emf[24 + i * 4..28 + i * 4].copy_from_slice(&v.to_le_bytes());
+    }
+    emf[40..44].copy_from_slice(&0x464D_4520u32.to_le_bytes()); // " EMF"
+    emf[44..48].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+    emf[48..52].copy_from_slice(&(total as u32).to_le_bytes());
+    emf[52..56].copy_from_slice(&3u32.to_le_bytes());
+    emf[56..58].copy_from_slice(&1u16.to_le_bytes());
+    emf[72..76].copy_from_slice(&1000i32.to_le_bytes());
+    emf[76..80].copy_from_slice(&500i32.to_le_bytes());
+    emf[80..84].copy_from_slice(&250i32.to_le_bytes());
+    emf[84..88].copy_from_slice(&125i32.to_le_bytes());
+    emf.extend_from_slice(&rect);
+    emf.extend_from_slice(&eof);
+
+    assert!(deckcraft_render::image_dimensions(&emf).is_none(), "EMF is a metafile, not a flat raster");
+    assert!(deckcraft_render::is_restorable_image(&emf));
+
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let (shape_id, emf_id) = s
+        .edit(|doc, sel| {
+            let emf_id = doc.add_media("diagram.emf", "image/x-emf", emf.clone()).unwrap();
+            let id = ShapeId(4200);
+            let sh = Shape {
+                id,
+                xfrm: Some(deckcraft_geom::Xfrm::new(40.0, 40.0, 200.0, 200.0)),
+                kind: ShapeKind::Picture { fill: PictureFill { media: emf_id, ..Default::default() } },
+                ..Default::default()
+            };
+            crate::shapes_mut(doc, sel).unwrap().push(sh);
+            sel.shapes = vec![id];
+            Ok((id, emf_id))
+        })
+        .unwrap();
+
+    let fill = |s: &Session| match &s.doc().unwrap().shape(shape_id).unwrap().kind {
+        ShapeKind::Picture { fill } => fill.clone(),
+        other => panic!("{other:?}"),
+    };
+
+    // Applying an artistic effect rasterizes the EMF and records it as the original.
+    s.execute("picture.artisticEffect", &json!({"ids": [shape_id], "effect": "artisticBlur"})).unwrap();
+    let baked = fill(&s);
+    assert_ne!(baked.media, emf_id);
+    assert_eq!(baked.artistic.as_ref().map(|a| (a.effect.as_str(), a.original)), Some(("artisticBlur", emf_id)));
+
+    // Removing the artistic effect restores the EMF original.
+    s.execute("picture.artisticEffect", &json!({"ids": [shape_id], "effect": "none"})).unwrap();
+    assert_eq!((fill(&s).media, fill(&s).artistic), (emf_id, None));
+
+    // Re-applying and calling picture.reset also restores the EMF original cleanly.
+    s.execute("picture.artisticEffect", &json!({"ids": [shape_id], "effect": "artisticBlur"})).unwrap();
+    s.execute("picture.crop", &json!({"ids": [shape_id], "left": 0.1})).unwrap();
+    s.execute("picture.reset", &json!({"ids": [shape_id]})).unwrap();
+    let reset = fill(&s);
+    assert_eq!((reset.media, reset.artistic, reset.crop), (emf_id, None, [0.0; 4]));
+}
+
+#[test]
 fn handout_master_view_edits_and_round_trips() {
     use deckcraft_model::PhType;
     let mut s = Session::with_new();

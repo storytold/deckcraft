@@ -102,7 +102,9 @@ fn validate(metadata: &Value) -> Result<(), String> {
         }
         let package = by_id.get(id).ok_or_else(|| format!("unresolved package {id}"))?;
         let name = package.get("name").and_then(Value::as_str).ok_or("resolved package has no name")?;
-        if name == "hayro" || name.starts_with("hayro-") {
+        // `hayro-jpeg2000` is the pure-Rust JPEG 2000 image codec pulled in by `craft-image-codecs`
+        // (not a PDF reader); every other `hayro*` crate (PDF parser/interpreter) stays forbidden.
+        if (name == "hayro" || name.starts_with("hayro-")) && name != "hayro-jpeg2000" {
             return Err(format!("unexpected production reader dependency {name}"));
         }
         let node = nodes.iter().find(|n| n.get("id").and_then(Value::as_str) == Some(id)).ok_or_else(|| format!("no resolved node for {id}"))?;
@@ -212,6 +214,15 @@ mod tests {
         let mut m = metadata();
         m["resolve"]["nodes"][2]["deps"] = json!([{"pkg":"parser", "dep_kinds":[{"kind":null}]}]);
         assert!(validate(&m).is_err());
+    }
+
+    #[test]
+    fn allows_hayro_jpeg2000_image_codec_while_forbidding_pdf_readers() {
+        let mut m = metadata();
+        m["packages"].as_array_mut().unwrap().push(json!({"id": "jp2", "name": "hayro-jpeg2000", "version": "0.3.5", "source": REGISTRY}));
+        m["resolve"]["nodes"].as_array_mut().unwrap().push(json!({"id": "jp2", "features": ["std"], "deps": []}));
+        m["resolve"]["nodes"][0]["deps"].as_array_mut().unwrap().push(json!({"pkg": "jp2", "dep_kinds": [{"kind": null}]}));
+        assert!(validate(&m).is_ok());
     }
 
     #[test]

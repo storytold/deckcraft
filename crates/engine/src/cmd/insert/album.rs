@@ -313,13 +313,7 @@ fn album_items(p: &Value) -> Result<Vec<AlbumItem>> {
 }
 
 fn image_px(bytes: &[u8]) -> (f64, f64) {
-    image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_dimensions().ok())
-        .map(|(w, h)| (w as f64, h as f64))
-        .filter(|(w, h)| *w > 0.0 && *h > 0.0)
-        .unwrap_or((4.0, 3.0))
+    deckcraft_render::image_dimensions(bytes).map(|(w, h)| (w as f64, h as f64)).filter(|(w, h)| *w > 0.0 && *h > 0.0).unwrap_or((4.0, 3.0))
 }
 
 fn file_stem(name: &str) -> String {

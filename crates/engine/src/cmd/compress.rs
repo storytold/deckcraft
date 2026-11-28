@@ -38,23 +38,14 @@ fn real_crop(c: &[f64; 4]) -> bool {
 /// Largest picture decoded for compression, in pixels (a 61 MP camera frame fits); bigger ones
 /// are left as they are.
 const MAX_PIXELS: u64 = 64_000_000;
-/// Most memory the decoder may allocate for one picture.
-const MAX_DECODE_BYTES: u64 = 512 << 20;
-
-/// Decode `data` within [`MAX_PIXELS`] and [`MAX_DECODE_BYTES`]: the size is read from the header
-/// first, so a picture claiming to be huge is never decoded.
-fn decode(data: &[u8], format: image::ImageFormat) -> Option<image::DynamicImage> {
-    let (w, h) = image::ImageReader::with_format(std::io::Cursor::new(data), format).into_dimensions().ok()?;
+/// Decode `data` within [`MAX_PIXELS`] and the renderer's memory budget: the size is read from
+/// the header first, so a picture claiming to be huge is never decoded.
+fn decode(data: &[u8]) -> Option<image::DynamicImage> {
+    let (w, h) = deckcraft_render::image_dimensions(data)?;
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > MAX_PIXELS {
         return None;
     }
-    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(data), format);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(w);
-    limits.max_image_height = Some(h);
-    limits.max_alloc = Some(MAX_DECODE_BYTES);
-    reader.limits(limits);
-    reader.decode().ok()
+    deckcraft_render::decode_image(data).map(image::DynamicImage::ImageRgba8)
 }
 
 /// Compress `data` for a picture shown `w_pt` × `h_pt` with `crop`, at `ppi`. `None` when the
@@ -65,7 +56,7 @@ fn pack(data: &[u8], crop: [f64; 4], w_pt: f64, h_pt: f64, ppi: f64, delete_crop
     if !matches!(format, F::Png | F::Jpeg | F::Bmp | F::Tiff | F::WebP) {
         return None;
     }
-    let mut img = decode(data, format)?;
+    let mut img = decode(data)?;
     let (iw, ih) = (img.width() as f64, img.height() as f64);
     if iw < 1.0 || ih < 1.0 {
         return None;
@@ -104,6 +95,9 @@ fn pack(data: &[u8], crop: [f64; 4], w_pt: f64, h_pt: f64, ppi: f64, delete_crop
         let rgb = img.to_rgb8();
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85).encode_image(&rgb).ok()?;
         "image/jpeg"
+    } else if !alpha {
+        img.to_rgb8().write_to(&mut out, F::Png).ok()?;
+        "image/png"
     } else {
         img.write_to(&mut out, F::Png).ok()?;
         "image/png"
@@ -405,7 +399,7 @@ mod tests {
             image::ImageReader::with_format(std::io::Cursor::new(&data), image::ImageFormat::Png).into_dimensions().ok(),
             Some((9_000, 8_000))
         );
-        assert!(decode(&data, image::ImageFormat::Png).is_none());
+        assert!(decode(&data).is_none());
         assert!(pack(&data, [0.0; 4], 72.0, 72.0, 96.0, true).is_none());
     }
 
