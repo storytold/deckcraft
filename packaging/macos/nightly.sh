@@ -33,11 +33,12 @@ OUTPUT="$DIST/deckcraft-$VERSION-macos-aarch64-nightly.zip"
 nightly_compile_gui
 
 APP="$NIGHTLY_WORK/stage/$MAC_NIGHTLY_APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/docs"
 cp "$NIGHTLY_GUI" "$APP/Contents/MacOS/DeckCraft"
 chmod 755 "$APP/Contents/MacOS/DeckCraft"
 cp "$ROOT/assets/app-icon/deckcraft-nightly.icns" "$APP/Contents/Resources/deckcraft-nightly.icns"
-nightly_copy_notices "$APP/Contents/Resources"
+# Launcher admits notices under Resources/docs, not beside the icon.
+nightly_copy_notices "$APP/Contents/Resources/docs"
 # The private mktemp cwd is the helper authority root: stage the template inside it.
 cp "$HERE/Info.plist.in" "$NIGHTLY_WORK/Info.plist.in"
 (cd "$NIGHTLY_WORK" && python3 "$HERE/nightly_plist.py" --template Info.plist.in \
