@@ -168,9 +168,9 @@ pub(super) fn autocorrect(s: &mut Session, typing: bool) -> Result<()> {
     while start > 0 && line.get(start - 1).is_some_and(|c| !c.is_whitespace()) {
         start -= 1;
     }
-    // "word," and "word." also count: the punctuation was typed before the space.
+    // "word," and "word." also count when the text came in one piece; a typed punctuation mark already ran AutoCorrect on the word, and an Undo of that correction stays (#2184).
     let mut word: String = line.get(start..word_end).map(|w| w.iter().collect()).unwrap_or_default();
-    if replacement(&s.prefs, &word).is_none() {
+    if !typing && replacement(&s.prefs, &word).is_none() {
         let trimmed = word.trim_end_matches(|c: char| ".,;:!?".contains(c));
         if !trimmed.is_empty() && trimmed.len() < word.len() && !word.ends_with("...") {
             word_end -= word.chars().count() - trimmed.chars().count();
@@ -195,6 +195,7 @@ pub(super) fn autocorrect(s: &mut Session, typing: bool) -> Result<()> {
     };
     let delta = rep.chars().count() as isize - word.chars().count() as isize;
     let st = s.doc_mut()?;
+    st.autocorrected = Some((st.doc.clone(), st.selection.clone()));
     let mut d = (*st.doc).clone();
     let sel = st.selection.clone();
     if let Some(b) = body_mut(&mut d, &sel, &t) {
@@ -315,6 +316,7 @@ fn superscript_suffix(s: &mut Session, t: &crate::TextSel, end: usize) -> Result
     if body_of(st, t).is_none_or(|body| ed::props_at(body, b).baseline.unwrap_or(0.0) > 0.0) {
         return Ok(());
     }
+    st.autocorrected = Some((st.doc.clone(), st.selection.clone()));
     let mut d = (*st.doc).clone();
     let sel = st.selection.clone();
     if let Some(body) = body_mut(&mut d, &sel, t) {
