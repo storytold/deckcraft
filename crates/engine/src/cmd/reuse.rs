@@ -501,15 +501,19 @@ pub(crate) fn import_master(
     Ok(m)
 }
 
+/// The content type of a tags part (`p:custDataLst`/`p:tags`), which belongs to exactly one owner.
+const TAGS_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.presentationml.tags+xml";
+
 /// Copy the source media `used` into `doc` under fresh ids, once each (identical bytes already in
-/// `doc` are shared; a linked item keeps its link).
+/// `doc` are shared; a linked item keeps its link). A tags part is never shared: identical tag lists
+/// on a master and its layouts must stay one part per owner, or PowerPoint repairs the file.
 fn copy_media(cmd: &str, doc: &mut Presentation, src: &Presentation, used: &[MediaId], map: &mut HashMap<MediaId, MediaId>) -> Result<()> {
     for &id in used {
         if map.contains_key(&id) {
             continue;
         }
         let Some(m) = src.media(id) else { continue };
-        let new = if m.link.is_some() {
+        let new = if m.link.is_some() || m.content_type.eq_ignore_ascii_case(TAGS_CONTENT_TYPE) {
             let mut item = m.clone();
             item.id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
             let new = item.id;
@@ -790,6 +794,94 @@ mod tests {
         let mut want = blobs.clone();
         want.sort();
         assert_eq!(got, want, "every reference resolves to its own copied bytes");
+    }
+
+    /// A tags part belongs to one owner. Identical tag lists on a master and its layouts (a
+    /// think-cell or OLE object on each) come over as one item per owner, never one shared item,
+    /// so the saved file has a part for each and PowerPoint opens it without a repair.
+    #[test]
+    fn reused_master_keeps_a_tags_part_per_owner() {
+        const TAGS: &str = "application/vnd.openxmlformats-officedocument.presentationml.tags+xml";
+        const TAGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tags";
+        let tags = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:tagLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:tag name="THINKCELLSHAPEDONOTDELETE" val="t1"/></p:tagLst>"#.to_vec();
+        let mut src = defaults::new_presentation(None);
+        let ids: Vec<MediaId> = (0..3)
+            .map(|_| {
+                let id = MediaId(src.alloc_id().expect("id"));
+                src.media.push(deckcraft_model::MediaItem {
+                    id,
+                    name: "tag1.xml".into(),
+                    content_type: TAGS.into(),
+                    data: Arc::new(tags.clone()),
+                    link: None,
+                });
+                id
+            })
+            .collect();
+        let object = |id: MediaId| {
+            Shape {
+            id: ShapeId(9100),
+            kind: ShapeKind::Opaque {
+                xml: r#"<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="9100" name="think-cell data"/><p:cNvGraphicFramePr/><p:nvPr><p:custDataLst><p:tags r:id="rId2"/></p:custDataLst></p:nvPr></p:nvGraphicFramePr></p:graphicFrame>"#.into(),
+                preview: None,
+                label: "think-cell".into(),
+                parts: vec![("rId2".into(), TAGS_REL.into(), id)],
+            },
+            ..Default::default()
+        }
+        };
+        let master = src.masters.first_mut().map(Arc::make_mut).expect("master");
+        assert!(master.layouts.len() >= 2, "the default master has layouts to share the tags");
+        master.shapes = vec![object(ids[0])];
+        for (layout, id) in master.layouts.iter_mut().zip(&ids[1..]) {
+            layout.shapes = vec![object(*id)];
+        }
+        let bytes = deckcraft_format::save(&src).expect("save");
+
+        let mut s = Session::with_new();
+        let own = s.edit(|doc, _| Ok(doc.add_media("tag1.xml", TAGS, tags.clone()).expect("media"))).expect("own tags");
+        s.execute(
+            "slide.reuse",
+            &json!({"data": super::super::base64_encode(&bytes), "name": "src.deckcraft", "slides": [0], "keepFormatting": true}),
+        )
+        .expect("reuse");
+        let doc = &s.doc().expect("doc").doc;
+        let imported = doc.masters.last().expect("imported master");
+        let parts = |shapes: &[Shape]| -> Vec<MediaId> {
+            shapes
+                .iter()
+                .filter_map(|sh| match &sh.kind {
+                    ShapeKind::Opaque { parts, .. } => Some(parts.iter().map(|(_, _, m)| *m)),
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        };
+        let mut got = parts(&imported.shapes);
+        for layout in imported.layouts.iter().take(2) {
+            got.extend(parts(&layout.shapes));
+        }
+        assert_eq!(got.len(), 3, "the master and two layouts each hold their object");
+        for m in &got {
+            let item = doc.media(*m).expect("copied tags item");
+            assert_eq!((item.content_type.as_str(), item.data.as_slice()), (TAGS, tags.as_slice()), "each copy keeps the tag list");
+            assert_ne!(*m, own, "a copied tags part is not shared with the destination's own");
+        }
+        let mut distinct = got.clone();
+        distinct.sort_by_key(|m| m.0);
+        distinct.dedup();
+        assert_eq!(distinct.len(), got.len(), "each owner has its own tags item: {got:?}");
+
+        let pptx = deckcraft_pptx::export(doc).expect("export");
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&pptx)).expect("zip");
+        let mut written = 0;
+        for i in 0..z.len() {
+            let mut f = z.by_index(i).expect("entry");
+            let mut body = Vec::new();
+            std::io::Read::read_to_end(&mut f, &mut body).expect("read");
+            written += usize::from(body == tags);
+        }
+        assert!(written >= 3, "the saved file has a tags part per owner, found {written}");
     }
 
     fn link_to(slide: SlideId) -> Hyperlink {
