@@ -32,3 +32,4 @@ jobs:
       # craft-common-actions main commit that merged the exact-analysis admission (#371, after #370,
       # #369 and #364).
       platforms: '["windows-x86_64","linux-x86_64","macos-aarch64"]'
+      linux-package-formats: '["deb","rpm","appimage","flatpak","oci","arch"]'
