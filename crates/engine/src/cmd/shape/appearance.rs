@@ -1,7 +1,7 @@
 use super::{
-    ColorRef, ColorTransform, Dash, Effects, Fill, Geom, Glow, Gradient, GradientShape, GradientStop, Line, LineEnd, PictureFill, PictureMode,
-    Reflection, Result, Rgba, SchemeSlot, Session, Shadow, ShapeStyle, Value, apply_fill, bad, bool_or, color_param, color_value, edit_geometry,
-    edit_shapes, f64_param, inherited_fills, json, opt_usize_param, requested_fill, str_param, targets,
+    ColorBase, ColorRef, ColorTransform, Dash, Effects, Fill, Geom, Glow, Gradient, GradientShape, GradientStop, HashMap, Line, LineEnd, PictureFill,
+    PictureMode, Reflection, Result, Rgba, SchemeSlot, Session, Shadow, ShapeStyle, Value, apply_fill, bad, bool_or, color_param, color_value,
+    edit_geometry, edit_shapes, f64_param, inherited_fills, json, opt_usize_param, requested_fill, str_param, targets,
 };
 
 pub(super) fn adjust(s: &mut Session, p: &Value) -> Result<Value> {
@@ -73,9 +73,10 @@ pub(super) fn change(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// `{stops: [[pos 0–1, color], …], kind?: linear|radial|rectangular|path, angle?: deg (linear),
-/// focus?: [l, t, r, b] fractions (radial/rectangular/path: where the first stop sits),
-/// rotateWithShape?}`. The renderer keeps only linear and radial gradients upright when
-/// `rotateWithShape` is false; rectangular and path gradients turn with the shape.
+/// scaled?: bool (linear), focus?: [l, t, r, b] fractions (radial/rectangular/path: where the first
+/// stop sits), tile?: [l, t, r, b] insets from the shape's box (fractions), rotateWithShape?}`.
+/// The renderer keeps only linear and radial gradients upright when `rotateWithShape` is false;
+/// rectangular and path gradients turn with the shape.
 pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
     let stops: Vec<GradientStop> = v
         .get("stops")?
@@ -100,17 +101,31 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
     let mut stops = stops;
     stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
     let path = |p: &str| GradientShape::Path { path: p.into(), focus };
+    // An omitted `scaled` is false; a present value that is not a boolean is refused.
+    let scaled = match v.get("scaled") {
+        None => false,
+        Some(s) => s.as_bool()?,
+    };
     let shape = match v.get("kind").and_then(Value::as_str) {
         Some("radial" | "circle") => path("circle"),
         Some("rectangular" | "rect") => path("rect"),
         Some("path" | "shape") => path("shape"),
         _ => GradientShape::Linear {
             angle: v.get("angle").and_then(Value::as_f64).filter(|a| a.is_finite()).unwrap_or(90.0).rem_euclid(360.0),
-            scaled: false,
+            scaled,
         },
     };
+    // An omitted tile is the shape's own box; a tile that is not four finite numbers is refused.
+    let tile = match v.get("tile") {
+        None => [0.0; 4],
+        Some(t) => {
+            let a = t.as_array().filter(|a| a.len() == 4)?;
+            let f = |i: usize| a.get(i).and_then(Value::as_f64).filter(|x| x.is_finite()).map(|x| x.clamp(-10.0, 10.0));
+            [f(0)?, f(1)?, f(2)?, f(3)?]
+        }
+    };
     Some(Gradient {
-        tile: [0.0; 4],
+        tile,
         stops,
         shape,
         rotate_with_shape: v.get("rotateWithShape").and_then(Value::as_bool).unwrap_or(true),
@@ -121,19 +136,39 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
 /// Fill and outline apply to a group's visible members as well as its container. Other edits
 /// (notably geometry) still target only the selected shape. The whole traversal stays in one edit.
 fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
-    fn apply(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
-        if depth > 64 {
-            return Ok(());
-        }
-        f(sh)?;
-        if let Some(children) = sh.children_mut() {
-            for child in children {
-                apply(child, depth + 1, f)?;
-            }
-        }
-        Ok(())
+    edit_shapes(s, p, cmd, |sh| apply_to_group(sh, 0, &f))
+}
+
+fn apply_to_group(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
+    if depth > 64 {
+        return Ok(());
     }
-    edit_shapes(s, p, cmd, |sh| apply(sh, 0, &f))
+    f(sh)?;
+    if let Some(children) = sh.children_mut() {
+        for child in children {
+            apply_to_group(child, depth + 1, f)?;
+        }
+    }
+    Ok(())
+}
+
+/// How many target shapes [`edit_group_appearance`] would edit, or `None` when `f` would change
+/// at least one of them (or no target is found, so the edit reports the error).
+fn unchanged_appearance(s: &Session, p: &Value, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Option<usize>> {
+    let ids = targets(s, p)?;
+    let st = s.doc()?;
+    let mut seen = std::collections::HashSet::new();
+    let mut n = 0;
+    for id in ids.into_iter().filter(|id| seen.insert(*id)) {
+        let Some(sh) = st.shape(id) else { continue };
+        let mut copy = sh.clone();
+        apply_to_group(&mut copy, 0, f)?;
+        if copy != *sh {
+            return Ok(None);
+        }
+        n += 1;
+    }
+    Ok((n > 0).then_some(n))
 }
 
 pub(super) fn fill(s: &mut Session, p: &Value) -> Result<Value> {
@@ -236,10 +271,28 @@ fn line_end(v: &str) -> Option<LineEnd> {
     if v == "none" { None } else { Some(LineEnd { kind: v.to_string(), w: "med".into(), len: "med".into() }) }
 }
 
+/// The line fill `shape` draws with: its own, or the one it inherits from its layout, master or
+/// theme style, with a solid color resolved to RGB (alpha included). `None` when nothing gives
+/// it one.
+pub fn effective_line_fill(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Option<Fill> {
+    let ctx = super::super::text::ctx_for(doc, sel)?;
+    let (l, ph) = deckcraft_model::resolve::line(&ctx, shape);
+    match l.fill? {
+        Fill::Solid { color } => Some(Fill::solid(ColorRef::rgb(ctx.color(&color, ph)))),
+        other => Some(other),
+    }
+}
+
 pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
     let reset = bool_or(p, "reset", false);
     let none = bool_or(p, "none", false);
     let color = color_param(p, "color");
+    let gradient = match p.get("gradient") {
+        Some(g) => Some(gradient_param(g).ok_or_else(|| {
+            bad("shape.line", "gradient needs at least two `stops`: [[0, \"#fff\"], [1, \"#000\"]], and a `tile` of four numbers when given")
+        })?),
+        None => None,
+    };
     let width = f64_param(p, "width").map(|w| w.clamp(0.0, 1584.0));
     let dash = str_param(p, "dash").map(|d| Dash::Preset { name: d.to_string() });
     let head = str_param(p, "head").map(line_end);
@@ -263,11 +316,35 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         "miter" => deckcraft_model::style::LineJoin::Miter,
         _ => deckcraft_model::style::LineJoin::Round,
     });
-    edit_group_appearance(s, p, "shape.line", |sh| {
+    let transparency = match p.get("transparency") {
+        None => None,
+        Some(v) => match v.as_f64() {
+            Some(t) if (0.0..=1.0).contains(&t) => Some(t),
+            _ => return Err(bad("shape.line", "`transparency` must be a number from 0 to 1")),
+        },
+    };
+    // Transparency on an inherited (style) line needs the effective color.
+    let ctx_line = match transparency {
+        None => HashMap::new(),
+        Some(_) => {
+            let st = s.doc()?;
+            let mut lines = HashMap::new();
+            for id in targets(s, p)? {
+                if let Some(sh) = st.shape(id) {
+                    deckcraft_model::walk(std::slice::from_ref(sh), &mut |sh, _| {
+                        lines.insert(sh.id, effective_line_fill(&st.doc, &st.selection, sh));
+                    });
+                }
+            }
+            lines
+        }
+    };
+    let edit = |sh: &mut deckcraft_model::Shape| -> Result<()> {
         if reset {
             sh.line = None;
             return Ok(());
         }
+        let automatic = sh.line.is_none();
         let l = sh.line.get_or_insert_with(Line::default);
         if none {
             l.fill = Some(Fill::None);
@@ -275,9 +352,14 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(c) = &color {
             l.fill = Some(Fill::solid(c.clone()));
         }
+        if let Some(g) = &gradient {
+            l.fill = Some(Fill::Gradient(g.clone()));
+        }
+        // With a transparency, an inherited solid line keeps its effective color instead of Text 1.
+        let inherits_solid = transparency.is_some() && matches!(ctx_line.get(&sh.id), Some(Some(Fill::Solid { .. })));
         if width.is_some() {
             l.width = width;
-            if l.fill.is_none() || matches!(l.fill, Some(Fill::None)) && !none {
+            if (l.fill.is_none() && !inherits_solid) || matches!(l.fill, Some(Fill::None)) && !none {
                 l.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Tx1)));
             }
         }
@@ -315,8 +397,40 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
                 e.len.clone_from(sz);
             }
         }
+        // Format Shape ▸ Line ▸ Transparency: only a solid line has one.
+        if let Some(t) = transparency {
+            let inherited = l.fill.is_none();
+            let base = l.fill.clone().or_else(|| ctx_line.get(&sh.id).cloned().flatten());
+            if let Some(Fill::Solid { color: before }) = base {
+                let mut color = before.clone();
+                // The new transparency replaces any alpha: the alpha transforms, and the alpha an
+                // inherited color carries in its resolved RGBA. A theme, preset or system color
+                // (`phClr` included) resolves to an RGBA that can carry an alpha of its own, so 0%
+                // sets an explicit opaque alpha on it.
+                color.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_) | ColorTransform::AlphaMod(_) | ColorTransform::AlphaOff(_)));
+                if let ColorBase::Rgb { rgb } = &mut color.base {
+                    rgb.a = 255;
+                }
+                if t > 0.0 || !matches!(color.base, ColorBase::Rgb { .. }) {
+                    color.mods.push(ColorTransform::Alpha(((1.0 - t.clamp(0.0, 1.0)) * 100_000.0).round() as i32));
+                }
+                // An inherited color that already has this transparency stays inherited.
+                if !(inherited && color == before) {
+                    l.fill = Some(Fill::Solid { color });
+                }
+            }
+        }
+        // A parameter that changed nothing leaves an automatic line automatic.
+        if automatic && sh.line.as_ref().is_some_and(|l| *l == Line::default()) {
+            sh.line = None;
+        }
         Ok(())
-    })
+    };
+    // A call that changes no line records no undo step.
+    if let Some(n) = unchanged_appearance(s, p, &edit)? {
+        return Ok(Value::from(n));
+    }
+    edit_group_appearance(s, p, "shape.line", edit)
 }
 
 fn shadow_preset(v: &Value) -> Option<Option<Shadow>> {
@@ -573,6 +687,26 @@ pub(super) fn quick_style(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_malformed_gradient_tile_is_refused_not_reset() {
+        let stops = json!([[0, "#ff0000"], [1, "#0000ff"]]);
+        assert_eq!(gradient_param(&json!({"stops": stops})).expect("omitted tile").tile, [0.0; 4]);
+        assert_eq!(gradient_param(&json!({"stops": stops, "tile": [0.1, 0.2, 0.3, 0.4]})).expect("tile").tile, [0.1, 0.2, 0.3, 0.4]);
+        for tile in [json!([0.1, 0.2]), json!([0.1, 0.2, 0.3, 0.4, 0.5]), json!([0.1, 0.2, "x", 0.4]), json!("none"), json!([0.1, 0.2, 0.3, null])] {
+            assert!(gradient_param(&json!({"stops": stops, "tile": tile})).is_none(), "{tile}");
+        }
+    }
+
+    #[test]
+    fn a_gradient_scaled_flag_that_is_not_a_boolean_is_refused() {
+        let stops = json!([[0, "#ff0000"], [1, "#0000ff"]]);
+        assert!(gradient_param(&json!({"stops": stops})).is_some());
+        assert!(gradient_param(&json!({"stops": stops, "scaled": true})).is_some());
+        for scaled in [json!("yes"), json!(1), json!(null)] {
+            assert!(gradient_param(&json!({"stops": stops, "scaled": scaled})).is_none(), "{scaled}");
+        }
+    }
 
     #[test]
     fn gradient_parameters_keep_flip_mode() {
