@@ -23,7 +23,27 @@ pub fn fill_path(
     alpha: f64,
     pres: &Presentation,
 ) {
-    ctx.set_transform(m);
+    fill_path_in_view(ctx, rctx, fill, ph, path, bounds, m, Affine::IDENTITY, mode, alpha, pres);
+}
+
+/// Keep slide-axis layout decisions in `m`'s original device coordinates; `view` only
+/// maps the resulting paint into another surface (such as a bounded effect mask).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fill_path_in_view(
+    ctx: &mut RenderContext,
+    rctx: &Ctx,
+    fill: &Fill,
+    ph: Option<Rgba>,
+    path: &BezPath,
+    bounds: Rect,
+    m: Affine,
+    view: Affine,
+    mode: FillMode,
+    alpha: f64,
+    pres: &Presentation,
+) {
+    let mapped = view * m;
+    ctx.set_transform(mapped);
     match fill {
         Fill::None | Fill::Group | Fill::Background => {}
         Fill::Solid { color: c } => {
@@ -44,7 +64,7 @@ pub fn fill_path(
                 let on_slide = m.transform_rect_bbox(bounds);
                 let upright = deckcraft_model::style::Gradient { rotate_with_shape: true, ..g.clone() };
                 let paint_path = m * path.clone();
-                fill_path(ctx, rctx, &Fill::Gradient(upright), ph, &paint_path, on_slide, Affine::IDENTITY, mode, alpha, pres);
+                fill_path_in_view(ctx, rctx, &Fill::Gradient(upright), ph, &paint_path, on_slide, Affine::IDENTITY, view, mode, alpha, pres);
                 return;
             }
             // A linear gradient spans its tile rectangle (the shape's box unless `tileRect` moves
@@ -60,7 +80,7 @@ pub fn fill_path(
             if let GradientShape::Path { path: kind, focus } = &g.shape
                 && matches!(kind.as_str(), "rect" | "shape")
             {
-                crate::pathgrad::fill(ctx, kind, *focus, &crate::ramp::expand(&stops), bounds, path, m, alpha);
+                crate::pathgrad::fill(ctx, kind, *focus, &crate::ramp::expand(&stops), bounds, path, mapped, alpha);
                 return;
             }
             // PowerPoint's ramp between stops (linear light, S-shaped), see `ramp`.
@@ -89,23 +109,24 @@ pub fn fill_path(
             if pf.upright && turned && m.determinant().abs() > 1e-12 {
                 let on_slide = m.transform_rect_bbox(bounds);
                 let on_path = m * path.clone();
-                ctx.set_transform(Affine::IDENTITY);
-                ctx.push_clip_layer(&on_path);
+                ctx.set_transform(view);
+                // A morph fading the fill fades the picture with it, as it does any other fill.
+                ctx.push_layer(Some(&on_path), None, (alpha < 1.0).then_some(alpha as f32), None, None);
                 // Drawn in device pixels, so a tile (given in shape units) is sized to pixels first.
                 let tiled = tiled_per_point(fill, (c[0].hypot(c[1]), c[2].hypot(c[3])));
                 let upright = if let Fill::Picture(p) = tiled.as_ref() { p } else { pf };
-                picture(ctx, pres, &resolved(rctx, upright, ph), on_slide, Affine::IDENTITY, None);
+                picture_in_view(ctx, pres, &resolved(rctx, upright, ph), on_slide, Affine::IDENTITY, view, None);
                 ctx.pop_layer();
                 return;
             }
-            ctx.push_clip_layer(path);
-            picture(ctx, pres, &resolved(rctx, pf, ph), bounds, m, None);
+            ctx.push_layer(Some(path), None, (alpha < 1.0).then_some(alpha as f32), None, None);
+            picture_in_view(ctx, pres, &resolved(rctx, pf, ph), bounds, m, view, None);
             ctx.pop_layer();
         }
         Fill::Pattern(p) => {
             let fg = rctx.color(&p.fg, ph);
             let bg = rctx.color(&p.bg, ph);
-            crate::pattern::fill(ctx, &p.preset, fg, bg, alpha, path, m);
+            crate::pattern::fill(ctx, &p.preset, fg, bg, alpha, path, mapped);
         }
     }
 }
@@ -186,11 +207,27 @@ pub fn circle_gradient(focus: [f64; 4], bounds: Rect, tile: Rect) -> peniko::Gra
 /// Draw a picture fill into `bounds` (shape-local) honouring crop and stretch/tile modes; an animated
 /// GIF shows its frame at `gif_time` seconds.
 pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, bounds: Rect, m: Affine, gif_time: Option<f64>) {
+    picture_in_view(ctx, pres, pf, bounds, m, Affine::IDENTITY, gif_time);
+}
+
+/// [`picture`] laid out on the output pixels of `m`, then mapped by `view` into another surface
+/// (a downsampled effect mask): a tile keeps the whole-pixel size it has on screen.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn picture_in_view(
+    ctx: &mut RenderContext,
+    pres: &Presentation,
+    pf: &PictureFill,
+    bounds: Rect,
+    m: Affine,
+    view: Affine,
+    gif_time: Option<f64>,
+) {
     let Some(item) = pres.media(pf.media) else {
         missing(ctx, bounds);
         return;
     };
-    let px_scale = crate::scale_of(m);
+    let mapped = view * m;
+    let px_scale = crate::scale_of(mapped);
     let dest = match &pf.mode {
         PictureMode::Stretch { fill_rect } => {
             let [l, t, r, b] = *fill_rect;
@@ -250,7 +287,7 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
                 alpha: 1.0,
             },
         };
-        ctx.set_transform(m);
+        ctx.set_transform(mapped);
         if alpha < 0.999 {
             ctx.push_layer(None, None, Some(alpha as f32), None, None);
         }
@@ -263,7 +300,7 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
         }
         return;
     }
-    draw_image(ctx, &image, iw, ih, dest, m, alpha);
+    draw_image(ctx, &image, iw, ih, dest, mapped, alpha);
 }
 
 /// `fill`, with a tiled picture's tile size and offset moved from points to shape units, given
