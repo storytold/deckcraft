@@ -310,7 +310,7 @@ pub struct SlideApp {
     /// Who DeckCraft is to the framework's dialogs.
     framework_host: std::sync::Arc<craft_host::Host>,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
-    pending_copy: Option<String>,
+    pending_copy: Option<app::ClipboardOffer>,
     /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).
     capture: capture::Capture,
     styled: bool,
