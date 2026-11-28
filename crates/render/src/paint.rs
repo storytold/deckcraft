@@ -51,9 +51,6 @@ pub fn fill_path(
             // its edges); a radial one ends on the circle around it, from a focus placed in the
             // shape's own box (PowerPoint's "from corner" presets centre the tile on the corner).
             let tile = tile_box(bounds, g.tile);
-            let stops: Vec<(f64, Rgba)> = g.stops.iter().map(|s| (s.pos, shade(rctx.color(&s.color, ph), mode))).collect();
-            ctx.set_paint(gradient(&g.shape, stops, bounds, alpha));
-
             let mut stops: Vec<(f64, Rgba)> = g.stops.iter().map(|s| (s.pos.clamp(0.0, 1.0), shade(rctx.color(&s.color, ph), mode))).collect();
             stops.sort_by(|a, b| a.0.total_cmp(&b.0));
             // Rectangle and outline paths: rasterised (see `pathgrad`).
@@ -74,6 +71,7 @@ pub fn fill_path(
                     let c = tile.center();
                     let half = (tile.width() * dx.abs() + tile.height() * dy.abs()) / 2.0;
                     peniko::Gradient::new_linear(Point::new(c.x - dx * half, c.y - dy * half), Point::new(c.x + dx * half, c.y + dy * half))
+                        .with_interpolation_alpha_space(peniko::InterpolationAlphaSpace::Unpremultiplied)
                         .with_stops(stops.as_slice())
                 }
                 GradientShape::Path { focus, .. } => circle_gradient(*focus, bounds, tile).with_stops(stops.as_slice()),
@@ -153,6 +151,7 @@ pub fn gradient(shape: &GradientShape, mut stops: Vec<(f64, Rgba)>, bounds: Rect
             let c = bounds.center();
             let half = (bounds.width() * dx.abs() + bounds.height() * dy.abs()) / 2.0;
             peniko::Gradient::new_linear(Point::new(c.x - dx * half, c.y - dy * half), Point::new(c.x + dx * half, c.y + dy * half))
+                .with_interpolation_alpha_space(peniko::InterpolationAlphaSpace::Unpremultiplied)
                 .with_stops(stops.as_slice())
         }
         GradientShape::Path { focus, .. } => circle_gradient(*focus, bounds, bounds).with_stops(stops.as_slice()),
@@ -175,12 +174,12 @@ pub fn circle_gradient(focus: [f64; 4], bounds: Rect, tile: Rect) -> peniko::Gra
     let r = (tile.width().hypot(tile.height()) / 2.0).max(1e-6);
     let f = Point::new(fx, fy);
     if !(f.is_finite() && c.is_finite() && r.is_finite()) {
-        return peniko::Gradient::new_radial(c, r as f32);
+        return peniko::Gradient::new_radial(c, r as f32).with_interpolation_alpha_space(peniko::InterpolationAlphaSpace::Unpremultiplied);
     }
     // A focus on or outside the end circle has no circle through it: keep it just inside.
     let d = f - c;
     let f = if d.hypot() > r * 0.999 { c + d * (r * 0.999 / d.hypot()) } else { f };
-    peniko::Gradient::new_two_point_radial(f, 0.0, c, r as f32)
+    peniko::Gradient::new_two_point_radial(f, 0.0, c, r as f32).with_interpolation_alpha_space(peniko::InterpolationAlphaSpace::Unpremultiplied)
 }
 
 /// Draw a picture fill into `bounds` (shape-local) honouring crop and stretch/tile modes; an animated

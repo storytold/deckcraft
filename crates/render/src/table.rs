@@ -138,13 +138,168 @@ fn border_look(ctx: &Ctx, b: &TableBorder) -> (Rgba, f64) {
     }
 }
 
-pub fn resolve_style<'a>(ctx: &'a Ctx, t: &Table) -> Option<&'a TableStyleDef> {
-    ctx.pres.table_styles.iter().find(|d| d.id.eq_ignore_ascii_case(&t.style))
+/// Complete list of all 74 built-in PowerPoint table style GUIDs from `[MS-OE376]` §2.1.1343
+/// (ECMA-376 Part 4 §5.1.6.10, `tableStyleId`): 15 base styles and 59 color-derived variants.
+const BUILTIN_TABLE_STYLE_GUIDS: [&str; 74] = [
+    // No Style, No Grid & Themed Style 1 (Accents 1–6)
+    "{2D5ABB26-0587-4C30-8999-92F81FD0307C}",
+    "{3C2FFA5D-87B4-456A-9821-1D502468CF0F}",
+    "{284E427A-3D55-4303-BF80-6455036E1DE7}",
+    "{69C7853C-536D-4A76-A0AE-DD22124D55A5}",
+    "{775DCB02-9BB8-47FD-8907-85C794F793BA}",
+    "{35758FB7-9AC5-4552-8A53-C91805E547FA}",
+    "{08FB837D-C827-4EFA-A057-4D05807E0F7C}",
+    // No Style, Table Grid & Themed Style 2 (Accents 1–6)
+    "{5940675A-B579-460E-94D1-54222C63F5DA}",
+    "{D113A9D2-9D6B-4929-AA2D-F23B5EE8CBE7}",
+    "{18603FDC-E32A-4AB5-989C-0864C3EAD2B8}",
+    "{306799F8-075E-4A3A-A7F6-7FBC6576F1A4}",
+    "{E269D01E-BC32-4049-B463-5C60D7B0CCD2}",
+    "{327F97BB-C833-4FB7-BDE5-3F7075034690}",
+    "{638B1855-1B75-4FBE-930C-398BA8C253C6}",
+    // Light Style 1 (Base & Accents 1–6)
+    "{9D7B26C5-4107-4FEC-AEDC-1716B250A1EF}",
+    "{3B4B98B0-60AC-42C2-AFA5-B58CD77FA1E5}",
+    "{0E3FDE45-AF77-4B5C-9715-49D594BDF05E}",
+    "{C083E6E3-FA7D-4D7B-A595-EF9225AFEA82}",
+    "{D27102A9-8310-4765-A935-A1911B00CA55}",
+    "{5FD0F851-EC5A-4D38-B0AD-8093EC10F338}",
+    "{68D230F3-CF80-4859-8CE7-A43EE81993B5}",
+    // Light Style 2 (Base & Accents 1–6)
+    "{7E9639D4-E3E2-4D34-9284-5A2195B3D0D7}",
+    "{69012ECD-51FC-41F1-AA8D-1B2483CD663E}",
+    "{72833802-FEF1-4C79-8D5D-14CF1EAF98D9}",
+    "{F2DE63D5-997A-4646-A377-4702673A728D}",
+    "{17292A2E-F333-43FB-9621-5CBBE7FDCDCB}",
+    "{5A111915-BE36-4E01-A7E5-04B1672EAD32}",
+    "{912C8C85-51F0-491E-9774-3900AFEF0FD7}",
+    // Light Style 3 (Base & Accents 1–6)
+    "{616DA210-FB5B-4158-B5E0-FEB733F419BA}",
+    "{BC89EF96-8CEA-46FF-86C4-4CE0E7609802}",
+    "{5DA37D80-6434-44D0-A028-1B22A696006F}",
+    "{8799B23B-EC83-4686-B30A-512413B5E67A}",
+    "{ED083AE6-46FA-4A59-8FB0-9F97EB10719F}",
+    "{BDBED569-4797-4DF1-A0F4-6AAB3CD982D8}",
+    "{E8B1032C-EA38-4F05-BA0D-38AFFFC7BED3}",
+    // Medium Style 1 (Base & Accents 1–6)
+    "{793D81CF-94F2-401A-BA57-92F5A7B2D0C5}",
+    "{B301B821-A1FF-4177-AEE7-76D212191A09}",
+    "{9DCAF9ED-07DC-4A11-8D7F-57B35C25682E}",
+    "{1FECB4D8-DB02-4DC6-A0A2-4F2EBAE1DC90}",
+    "{1E171933-4619-4E11-9A3F-F7608DF75F80}",
+    "{FABFCF23-3B69-468F-B69F-88F6DE6A72F2}",
+    "{10A1B5D5-9B99-4C35-A422-299274C87663}",
+    // Medium Style 2 (Base & Accents 1–6)
+    "{073A0DAA-6AF3-43AB-8588-CEC1D06C72B9}",
+    "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}",
+    "{21E4AEA4-8DFA-4A89-87EB-49C32662AFE0}",
+    "{F5AB1C69-6EDB-4FF4-983F-18BD219EF322}",
+    "{00A15C55-8517-42AA-B614-E9B94910E393}",
+    "{7DF18680-E054-41AD-8BC1-D1AEF772440D}",
+    "{93296810-A885-4BE3-A3E7-6D5BEEA58F35}",
+    // Medium Style 3 (Base & Accents 1–6)
+    "{8EC20E35-A176-4012-BC5E-935CFFF8708E}",
+    "{6E25E649-3F16-4E02-A733-19D2CDBF48F0}",
+    "{85BE263C-DBD7-4A20-BB59-AAB30ACAA65A}",
+    "{EB344D84-9AFB-497E-A393-DC336BA19D2E}",
+    "{EB9631B5-78F2-41C9-869B-9F39066F8104}",
+    "{74C1A8A3-306A-4EB7-A6B1-4F7E0EB9C5D6}",
+    "{2A488322-F2BA-4B5B-9748-0D474271808F}",
+    // Medium Style 4 (Base & Accents 1–6)
+    "{D7AC3CCA-C797-4891-BE02-D94E43425B78}",
+    "{69CF1AB2-1976-4502-BF36-3FF5EA218861}",
+    "{8A107856-5554-42FB-B03E-39F5DBC370BA}",
+    "{0505E3EF-67EA-436B-97B2-0124C06EBD24}",
+    "{C4B1156A-380E-4F78-BDF5-A606A8083BF9}",
+    "{22838BEF-8BB2-4498-84A7-C5851F593DF1}",
+    "{16D9F66E-5EB9-4882-86FB-DCBF35E3C3E4}",
+    // Dark Style 1 (Base & Accents 1–6)
+    "{E8034E78-7F5D-4C2E-B375-FC64B27BC917}",
+    "{125E5076-3810-47DD-B79F-674D7AD40C01}",
+    "{37CE84F3-28C3-443E-9E96-99CF82512B78}",
+    "{D03447BB-5D67-496B-8E87-E561075AD55C}",
+    "{E929F9F4-4A8F-4326-A1B4-22849713DDAB}",
+    "{8FD4443E-F989-4FC4-A0C8-D5A2AF1F390B}",
+    "{AF606853-7671-496A-8E4F-DF71F8EC918B}",
+    // Dark Style 2 (Base & Accents 1/2, 3/4, 5/6)
+    "{5202B0CA-FC54-4496-8BCA-5EF66A818D29}",
+    "{0660B408-B3CF-4A94-85FC-2B1E0A45F4A2}",
+    "{91EBBBCC-DAD2-459C-BE2E-F6DE35CF9A28}",
+    "{46F890A9-2807-4EBB-B81D-B2AA78EC7F39}",
+];
+
+/// Returns whether `id` matches one of the 74 built-in PowerPoint table style GUIDs from
+/// `[MS-OE376]` §2.1.1343 (case-insensitive, with or without surrounding `{...}` braces).
+pub(crate) fn is_builtin_table_style_guid(id: &str) -> bool {
+    let trimmed = id.trim();
+    let bare = trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')).unwrap_or(trimmed);
+    if bare.len() != 36 {
+        return false;
+    }
+    BUILTIN_TABLE_STYLE_GUIDS.iter().any(|g| g.trim_matches(['{', '}']).eq_ignore_ascii_case(bare))
 }
 
-#[allow(dead_code)]
-pub fn look(ctx: &Ctx, t: &Table, r: usize, c: usize) -> CellLook {
-    look_with_def(ctx, resolve_style(ctx, t), t, r, c)
+/// Although ECMA-376's `CT_TableStyleTextStyle` schema permits either `a:font` or `a:fontRef`
+/// inside `a:tcTxStyle`, empirical testing in Microsoft PowerPoint 16.0.20326.20318 shows that
+/// PowerPoint's `ppt/tableStyles.xml` loader rejects custom styles whose `a:tcTxStyle` contains a
+/// direct `<a:font>` element (as some third-party exporters emit) and falls back to "No Style,
+/// Table Grid".
+fn tc_tx_style_has_direct_font(raw: &str) -> bool {
+    let opts = craft_xml::Options::local();
+    let mut events = opts.events(raw.as_bytes());
+    let mut in_tc_tx_style: Vec<bool> = Vec::new();
+    while let Ok(Some(ev)) = events.next() {
+        match ev {
+            craft_xml::Event::Start { name, .. } => {
+                if in_tc_tx_style.last().copied().unwrap_or(false) && name == "font" {
+                    return true;
+                }
+                in_tc_tx_style.push(name == "tcTxStyle");
+            }
+            craft_xml::Event::End { .. } => {
+                in_tc_tx_style.pop();
+            }
+            craft_xml::Event::Text(_) | craft_xml::Event::CData(_) | craft_xml::Event::Pi { .. } | craft_xml::Event::Comment(_) => {}
+        }
+    }
+    false
+}
+
+/// Table style resolved once per table so neither `def.raw` nor [`BUILTIN_TABLE_STYLE_GUIDS`] is
+/// rescanned per cell.
+#[derive(Clone, Copy)]
+pub(crate) enum ResolvedStyle<'a> {
+    /// A valid file-defined `ppt/tableStyles.xml` style.
+    Def(&'a TableStyleDef),
+    /// A preset or built-in/unknown GUID with no usable file-defined style. `fallback_grid` is true
+    /// for non-built-in `{...}` GUIDs (unresolved or rejected), which fall back to "No Style, Table
+    /// Grid".
+    Preset { fallback_grid: bool },
+}
+
+impl<'a> ResolvedStyle<'a> {
+    fn def(self) -> Option<&'a TableStyleDef> {
+        match self {
+            Self::Def(d) => Some(d),
+            Self::Preset { .. } => None,
+        }
+    }
+}
+
+fn is_unknown_guid_fallback(style: &str) -> bool {
+    style.starts_with('{') && !is_builtin_table_style_guid(style)
+}
+
+/// Resolve a table's style once per table, rejecting custom (non-built-in) `ppt/tableStyles.xml`
+/// definitions with direct `<a:font>` inside `a:tcTxStyle` (observed in Microsoft PowerPoint
+/// 16.0.20326.20318). Built-in `[MS-OE376]` §2.1.1343 GUIDs keep their inline definitions.
+pub(crate) fn resolve_style<'a>(ctx: &'a Ctx, t: &Table) -> ResolvedStyle<'a> {
+    if let Some(def) = ctx.pres.table_styles.iter().find(|d| d.id.eq_ignore_ascii_case(&t.style))
+        && (def.raw.is_empty() || is_builtin_table_style_guid(&def.id) || !tc_tx_style_has_direct_font(&def.raw))
+    {
+        return ResolvedStyle::Def(def);
+    }
+    ResolvedStyle::Preset { fallback_grid: is_unknown_guid_fallback(&t.style) }
 }
 
 /// Which parts of the table a cell sits in, for the preset styles.
@@ -227,10 +382,11 @@ fn medium2_look(a: Rgba, p: PresetPart, on: impl Fn(Rgba) -> Rgba) -> CellLook {
     }
 }
 
-pub fn look_with_def(ctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize, c: usize) -> CellLook {
-    if let Some(def) = def {
-        return look_def(ctx, def, t, r, c);
-    }
+pub(crate) fn look_with_style(ctx: &Ctx, style: ResolvedStyle<'_>, t: &Table, r: usize, c: usize) -> CellLook {
+    let fallback_grid = match style {
+        ResolvedStyle::Def(def) => return look_def(ctx, def, t, r, c),
+        ResolvedStyle::Preset { fallback_grid } => fallback_grid,
+    };
     let a = accent(ctx, &t.style);
     let kind = t.style.split('-').next().unwrap_or("medium2");
     let header = t.first_row && r == 0;
@@ -249,15 +405,28 @@ pub fn look_with_def(ctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize
     let dk1 = ctx.color(&ColorRef::scheme(SchemeSlot::Dk1), None);
     let lt1 = ctx.color(&ColorRef::scheme(SchemeSlot::Lt1), None);
     let on = |fill: Rgba| if dk1.contrast(fill) >= lt1.contrast(fill) { dk1 } else { lt1 };
+    // Observed in PowerPoint 16.0: an unresolved or rejected non-built-in table style GUID (`{...}`)
+    // renders as plain Table Grid rather than an accented banded preset, while built-in GUIDs from
+    // [MS-OE376] §2.1.1343 without an inline `tblStyleLst` definition still receive styled rendering.
     match kind {
         "none" => CellLook { fill: None, text: None, bold: false, border: None, sides: [None; 4], paint: None },
         "grid" => CellLook { fill: None, text: None, bold: false, border: Some((text_color, 0.75)), sides: [None; 4], paint: None },
+        _ if fallback_grid => CellLook { fill: None, text: None, bold: false, border: Some((text_color, 0.75)), sides: [None; 4], paint: None },
         "light1" => light1_look(a, p, on),
         "light2" => light2_look(a, p),
         "dark1" => dark1_look(a, p),
         "medium4" => medium4_look(a, p, on),
         _ => medium2_look(a, p, on),
     }
+}
+
+#[cfg(test)]
+pub(crate) fn look_with_def(ctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize, c: usize) -> CellLook {
+    let style = match def {
+        Some(d) => ResolvedStyle::Def(d),
+        None => ResolvedStyle::Preset { fallback_grid: is_unknown_guid_fallback(&t.style) },
+    };
+    look_with_style(ctx, style, t, r, c)
 }
 
 /// Running edges 0, s0, s0+s1, … of a list of sizes (negative sizes count as 0).
@@ -272,11 +441,11 @@ fn edges(sizes: &[f64]) -> Vec<f64> {
 
 /// A cell's text as drawn: its margins, anchor and direction, plus the table style's text colour and bold.
 pub fn cell_body(rctx: &Ctx, t: &Table, r: usize, c: usize, cell: &Cell) -> TextBody {
-    cell_body_with_def(rctx, resolve_style(rctx, t), t, r, c, cell)
+    cell_body_with_style(rctx, resolve_style(rctx, t), t, r, c, cell)
 }
 
-pub fn cell_body_with_def(rctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize, c: usize, cell: &Cell) -> TextBody {
-    let lk = look_with_def(rctx, def, t, r, c);
+pub(crate) fn cell_body_with_style(rctx: &Ctx, style: ResolvedStyle<'_>, t: &Table, r: usize, c: usize, cell: &Cell) -> TextBody {
+    let lk = look_with_style(rctx, style, t, r, c);
     let mut body = cell.text.clone();
     let [ml, mr, mt, mb] = cell.margins.unwrap_or([7.2, 7.2, 3.6, 3.6]);
     body.body.inset_l = Some(ml);
@@ -306,11 +475,11 @@ pub fn cell_body_with_def(rctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r:
 /// text of each of its cells fits, as in PowerPoint. Files from pandoc or python-pptx store 0.
 /// Cells spanning several rows and vertical text keep the stored height.
 pub fn row_heights(rctx: &Ctx, t: &Table, fields: &dyn Fields) -> Vec<f64> {
-    row_heights_with_def(rctx, resolve_style(rctx, t), t, fields)
+    row_heights_with_style(rctx, resolve_style(rctx, t), t, fields)
 }
 
 /// [`row_heights`] with the table's style already resolved, for a caller that needs it too.
-fn row_heights_with_def(rctx: &Ctx, style_def: Option<&TableStyleDef>, t: &Table, fields: &dyn Fields) -> Vec<f64> {
+pub(crate) fn row_heights_with_style(rctx: &Ctx, style: ResolvedStyle<'_>, t: &Table, fields: &dyn Fields) -> Vec<f64> {
     let xs = edges(&t.cols);
     let mut out = Vec::with_capacity(t.rows.len());
     for (ri, row) in t.rows.iter().enumerate() {
@@ -321,7 +490,7 @@ fn row_heights_with_def(rctx: &Ctx, style_def: Option<&TableStyleDef>, t: &Table
             }
             let c1 = ci.saturating_add(cell.grid_span.max(1) as usize).min(t.cols.len());
             let (Some(x0), Some(x1)) = (xs.get(ci), xs.get(c1)) else { continue };
-            let body = cell_body_with_def(rctx, style_def, t, ri, ci, cell);
+            let body = cell_body_with_style(rctx, style, t, ri, ci, cell);
             let tmp = Shape::table_cell(body.clone());
             let need = deckcraft_text::fit_height(rctx, &tmp, &body, Rect::new(*x0, 0.0, *x1, h.max(1.0)), fields);
             if need.is_finite() {
@@ -386,10 +555,10 @@ pub fn draw(
     editing: bool,
 ) -> Option<kurbo::Rect> {
     let _ = pres;
-    let style_def = resolve_style(rctx, t);
-    let rects = cell_rects(t, &row_heights_with_def(rctx, style_def, t, fields));
+    let style = resolve_style(rctx, t);
+    let rects = cell_rects(t, &row_heights_with_style(rctx, style, t, fields));
     let covered = rects.iter().map(|(_, _, r)| *r).reduce(|a, b| a.union(b));
-    let style_bg = style_def.and_then(|d| d.background.as_ref()).and_then(|b| style_fill(rctx, b));
+    let style_bg = style.def().and_then(|d| d.background.as_ref()).and_then(|b| style_fill(rctx, b));
     let own_bg = t.background.clone().map(|f| (f, None));
     if let Some(all) = rects.iter().map(|(_, _, r)| *r).reduce(|a, b| a.union(b)) {
         for (bg, ph) in style_bg.into_iter().chain(own_bg) {
@@ -399,7 +568,7 @@ pub fn draw(
     }
     for (r, c, rect) in &rects {
         let Some(cell) = t.cell(*r, *c) else { continue };
-        let lk = look_with_def(rctx, style_def, t, *r, *c);
+        let lk = look_with_style(rctx, style, t, *r, *c);
         ctx.set_transform(m);
         match &cell.fill {
             Some(f) => {
@@ -432,7 +601,7 @@ pub fn draw(
     // Borders: explicit cell borders, else the style's grid.
     for (r, c, rect) in &rects {
         let Some(cell) = t.cell(*r, *c) else { continue };
-        let lk = look_with_def(rctx, style_def, t, *r, *c);
+        let lk = look_with_style(rctx, style, t, *r, *c);
         let edges = [
             (rect.x0, rect.y0, rect.x0, rect.y1),
             (rect.x1, rect.y0, rect.x1, rect.y1),
@@ -472,7 +641,7 @@ pub fn draw(
         if (cell.text.is_empty() && !editing) || text_off_target(cell, *rect, m, (ctx.width(), ctx.height())) {
             continue;
         }
-        let body = cell_body_with_def(rctx, style_def, t, *r, *c, cell);
+        let body = cell_body_with_style(rctx, style, t, *r, *c, cell);
         let tmp = Shape::table_cell(body.clone());
         #[cfg(test)]
         TEXT_CELLS_DRAWN.with(|n| n.set(n.get() + 1));

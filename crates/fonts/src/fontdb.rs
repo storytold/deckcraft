@@ -39,10 +39,11 @@ pub fn substitutes(family: &str) -> &'static [&'static str] {
         "cambria" | "cambria math" => &["Caladea", "Liberation Serif", "Times New Roman", "Merriweather"],
         "arial" | "helvetica" | "helvetica neue" | "arial nova" => &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"],
         "times new roman" | "times" => &["Liberation Serif", "Times New Roman", "Times", "Merriweather"],
-        "aptos" | "aptos display" | "aptos narrow" | "segoe ui" | "segoe ui light" | "segoe ui semibold" | "tahoma" | "verdana" => {
-            &["Inter", "Helvetica Neue", "Arial", "Liberation Sans"]
-        }
-        "georgia" | "garamond" | "book antiqua" | "palatino" | "palatino linotype" | "constantia" => &["Merriweather", "Liberation Serif", "Georgia"],
+        // Without Aptos, prefer Carlito (Calibri's metric-compatible clone) to Inter, whose wider
+        // glyphs wrap Office text sooner.
+        "aptos" | "aptos display" | "aptos narrow" => &["Carlito", "Inter", "Liberation Sans", "Noto Sans", "DejaVu Sans", "Arial"],
+        "segoe ui" | "segoe ui light" | "segoe ui semibold" | "tahoma" | "verdana" => &["Inter", "Helvetica Neue", "Arial", "Liberation Sans"],
+        s if OFFICE_SERIF_FONTS.contains(&s) => &["Merriweather", "Liberation Serif", "Georgia"],
         "century gothic" | "avenir" | "avenir next" | "futura" | "gill sans" | "gill sans mt" | "trebuchet ms" | "corbel" | "candara" => {
             &["Montserrat", "Poppins", "Avenir Next", "Inter"]
         }
@@ -157,12 +158,20 @@ fn office_twin(family: &str) -> Option<&'static str> {
 
 /// Office's downloadable (cloud) families: PowerPoint fetches them when a document uses them, so
 /// they draw as themselves there, not as Calibri. Without them DeckCraft keeps their closest open
-/// substitute ([`substitutes`]; Aptos as Inter).
+/// substitute ([`substitutes`]; Aptos as Carlito or Inter).
 fn is_office_cloud_font(family: &str) -> bool {
     let f = family.to_ascii_lowercase();
     f.starts_with("aptos") || ["bierstadt", "grandview", "seaford", "skeena", "tenorite"].iter().any(|c| f.starts_with(c))
 }
 
+/// Standard Windows/Office serif families that are installed on Windows PowerPoint and have open
+/// serif substitutes ([`substitutes`]), so documents keep a serif face instead of falling back to
+/// sans-serif Calibri.
+const OFFICE_SERIF_FONTS: &[&str] = &["georgia", "garamond", "book antiqua", "palatino", "palatino linotype", "constantia"];
+
+fn is_office_serif_font(family: &str) -> bool {
+    OFFICE_SERIF_FONTS.iter().any(|s| s.eq_ignore_ascii_case(family))
+}
 /// The family PowerPoint draws a document's Latin text in when the font it names isn't installed,
 /// whatever the theme, `panose` or `pitchFamily` say.
 pub const MISSING_FONT_FAMILY: &str = "Calibri";
@@ -1203,11 +1212,18 @@ impl FontDb {
     /// The face a document's text in `family` is drawn with, as PowerPoint draws it: the family
     /// when it is installed or bundled, or a metric-compatible stand-in (Carlito for Calibri,
     /// Liberation Sans for Arial…), or the family PowerPoint maps it to (Liberation Sans as Arial,
-    /// see `office_twin`); any other missing family is drawn in Calibri (or Carlito).
-    /// Monospaced families keep a monospaced substitute instead of falling back to Calibri.
-    /// DeckCraft's own default family keeps [`FontDb::face`]'s fallbacks.
+    /// see `office_twin`). Office cloud fonts (Aptos…), standard Office serif families (Georgia,
+    /// Garamond, Book Antiqua, Palatino, Constantia), and monospaced families keep their open
+    /// substitutes ([`substitutes`]) instead of falling back to Calibri; any other missing family
+    /// is drawn in Calibri (or Carlito). DeckCraft's own default family keeps [`FontDb::face`]'s
+    /// fallbacks.
     pub fn document_face(&self, family: &str, style: &str) -> Arc<FontFace> {
-        if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || has_metric_twin(family) || is_office_cloud_font(family) || self.has_family(family) {
+        if family.eq_ignore_ascii_case(FALLBACK_FAMILY)
+            || has_metric_twin(family)
+            || is_office_cloud_font(family)
+            || is_office_serif_font(family)
+            || self.has_family(family)
+        {
             return self.face(family, style);
         }
         if let Some(twin) = office_twin(family) {

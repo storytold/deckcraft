@@ -359,7 +359,8 @@ fn craft_fonts_latin_when_present() {
     let db = FontDb::with_font_dirs(Vec::new());
     db.set_system_fallback(false);
     assert_eq!(db.face("Inter", "Regular").family, "Inter");
-    assert_eq!(db.face("Aptos", "Regular").family, "Inter");
+    let expected_aptos = if CRAFT_FONTS.iter().any(|f| f.family == "Carlito") { "Carlito" } else { "Inter" };
+    assert_eq!(db.face("Aptos", "Regular").family, expected_aptos);
     if let (Some(regular), Some(bold)) = (regular, bold) {
         // The build input carries one entry per face; real static Bold must not be the Regular
         // file relabelled in the manifest.
@@ -432,4 +433,51 @@ fn disabling_system_fallback_gates_automatic_family_loads() {
     assert!(cfg!(target_arch = "wasm32") || db.system_fallback_enabled());
     db.set_system_fallback(false);
     assert!(!db.system_fallback_enabled());
+}
+
+#[test]
+fn office_serif_fonts_keep_serif_substitute_and_aptos_prefers_carlito() {
+    let aptos_expected = &["Carlito", "Inter", "Liberation Sans", "Noto Sans", "DejaVu Sans", "Arial"];
+    for aptos in ["Aptos", "Aptos Display", "Aptos Narrow"] {
+        let subs = substitutes(aptos);
+        assert_eq!(subs, aptos_expected, "{aptos} substitute list");
+        let carlito = subs.iter().position(|&s| s == "Carlito").unwrap();
+        let inter = subs.iter().position(|&s| s == "Inter").unwrap();
+        assert!(carlito < inter, "{aptos} must prefer Carlito before bundled Inter");
+    }
+    for ui in ["Segoe UI", "Segoe UI Light", "Segoe UI Semibold", "Tahoma", "Verdana"] {
+        assert_eq!(substitutes(ui), &["Inter", "Helvetica Neue", "Arial", "Liberation Sans"], "{ui} substitutes must remain unchanged");
+    }
+
+    let serif_subs = &["Merriweather", "Liberation Serif", "Georgia"];
+    let all_serifs = ["Georgia", "Garamond", "Book Antiqua", "Palatino", "Palatino Linotype", "Constantia"];
+    for serif in all_serifs {
+        assert_eq!(substitutes(serif), serif_subs, "{serif}");
+        assert_eq!(substitutes(&serif.to_ascii_uppercase()), serif_subs, "{serif} uppercase");
+    }
+
+    let db = FontDb::global();
+    let calibri = db.face(MISSING_FONT_FAMILY, "Regular").family.clone();
+    let has_serif_sub = db.has_family("Merriweather") || db.has_family("Liberation Serif") || db.has_family("Georgia");
+    for serif in all_serifs {
+        let f = db.document_face(serif, "Regular");
+        assert_eq!(f.family, db.face(serif, "Regular").family, "{serif}");
+        if !db.has_family(serif) && has_serif_sub {
+            assert!(serif_subs.contains(&f.family.as_str()), "{serif} resolved to {:?}, expected a serif substitute", f.family);
+            assert_ne!(f.family, calibri, "{serif} must keep a serif substitute instead of Calibri");
+        }
+    }
+
+    let isolated = FontDb::with_font_dirs(Vec::new());
+    isolated.set_system_fallback(false);
+    if isolated.is_loaded("Merriweather") {
+        for serif in all_serifs {
+            assert_eq!(isolated.document_face(serif, "Regular").family, "Merriweather", "{serif}");
+        }
+    }
+    if isolated.is_loaded("Carlito") {
+        for aptos in ["Aptos", "Aptos Display", "Aptos Narrow"] {
+            assert_eq!(isolated.document_face(aptos, "Regular").family, "Carlito", "{aptos}");
+        }
+    }
 }

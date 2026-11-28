@@ -3466,3 +3466,192 @@ fn metafile_scaled_viewport_places_each_sub_picture_in_its_half() {
     assert!(blue(img.get_pixel(150, 50)), "blue circle in the right half: {:?}", img.get_pixel(150, 50));
     assert!(img.get_pixel(100, 50)[3] < 128, "the circles don't meet in the middle: {:?}", img.get_pixel(100, 50));
 }
+
+#[test]
+fn gradient_with_transparent_stop_interpolates_in_unpremultiplied_rgba() {
+    // DrawingML/PowerPoint interpolates gradient stops in straight (unpremultiplied) RGBA.
+    // A light alpha=0 stop fading to a dark semi-transparent stop over a dark backdrop must
+    // brighten midtones instead of discarding the transparent stop's RGB.
+    use deckcraft_color::Rgba;
+    use deckcraft_model::style::{Fill, Gradient, GradientShape, GradientStop};
+    let backdrop = Shape {
+        id: ShapeId(901),
+        xfrm: Some(Xfrm::new(0.0, 0.0, 200.0, 100.0)),
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(20, 60, 90)))),
+        ..Default::default()
+    };
+    let overlay = Shape {
+        id: ShapeId(902),
+        xfrm: Some(Xfrm::new(0.0, 0.0, 200.0, 100.0)),
+        fill: Some(Fill::Gradient(Gradient {
+            stops: vec![
+                GradientStop { pos: 0.0, color: ColorRef::rgb(Rgba::rgba(240, 248, 255, 0)) },
+                GradientStop { pos: 0.75, color: ColorRef::rgb(Rgba::rgba(12, 34, 50, 194)) },
+            ],
+            shape: GradientShape::Linear { angle: 0.0, scaled: false },
+            flip: None,
+            rotate_with_shape: true,
+            tile: [0.0; 4],
+        })),
+        ..Default::default()
+    };
+    let p = deck_with(vec![backdrop, overlay]);
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    // At x = 50 (pos = 0.25 -> t = 1/3 along the 0..0.75 ramp):
+    // Straight RGBA gives approx (164, 177, 187, a=0.254) over (20, 60, 90) => R ~ 56.
+    // Premultiplied RGBA would zero out stop 0 RGB and darken R to ~18.
+    let mid = img.pixel(50, 50);
+    assert!(mid[0] > 45 && mid[1] > 80, "expected unpremultiplied brightening at midtone, got {mid:?}");
+    // At x = 180 (pos = 0.90, clamped at stop 1): dark overlay applies normally.
+    let end = img.pixel(180, 50);
+    assert!(end[0] < 20 && end[1] < 45, "expected darkened end stop, got {end:?}");
+}
+
+#[test]
+fn table_style_with_direct_font_in_tc_tx_style_falls_back_to_grid() {
+    // PowerPoint rejects custom tableStyles.xml definitions whose a:tcTxStyle uses a direct
+    // <a:font> element instead of <a:fontRef>, falling back to "No Style, Table Grid".
+    use deckcraft_color::Rgba;
+    use deckcraft_model::style::Fill;
+    use deckcraft_model::table::{TablePart, TablePartStyle, TableStyleDef};
+    let guid = "{11111111-2222-3333-4444-555555555555}";
+    let mut t = Table::new(3, 2, 200.0, 40.0);
+    t.style = guid.into();
+    t.first_row = true;
+    t.band_row = true;
+    let header = TablePartStyle { fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 0, 0)))), bold: Some(true), ..Default::default() };
+    let band = TablePartStyle { fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(245, 200, 200)))), ..Default::default() };
+    let rejected_raw = format!(
+        r#"<a:tblStyle styleId="{guid}" styleName="Custom"><a:wholeTbl><a:tcTxStyle b="off"><a:font><a:latin typeface="Arial"/><a:ea typeface="Arial"/><a:cs typeface="Arial"/></a:font><a:schemeClr val="dk1"/></a:tcTxStyle></a:wholeTbl></a:tblStyle>"#
+    );
+    let def = TableStyleDef {
+        id: guid.into(),
+        name: "Custom".into(),
+        parts: vec![(TablePart::FirstRow, header.clone()), (TablePart::Band1H, band.clone())],
+        background: None,
+        raw: rejected_raw,
+    };
+    let tbl = Shape { id: ShapeId(903), xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 120.0)), kind: ShapeKind::Table(t.clone()), ..Default::default() };
+    let mut p = deck_with(vec![tbl]);
+    p.table_styles.push(def);
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    // Rejected style: header and banded cells stay transparent (white slide shows through) instead of red/pink.
+    assert_eq!(img.pixel(150, 120)[..3], [255, 255, 255], "header cell must not take rejected style fill");
+    assert_eq!(img.pixel(150, 160)[..3], [255, 255, 255], "banded cell must not take rejected style fill");
+    // And a dark grid border is drawn between row 0 and row 1.
+    let bdr = img.pixel(150, 140);
+    assert!(bdr[0] < 180 && bdr[1] < 180 && bdr[2] < 180, "expected dark table grid border, got {bdr:?}");
+
+    // By contrast, a custom style using <a:fontRef> is valid in PowerPoint and renders its fills.
+    let valid_raw = format!(
+        r#"<a:tblStyle styleId="{guid}" styleName="Valid"><a:wholeTbl><a:tcTxStyle><a:fontRef idx="minor"><a:prstClr val="black"/></a:fontRef><a:schemeClr val="dk1"/></a:tcTxStyle></a:wholeTbl></a:tblStyle>"#
+    );
+    p.table_styles[0].raw = valid_raw;
+    let img_valid = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    assert_eq!(img_valid.pixel(150, 120)[..3], [220, 0, 0], "valid fontRef style must apply header fill");
+
+    // A styleName="tcTxStyle" attribute before a real <a:tcTxStyle><a:font .../></a:tcTxStyle>
+    // must NOT mask the direct <a:font> element (regression for naive substring scanning).
+    let attr_collision_raw = format!(
+        r#"<a:tblStyle styleId="{guid}" styleName="tcTxStyle"><a:wholeTbl><a:tcTxStyle b="off"><a:font><a:latin typeface="Arial"/></a:font><a:schemeClr val="dk1"/></a:tcTxStyle></a:wholeTbl></a:tblStyle>"#
+    );
+    p.table_styles[0].raw = attr_collision_raw;
+    let img_attr_collision = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    assert_eq!(
+        img_attr_collision.pixel(150, 120)[..3],
+        [255, 255, 255],
+        "styleName=\"tcTxStyle\" attribute must not prevent rejecting a real <a:tcTxStyle><a:font/>"
+    );
+
+    // Comments and CDATA mentioning <a:font/> inside <a:tcTxStyle> must NOT trigger false rejection.
+    let comment_cdata_raw = format!(
+        r#"<a:tblStyle styleId="{guid}" styleName="Valid"><a:wholeTbl><a:tcTxStyle><!-- <a:font/> --><![CDATA[<a:font/>]]><a:fontRef idx="minor"><a:prstClr val="black"/></a:fontRef></a:tcTxStyle></a:wholeTbl></a:tblStyle>"#
+    );
+    p.table_styles[0].raw = comment_cdata_raw;
+    let img_comment_cdata = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    assert_eq!(img_comment_cdata.pixel(150, 120)[..3], [220, 0, 0], "comments and CDATA mentioning <a:font/> must not reject a valid fontRef style");
+
+    // An unknown GUID not present in table_styles also falls back to grid rather than medium2.
+    p.table_styles.clear();
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let lk = crate::table::look_with_def(&ctx, None, &t, 0, 0);
+    assert_eq!(lk.fill, None);
+    assert!(!lk.bold);
+    assert!(lk.border.is_some());
+}
+
+#[test]
+fn builtin_table_style_guid_without_def_keeps_styled_look_while_unknown_guid_falls_back_to_grid() {
+    // [MS-OE376] §2.1.1343 built-in GUIDs without an inline tblStyleLst entry must NOT fall back
+    // to plain Table Grid, whereas truly unknown/custom GUIDs DO fall back to plain Table Grid.
+    let light_style_1 = "{9D7B26C5-4107-4FEC-AEDC-1716B250A1EF}";
+    let medium_style_2_accent_1 = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}";
+    let unknown_guid = "{11111111-2222-3333-4444-555555555555}";
+
+    assert!(crate::table::is_builtin_table_style_guid(light_style_1));
+    assert!(crate::table::is_builtin_table_style_guid("{9d7b26c5-4107-4fec-aedc-1716b250a1ef}"));
+    assert!(crate::table::is_builtin_table_style_guid("9D7B26C5-4107-4FEC-AEDC-1716B250A1EF"));
+    assert!(crate::table::is_builtin_table_style_guid(medium_style_2_accent_1));
+    assert!(crate::table::is_builtin_table_style_guid("{3C2FFA5D-87B4-456A-9821-1D502468CF0F}")); // Themed Style 1 - Accent 1
+    assert!(crate::table::is_builtin_table_style_guid("{D7AC3CCA-C797-4891-BE02-D94E43425B78}")); // Medium Style 4
+    assert!(crate::table::is_builtin_table_style_guid("{E8034E78-7F5D-4C2E-B375-FC64B27BC917}")); // Dark Style 1
+    assert!(!crate::table::is_builtin_table_style_guid("{9D7B26C5-4107-4FEC-AEDC-1716B250A1EF")); // malformed braces
+    assert!(!crate::table::is_builtin_table_style_guid(unknown_guid));
+
+    let mut t_medium = Table::new(3, 2, 200.0, 40.0);
+    t_medium.style = medium_style_2_accent_1.into();
+    t_medium.first_row = true;
+    t_medium.band_row = true;
+
+    let mut t_light = t_medium.clone();
+    t_light.style = light_style_1.into();
+
+    let mut t_unknown = t_medium.clone();
+    t_unknown.style = unknown_guid.into();
+
+    let p = deck_with(vec![]);
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+
+    let lk_unknown = crate::table::look_with_style(&ctx, crate::table::resolve_style(&ctx, &t_unknown), &t_unknown, 0, 0);
+    assert_eq!(lk_unknown.fill, None, "unknown custom GUID must fall back to plain grid (no fill)");
+    assert!(!lk_unknown.bold, "unknown custom GUID must fall back to plain grid (not bold)");
+    assert!(lk_unknown.border.is_some(), "unknown custom GUID must fall back to plain grid borders");
+
+    let lk_medium = crate::table::look_with_style(&ctx, crate::table::resolve_style(&ctx, &t_medium), &t_medium, 0, 0);
+    assert!(lk_medium.fill.is_some(), "built-in Medium Style 2 GUID without tblStyleLst must keep a styled header fill");
+    assert!(lk_medium.bold, "built-in Medium Style 2 GUID without tblStyleLst must keep styled header bold");
+
+    let lk_light = crate::table::look_with_style(&ctx, crate::table::resolve_style(&ctx, &t_light), &t_light, 0, 0);
+    assert_ne!(lk_light.fill, lk_unknown.fill, "built-in Light Style 1 GUID must not collapse to the unknown-GUID grid fallback");
+
+    // Non-brace preset ids (e.g. "MediumStyle2-Accent1" or "light1-accent1") are NOT affected by
+    // the unknown-{GUID} plain Table Grid fallback.
+    for preset_id in ["MediumStyle2-Accent1", "medium2-accent1", "light1-accent1"] {
+        let mut t_preset = t_medium.clone();
+        t_preset.style = preset_id.into();
+        let lk_preset = crate::table::look_with_style(&ctx, crate::table::resolve_style(&ctx, &t_preset), &t_preset, 0, 0);
+        assert!(lk_preset.bold, "non-brace preset id {preset_id:?} must keep styled look, not unknown-GUID grid fallback");
+        if preset_id != "light1-accent1" {
+            assert!(lk_preset.fill.is_some(), "non-brace preset id {preset_id:?} must keep styled header fill");
+        }
+    }
+
+    // A built-in GUID with an inline tblStyleLst definition containing direct <a:font> keeps its own parts.
+    use deckcraft_color::Rgba;
+    use deckcraft_model::style::Fill;
+    use deckcraft_model::table::{TablePart, TablePartStyle, TableStyleDef};
+    let custom_green = Fill::solid(ColorRef::rgb(Rgba::rgb(0, 180, 90)));
+    let mut p_def = deck_with(vec![]);
+    p_def.table_styles.push(TableStyleDef {
+        id: light_style_1.into(),
+        name: "Light Style 1".into(),
+        parts: vec![(TablePart::FirstRow, TablePartStyle { fill: Some(custom_green), bold: Some(true), ..Default::default() })],
+        background: None,
+        raw: format!(
+            r#"<a:tblStyle styleId="{light_style_1}" styleName="Light Style 1"><a:wholeTbl><a:tcTxStyle><a:font><a:latin typeface="Arial"/></a:font></a:tcTxStyle></a:wholeTbl></a:tblStyle>"#
+        ),
+    });
+    let ctx_def = Ctx::for_slide(&p_def, &p_def.slides[0]).unwrap();
+    let lk_def = crate::table::look_with_style(&ctx_def, crate::table::resolve_style(&ctx_def, &t_light), &t_light, 0, 0);
+    assert_eq!(lk_def.fill, Some(Rgba::rgb(0, 180, 90)), "built-in GUID inline definition must be kept even with direct <a:font>");
+}
