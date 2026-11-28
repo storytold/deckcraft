@@ -94,12 +94,21 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             if st.selection.slides.is_empty() { st.current_slide().map(|x| vec![x.id]).unwrap_or_default() } else { st.selection.slides.clone() };
         let slides: Vec<Slide> = ids.iter().filter_map(|id| st.doc.slide(*id).cloned()).collect();
         let mut mids = vec![];
+        let mut layout_mids = vec![];
+        let mut layouts: Vec<deckcraft_model::Layout> = vec![];
         for sl in &slides {
             mids.extend(crate::media_refs::slide_media(sl));
+            if let Some((_, l)) = st.doc.layout(sl.layout)
+                && !layouts.iter().any(|x| x.id == l.id)
+            {
+                crate::media_refs::visit::layout(l, &mut |id: &MediaId| layout_mids.push(*id));
+                layouts.push(l.clone());
+            }
         }
         let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
+        let layout_media = st.doc.media.iter().filter(|m| layout_mids.contains(&m.id)).cloned().collect();
         let plain = slides.iter().map(|x| x.title()).collect::<Vec<_>>().join("\n");
-        s.clipboard = crate::Clipboard { slides, media, plain: plain.clone(), ..Default::default() };
+        s.clipboard = crate::Clipboard { slides, layouts, layout_media, source_uid: Some(st.uid), media, plain: plain.clone(), ..Default::default() };
         return Ok(plain);
     }
     // Selected table cells copy as their text: a tab between cells and a paragraph per row.
@@ -311,7 +320,14 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
                 doc.media.push(m.clone());
                 doc.next_id = doc.next_id.max(m.id.0);
             }
-            Some(x) if x.data == m.data => {}
+            Some(x) if x.data == m.data && x.link == m.link => {}
+            Some(_) if m.link.is_some() => {
+                // A link has no bytes, so `add_media` would take any other empty item for it: it
+                // gets an item of its own that keeps the link it points to.
+                let id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+                doc.media.push(deckcraft_model::MediaItem { id, ..m.clone() });
+                map.insert(m.id, id);
+            }
             Some(_) => {
                 let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
                 map.insert(m.id, id);
@@ -345,16 +361,46 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let clip = s.clipboard.clone();
     if !clip.slides.is_empty() {
-        let at = s.doc()?.selection.slide + 1;
+        let (at, uid) = {
+            let d = s.doc()?;
+            (d.selection.slide + 1, d.uid)
+        };
         return s.edit(|doc, sel| {
             let media = bring_media("edit.paste", doc, &clip.media)?;
             let mut new_ids = vec![];
+            // Source layout → the layout its slides take here (found or brought along).
+            let mut brought: HashMap<deckcraft_model::LayoutId, deckcraft_model::LayoutId> = HashMap::new();
+            // The media of a layout come in with the first one brought along, not before.
+            let mut layout_media: Option<HashMap<MediaId, MediaId>> = None;
             for (k, sl) in clip.slides.iter().enumerate() {
                 let mut sl = sl.clone();
                 sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("edit.paste", NO_ID_SPACE))?);
                 let map = reid("edit.paste", doc, &mut sl.shapes)?;
                 remap_animations(&mut sl.animations, &map);
                 crate::media_refs::visit_mut::slide(&mut sl, &mut remap_media(&media));
+                let copied_here = clip.source_uid == Some(uid) && doc.layout(sl.layout).is_some();
+                if !copied_here && let Some(from) = clip.layouts.iter().find(|l| l.id == sl.layout) {
+                    // Another deck, or the layout is gone: PowerPoint takes the layout with the same
+                    // placeholders, else brings the slide's own along.
+                    sl.layout = match brought.get(&from.id) {
+                        Some(l) => *l,
+                        None => {
+                            let mi = super::reuse::master_before(doc, at + k);
+                            let id = match doc.masters.get(mi).and_then(|m| super::reuse::find_layout(m, from)) {
+                                Some(id) => id,
+                                None => {
+                                    if layout_media.is_none() {
+                                        layout_media = Some(bring_media("edit.paste", doc, &clip.layout_media)?);
+                                    }
+                                    let map = layout_media.as_ref().unwrap_or(&media);
+                                    super::reuse::import_layout("edit.paste", doc, mi, from, (1.0, 1.0), remap_media(map))?
+                                }
+                            };
+                            brought.insert(from.id, id);
+                            id
+                        }
+                    };
+                }
                 if doc.layout(sl.layout).is_none() {
                     sl.layout = doc.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();
                 }
@@ -841,4 +887,31 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
         }
     })?;
     Ok(json!({"selected": s.doc()?.selection.shapes}))
+}
+
+#[cfg(test)]
+mod bring_media_tests {
+    use super::*;
+    use deckcraft_model::{MediaItem, Presentation};
+
+    fn linked(id: u32, link: &str) -> MediaItem {
+        MediaItem { id: MediaId(id), name: "linked.png".into(), content_type: "image/png".into(), data: Default::default(), link: Some(link.into()) }
+    }
+
+    #[test]
+    fn a_linked_item_keeps_its_own_link_when_the_id_is_taken_by_another_link() {
+        let mut doc = Presentation::default();
+        let mine = linked(7, "file:///mine.png");
+        doc.media.push(mine.clone());
+        doc.next_id = doc.next_id.max(7);
+        // The same link under the same id is the same item; another link under it is not.
+        let map = bring_media("edit.paste", &mut doc, std::slice::from_ref(&mine)).expect("bring");
+        assert!(map.is_empty() && doc.media.len() == 1, "{map:?}");
+        let theirs = linked(7, "file:///theirs.png");
+        let map = bring_media("edit.paste", &mut doc, std::slice::from_ref(&theirs)).expect("bring");
+        let new = *map.get(&MediaId(7)).expect("the colliding item has a new id");
+        assert_ne!(new, MediaId(7));
+        assert_eq!(doc.media(new).and_then(|m| m.link.as_deref()), Some("file:///theirs.png"));
+        assert_eq!(doc.media(MediaId(7)).and_then(|m| m.link.as_deref()), Some("file:///mine.png"), "the destination's own item is untouched");
+    }
 }
