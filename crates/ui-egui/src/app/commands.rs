@@ -49,6 +49,21 @@ impl SlideApp {
 
     fn run_ui(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         match id {
+            "ui.window.minimize" => {
+                self.viewport_commands.push(egui::ViewportCommand::Minimized(true));
+            }
+            "ui.window.maximize" => {
+                self.viewport_commands.push(egui::ViewportCommand::Maximized(p.get("on").and_then(Value::as_bool).unwrap_or(true)));
+            }
+            "ui.window.close" => {
+                self.viewport_commands.push(egui::ViewportCommand::Close);
+            }
+            "ui.window.beginResize" => {
+                let Some(direction) = p.get("direction").and_then(Value::as_str).and_then(crate::parse_resize_direction) else {
+                    return Err("direction must be north, south, east, west, northeast, northwest, southeast, or southwest".into());
+                };
+                self.viewport_commands.push(egui::ViewportCommand::BeginResize(direction));
+            }
             "view.normal" => self.ui.view = ViewMode::Normal,
             "view.outline" => self.ui.view = ViewMode::Outline,
             "view.sorter" => self.ui.view = ViewMode::Sorter,
