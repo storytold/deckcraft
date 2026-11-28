@@ -7,7 +7,9 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
     {
         app.session.tool.edit_vertex = Some((path, index));
     }
-    resp.context_menu(|ui| {
+    // Real clicks only: with the canvas focused, egui's own context menu would close on Enter and Space.
+    let open = if resp.secondary_clicked() { Some(true) } else { resp.clicked_by(egui::PointerButton::Primary).then_some(false) };
+    egui::Popup::context_menu(resp).open_memory(open.map(egui::SetOpenCommand::Bool)).show(|ui| {
         let editing = app.session.active().and_then(|d| app.session.tool.editing_points(d).and_then(|id| d.shape(id).cloned()));
         if let Some(sh) = editing {
             edit_points_menu(app, ui, &sh);

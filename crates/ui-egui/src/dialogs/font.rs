@@ -26,7 +26,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     }
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tl!("Font")));
-        let combo = craft_ui::ComboBox::from_id_salt("font_dialog_family")
+        let combo = egui::ComboBox::from_id_salt("font_dialog_family")
             .selected_text(if family.is_empty() { " " } else { family.as_str() })
             .width(300.0)
             .show_ui(ui, |ui| {
@@ -75,7 +75,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         let mut spacing = d.get("spacing", "0");
         let edited = ui.add(egui::TextEdit::singleline(&mut spacing).desired_width(64.0).hint_text(tl!("pt")));
         let mut picked = None;
-        let combo = craft_ui::ComboBox::from_id_salt("font_dialog_spacing")
+        let combo = egui::ComboBox::from_id_salt("font_dialog_spacing")
             .selected_text(match spacing.as_str() {
                 "-3" => "Very tight",
                 "-1.5" => "Tight",

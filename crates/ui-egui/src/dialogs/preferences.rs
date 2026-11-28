@@ -40,7 +40,7 @@ pub(super) fn language_row(app: &mut SlideApp, ui: &mut egui::Ui) {
     let mut chosen = app.ui.language.clone();
     ui.horizontal(|ui| {
         ui.label(tl!("Interface language:"));
-        let combo = craft_ui::ComboBox::from_id_salt("preferences.language").selected_text(name(&chosen)).width(160.0).show_ui(ui, |ui| {
+        let combo = egui::ComboBox::from_id_salt("preferences.language").selected_text(name(&chosen)).width(160.0).show_ui(ui, |ui| {
             ui.selectable_value(&mut chosen, auto.to_string(), name(auto));
             for lang in crate::i18n::Lang::all() {
                 ui.selectable_value(&mut chosen, lang.code().to_string(), lang.name());

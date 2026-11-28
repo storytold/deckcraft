@@ -7,7 +7,7 @@ use std::process::Command;
 use serde_json::Value;
 
 const SHARED_REPO: &str = "https://github.com/storytold/craft-libs";
-const SHARED_REV: &str = "63196e66f3033a6623eb629af95a104d26986725";
+const SHARED_REV: &str = "8fa4db64a9bb943520259ea95331a303ba788f21";
 const REGISTRY: &str = "registry+https://github.com/rust-lang/crates.io-index";
 
 pub fn run(root: &Path) -> Result<(), String> {

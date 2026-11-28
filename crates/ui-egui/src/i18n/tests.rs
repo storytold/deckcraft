@@ -95,13 +95,15 @@ fn a_callers_toolbar_label_stays_literal() {
 }
 
 /// A toolbar saved before `literal` existed has no record of where a label came from. The built-in
-/// item still translates, a custom label that matches a catalog key stays as saved, and a ribbon
-/// caption saved by an older build is kept in English rather than guessed at.
+/// item still translates. A custom caption stays as saved, even when its command and label
+/// match a built-in item but its icon or parameters differ.
 #[test]
 fn a_toolbar_saved_before_labels_recorded_their_origin_keeps_custom_labels() {
     let de = fixture_lang("de", DE);
     let old: UiState = serde_json::from_value(json!({"qat": [
         {"id": "app.home", "label": "Home", "icon": "home"},
+        {"id": "app.home", "label": "Home", "icon": "table"},
+        {"id": "app.home", "label": "Home", "icon": "home", "params": {"context": "custom"}},
         {"id": "insert.table", "label": "Home", "icon": "table"},
         {"id": "insert.table", "params": {"rows": 2}, "label": "New Slide", "icon": "table"},
     ]}))
@@ -110,7 +112,7 @@ fn a_toolbar_saved_before_labels_recorded_their_origin_keeps_custom_labels() {
     set_current(de);
     let shown: Vec<String> = old.qat.iter().chain([&new]).map(|q| q.shown_label()).collect();
     set_current(Lang::EN);
-    assert_eq!(shown, ["Start", "Home", "New Slide", "Start"]);
+    assert_eq!(shown, ["Start", "Home", "Home", "Home", "New Slide", "Start"]);
 }
 
 #[test]

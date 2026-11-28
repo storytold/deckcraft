@@ -36,10 +36,12 @@ impl QatItem {
         QatItem { id: id.into(), params: Value::Null, label: label.into(), icon: icon.name().into(), literal: Some(false) }
     }
     /// The label as drawn: a caller's own text as given, an interface string in the current language.
-    /// An item saved before the origin was recorded translates only when its label is still the
-    /// built-in one for its command; anything else may be a caller's own text, so it stays as saved.
+    /// A legacy item translates only when its command, label, icon and parameters all match a
+    /// built-in item. Otherwise the caption may be a caller's own text and stays as saved.
     pub(crate) fn shown_label(&self) -> String {
-        let literal = self.literal.unwrap_or_else(|| !common().iter().any(|c| c.id == self.id && c.label == self.label));
+        let literal = self.literal.unwrap_or_else(|| {
+            !common().iter().any(|c| c.id == self.id && c.label == self.label && c.icon == self.icon && c.params == self.params)
+        });
         if literal { self.label.clone() } else { crate::i18n::t_flat(&self.label) }
     }
     fn icon(&self) -> Icon {

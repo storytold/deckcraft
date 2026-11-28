@@ -116,7 +116,7 @@ impl SlideApp {
                 cancel = ui.button(tl!("Cancel")).clicked();
             });
         });
-        if cancel || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        if cancel || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) || crate::framework::take_window_cancel(ctx) {
             self.cancel_opening();
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -200,13 +200,16 @@ mod tests {
         // A read that never answers: the window stays until Cancel.
         let (_tx, rx) = std::sync::mpsc::channel();
         app.opening = Some(Opening { path: "/decks/Big deck.pptx".into(), started_ms: crate::now_ms(), generation: 1, rx });
-        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
-            |ui, app: &mut SlideApp| {
-                app.logic(ui.ctx());
-                app.ui(ui);
-            },
-            app,
-        );
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                app,
+            );
         harness.run_steps(3);
         harness.get_by_label("Opening Big deck.pptx…");
         harness.get_by_label("Cancel").click();
@@ -284,13 +287,16 @@ mod tests {
         for leave in [egui::Key::Escape, egui::Key::ArrowRight] {
             let mut app = SlideApp::new(Session::new(), crate::Services::default());
             assert!(app.open_from_system(std::slice::from_ref(&path)).is_empty());
-            let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
-                |ui, app: &mut SlideApp| {
-                    app.logic(ui.ctx());
-                    app.ui(ui);
-                },
-                app,
-            );
+            let mut harness = egui_kittest::Harness::builder()
+                .with_context_setup(crate::framework::install_headless)
+                .with_size(egui::vec2(1000.0, 700.0))
+                .build_ui_state(
+                    |ui, app: &mut SlideApp| {
+                        app.logic(ui.ctx());
+                        app.ui(ui);
+                    },
+                    app,
+                );
             harness.run_steps(3);
             assert!(harness.state().show.is_some(), "the show is running");
             if leave == egui::Key::ArrowRight {
