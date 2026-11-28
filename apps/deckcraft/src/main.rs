@@ -664,6 +664,28 @@ mod tests {
         assert_eq!(mac, linux, "macOS and Linux offer different file types");
     }
 
+    /// Every macOS document type names the app icon. Without it Finder keeps the system's
+    /// generic icon on .pptx, .potx and .ppsx files DeckCraft is the default app for.
+    #[test]
+    fn macos_document_types_name_the_app_icon() {
+        let plist = include_str!("../../../packaging/macos/Info.plist.in");
+        let lines: Vec<&'static str> = plist.lines().map(str::trim).collect();
+        let values = |key: &str| -> Vec<&'static str> {
+            let key = format!("<key>{key}</key>");
+            lines
+                .windows(2)
+                .filter_map(|w| match w {
+                    [k, v] if *k == key => Some(*v),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(values("CFBundleIconFile"), ["<string>DeckCraft</string>"]);
+        let types = values("CFBundleTypeName").len();
+        assert!(types > 0, "no document types found");
+        assert_eq!(values("CFBundleTypeIconFile"), vec!["<string>DeckCraft</string>"; types], "a document type names no app icon");
+    }
+
     /// #1114: a shortcut that names an MSI `<Icon>` shows a blank icon once an update deletes the
     /// cached copy of it, and a taskbar pin (a copy of the shortcut) is never repaired. Shortcuts
     /// take the icon embedded in `deckcraft.exe`; only `ARPPRODUCTICON` uses the MSI `<Icon>`.
