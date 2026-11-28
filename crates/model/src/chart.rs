@@ -393,6 +393,12 @@ pub struct Chart {
     /// A histogram's bin width (`cx:binSize`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bin_size: Option<f64>,
+    /// Scale of bubbles in a bubble chart as a percentage of default (0–300, default 100).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bubble_scale: Option<f64>,
+    /// What bubble size represents: `"area"` (default) or `"w"` (width).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_represents: Option<String>,
     /// Original chart XML part kept for round-trip of unmodelled options.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
@@ -507,6 +513,8 @@ impl Default for Chart {
             up_down_bars: false,
             bin_count: None,
             bin_size: None,
+            bubble_scale: None,
+            size_represents: None,
             raw: None,
             verbatim: false,
             kept: ChartKept::default(),
@@ -581,7 +589,8 @@ impl Chart {
             c.series.push(Series {
                 name: format!("Series {}", s + 1),
                 values: data.iter().map(|row| row.get(s).copied()).collect(),
-                x_values: if kind == ChartType::Scatter { (1..=4).map(|x| Some(x as f64)).collect() } else { vec![] },
+                x_values: if matches!(kind, ChartType::Scatter | ChartType::Bubble) { (1..=4).map(|x| Some(x as f64)).collect() } else { vec![] },
+                sizes: if kind == ChartType::Bubble { [10.0, 25.0, 15.0, 30.0].iter().map(|sz| Some(sz + s as f64 * 5.0)).collect() } else { vec![] },
                 ..Default::default()
             });
         }

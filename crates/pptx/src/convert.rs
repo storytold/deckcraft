@@ -1368,6 +1368,23 @@ fn apply_series_dlbls_delete(raw: &str, series: &mut [dm_chart::Series]) {
     }
 }
 
+fn apply_bubble_chart_options(raw: &str, bubble_scale: &mut Option<f64>, size_represents: &mut Option<String>) {
+    let Ok(root) = craft_drawingml::xmlx::parse(raw.as_bytes()) else {
+        return;
+    };
+    let Some(pa) = root.path(&[craft_xml::Local("chart"), craft_xml::Local("plotArea")]) else {
+        return;
+    };
+    if let Some(bc) = pa.child(craft_xml::Local("bubbleChart")) {
+        if let Some(scale) = bc.child(craft_xml::Local("bubbleScale")).and_then(|e| e.attr_local("val")).and_then(|v| v.parse::<f64>().ok()) {
+            *bubble_scale = Some(scale);
+        }
+        if let Some(sr) = bc.child(craft_xml::Local("sizeRepresents")).and_then(|e| e.attr_local("val")) {
+            *size_represents = Some(sr.to_string());
+        }
+    }
+}
+
 fn chart_from(c: cd_chart::Chart) -> dm_chart::Chart {
     let mut out = dm_chart::Chart {
         kind: chart_type_from(c.kind),
@@ -1415,12 +1432,15 @@ fn chart_from(c: cd_chart::Chart) -> dm_chart::Chart {
         up_down_bars: c.up_down_bars,
         bin_count: c.bin_count,
         bin_size: c.bin_size,
+        bubble_scale: None,
+        size_represents: None,
         raw: c.raw,
         verbatim: c.verbatim,
         kept: chart_kept_from(c.kept),
     };
     if let Some(raw) = &out.raw {
         apply_series_dlbls_delete(raw, &mut out.series);
+        apply_bubble_chart_options(raw, &mut out.bubble_scale, &mut out.size_represents);
     }
     out
 }

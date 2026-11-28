@@ -3466,3 +3466,115 @@ fn metafile_scaled_viewport_places_each_sub_picture_in_its_half() {
     assert!(blue(img.get_pixel(150, 50)), "blue circle in the right half: {:?}", img.get_pixel(150, 50));
     assert!(img.get_pixel(100, 50)[3] < 128, "the circles don't meet in the middle: {:?}", img.get_pixel(100, 50));
 }
+
+#[test]
+fn bubble_chart_sizes_by_data_and_removes_connecting_line() {
+    // #2419: Bubble charts size bubbles according to c:bubbleSize in Series::sizes
+    // (area proportional to size), omit connecting lines between bubbles, and skip points lacking size.
+    let c = Chart {
+        kind: ChartType::Bubble,
+        title: None,
+        legend: None,
+        gridlines: false,
+        y_hidden: true,
+        series: vec![deckcraft_model::chart::Series {
+            name: "Bubbles".into(),
+            values: vec![Some(10.0), Some(10.0), Some(10.0)],
+            x_values: vec![Some(10.0), Some(50.0), Some(90.0)],
+            sizes: vec![Some(1.0), None, Some(4.0)],
+            fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 0, 0)))),
+            line: Some(deckcraft_model::style::Line::none()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let sh = Shape { id: ShapeId(2419), xfrm: Some(Xfrm::new(50.0, 50.0, 800.0, 400.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+    let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+
+    let red_pixels = |x_min: u32, x_max: u32| -> usize {
+        (x_min..x_max)
+            .flat_map(|x| (0..img.height).map(move |y| (x, y)))
+            .filter(|&(x, y)| {
+                let p = img.pixel(x, y);
+                p[0] > 200 && p[1] < 50 && p[2] < 50
+            })
+            .count()
+    };
+
+    let left_red = red_pixels(50, 400);
+    let right_red = red_pixels(500, 850);
+    let middle_red = red_pixels(400, 500);
+
+    // Point 1 has size None, and no connecting line exists, so the middle has no red pixels.
+    assert_eq!(middle_red, 0, "no connecting stroke or un-sized bubble between the two points");
+
+    // Both bubbles rendered with positive area.
+    assert!(left_red > 100, "left bubble (size 1) was drawn: {left_red}");
+    assert!(right_red > 400, "right bubble (size 4) was drawn: {right_red}");
+
+    // The area of bubble 2 (size 4) must be ~4x the area of bubble 1 (size 1).
+    let ratio = right_red as f64 / left_red as f64;
+    assert!((ratio - 4.0).abs() < 0.2, "bubble area ratio must be approximately 4.0 (got {ratio:.3}, left={left_red}, right={right_red})");
+}
+
+#[test]
+fn bubble_chart_point_fills_and_outlines() {
+    // #2419: point_fills override and s.line apply to bubbles.
+    let c = Chart {
+        kind: ChartType::Bubble,
+        title: None,
+        legend: None,
+        gridlines: false,
+        y_hidden: true,
+        series: vec![deckcraft_model::chart::Series {
+            name: "Bubbles".into(),
+            values: vec![Some(10.0), Some(10.0)],
+            x_values: vec![Some(20.0), Some(80.0)],
+            sizes: vec![Some(2.0), Some(2.0)],
+            fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 0, 0)))),
+            point_fills: vec![(1, Fill::solid(ColorRef::rgb(Rgba::rgb(0, 255, 0))))],
+            line: Some(deckcraft_model::style::Line::solid(ColorRef::rgb(Rgba::rgb(0, 0, 255)), 4.0)),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let sh = Shape { id: ShapeId(2420), xfrm: Some(Xfrm::new(50.0, 50.0, 800.0, 400.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+    let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+
+    // Left bubble (point 0) has red fill and blue outline.
+    let left_red = (50..400)
+        .flat_map(|x| (0..img.height).map(move |y| (x, y)))
+        .filter(|&(x, y)| {
+            let p = img.pixel(x, y);
+            p[0] > 200 && p[1] < 50 && p[2] < 50
+        })
+        .count();
+    let left_blue = (50..400)
+        .flat_map(|x| (0..img.height).map(move |y| (x, y)))
+        .filter(|&(x, y)| {
+            let p = img.pixel(x, y);
+            p[2] > 200 && p[0] < 50 && p[1] < 50
+        })
+        .count();
+
+    // Right bubble (point 1) has green point_fill and blue outline.
+    let right_green = (450..850)
+        .flat_map(|x| (0..img.height).map(move |y| (x, y)))
+        .filter(|&(x, y)| {
+            let p = img.pixel(x, y);
+            p[1] > 200 && p[0] < 50 && p[2] < 50
+        })
+        .count();
+    let right_blue = (450..850)
+        .flat_map(|x| (0..img.height).map(move |y| (x, y)))
+        .filter(|&(x, y)| {
+            let p = img.pixel(x, y);
+            p[2] > 200 && p[0] < 50 && p[1] < 50
+        })
+        .count();
+
+    assert!(left_red > 50, "left bubble has series red fill: {left_red}");
+    assert!(left_blue > 30, "left bubble has blue outline: {left_blue}");
+    assert!(right_green > 50, "right bubble has point_fill green: {right_green}");
+    assert!(right_blue > 30, "right bubble has blue outline: {right_blue}");
+}
