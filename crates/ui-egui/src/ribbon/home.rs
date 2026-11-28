@@ -48,51 +48,53 @@ fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
     });
 }
 
-pub(super) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
+pub(super) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str, max_height: f32) {
     let layouts: Vec<(String, deckcraft_model::LayoutId)> = app
         .session
         .active()
         .and_then(|d| d.doc.masters.first().map(|m| m.layouts.iter().map(|l| (l.name.clone(), l.id)).collect()))
         .unwrap_or_default();
-    egui::Grid::new(("layouts", cmd)).spacing(vec2(6.0, 6.0)).show(ui, |ui| {
-        for (k, (name, id)) in layouts.iter().enumerate() {
-            let idx = app.session.active().and_then(|d| d.doc.masters.first().and_then(|m| m.layouts.iter().position(|l| l.id == *id)));
-            let resp = ui.vertical(|ui| {
-                let (rect, resp) = ui.allocate_exact_size(vec2(96.0, 54.0), Sense::click());
-                if let (Some(d), Some(li)) = (app.session.active(), idx) {
-                    let img = deckcraft_render::render_layout(
-                        &d.doc,
-                        0,
-                        Some(li),
-                        &deckcraft_render::RenderOpts {
-                            scale: 192.0 / d.doc.slide_size.width.max(1.0),
-                            edit: true,
-                            size: Some((192, 108)),
-                            ..Default::default()
-                        },
+    egui::ScrollArea::vertical().id_salt(("layouts", cmd)).max_height(max_height.clamp(120.0, 560.0)).auto_shrink([false, true]).show(ui, |ui| {
+        egui::Grid::new(("layouts", cmd)).spacing(vec2(6.0, 6.0)).show(ui, |ui| {
+            for (k, (name, id)) in layouts.iter().enumerate() {
+                let idx = app.session.active().and_then(|d| d.doc.masters.first().and_then(|m| m.layouts.iter().position(|l| l.id == *id)));
+                let resp = ui.vertical(|ui| {
+                    let (rect, resp) = ui.allocate_exact_size(vec2(96.0, 54.0), Sense::click());
+                    if let (Some(d), Some(li)) = (app.session.active(), idx) {
+                        let img = deckcraft_render::render_layout(
+                            &d.doc,
+                            0,
+                            Some(li),
+                            &deckcraft_render::RenderOpts {
+                                scale: 192.0 / d.doc.slide_size.width.max(1.0),
+                                edit: true,
+                                size: Some((192, 108)),
+                                ..Default::default()
+                            },
+                        );
+                        let tex = crate::textures::upload_editor(ui.ctx(), format!("layout-{li}"), crate::textures::to_color_image(&img, false));
+                        let at = crate::textures::device_pixel_rect(rect, ui.ctx().pixels_per_point());
+                        ui.painter().image(tex.id(), at, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    }
+                    let t = Tokens::get(ui.ctx());
+                    ui.painter().rect_stroke(
+                        rect,
+                        CornerRadius::ZERO,
+                        Stroke::new(if resp.hovered() { 2.0 } else { 1.0 }, if resp.hovered() { t.accent } else { t.border }),
+                        egui::StrokeKind::Outside,
                     );
-                    let tex = crate::textures::upload_editor(ui.ctx(), format!("layout-{li}"), crate::textures::to_color_image(&img, false));
-                    let at = crate::textures::device_pixel_rect(rect, ui.ctx().pixels_per_point());
-                    ui.painter().image(tex.id(), at, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    ui.add_sized(vec2(96.0, 14.0), egui::Label::new(egui::RichText::new(name).size(10.5)).truncate());
+                    resp
+                });
+                if resp.inner.clicked() {
+                    run(app, cmd, json!({"layout": id.0}));
+                    ui.close();
                 }
-                let t = Tokens::get(ui.ctx());
-                ui.painter().rect_stroke(
-                    rect,
-                    CornerRadius::ZERO,
-                    Stroke::new(if resp.hovered() { 2.0 } else { 1.0 }, if resp.hovered() { t.accent } else { t.border }),
-                    egui::StrokeKind::Outside,
-                );
-                ui.add_sized(vec2(96.0, 14.0), egui::Label::new(egui::RichText::new(name).size(10.5)).truncate());
-                resp
-            });
-            if resp.inner.clicked() {
-                run(app, cmd, json!({"layout": id.0}));
-                ui.close();
+                if k % 4 == 3 {
+                    ui.end_row();
+                }
             }
-            if k % 4 == 3 {
-                ui.end_row();
-            }
-        }
+        });
     });
 }
 
@@ -104,12 +106,22 @@ fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "slide.new", json!({}));
         }
         if let Some(a) = arrow {
-            egui::Popup::menu(&a).width(420.0).show(|ui| new_slide_menu(app, ui));
+            egui::Popup::menu(&a)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .max_height_from_constrain(true)
+                .width(420.0)
+                .show(|ui| new_slide_menu(app, ui));
         }
         rows(ui, |ui| {
             let (main, arrow) = small_button_ex(ui, Icon::Layout, "Layout", enabled(app, "slide.layout"), false, true);
             if let Some(arrow) = arrow {
-                widgets::split_menu(&main, &arrow, |ui| layout_menu(app, ui, "slide.layout"));
+                widgets::split_popup(&main, &arrow)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .max_height_from_constrain(true)
+                    .show(|ui| {
+                        let max = ui.available_height().min(560.0);
+                        layout_menu(app, ui, "slide.layout", max);
+                    });
             }
             small(app, ui, Icon::ResetSlide, "Reset", "slide.reset", json!({}));
             let (main, arrow) = small_button_ex(ui, Icon::Section, "Section", enabled(app, "section.add"), false, true);
@@ -122,19 +134,25 @@ fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
 
 /// The New Slide button's menu: layouts, duplication, outline import and slide reuse.
 fn new_slide_menu(app: &mut SlideApp, ui: &mut Ui) {
-    layout_menu(app, ui, "slide.new");
+    // Leave room for the separator and the three actions below the gallery, so a short
+    // viewport scrolls the gallery instead of pushing the actions off screen.
+    let gallery_max = (ui.available_height() - 104.0).clamp(120.0, 560.0);
+    layout_menu(app, ui, "slide.new", gallery_max);
     ui.separator();
     if ui.button("Duplicate Selected Slides").clicked() {
         run(app, "slide.duplicate", json!({}));
+        ui.close();
     }
     if ui.button("Slides from Outline…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("outline"));
+        ui.close();
     }
     let desktop = app.services.pick_open.is_some();
     for (label, keep) in [("Reuse Slides…", false), ("Reuse Slides (Keep Source Formatting)…", true)] {
         let r = ui.add_enabled(desktop, egui::Button::new(label));
         if r.clicked() {
             run(app, "app.reuseSlidesDialog", json!({"keepFormatting": keep}));
+            ui.close();
         }
         r.on_disabled_hover_text("Choosing a presentation to reuse needs the desktop app");
     }

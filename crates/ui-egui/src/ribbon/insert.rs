@@ -36,7 +36,12 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "slide.new", json!({}));
         }
         if let Some(a) = arrow {
-            egui::Popup::menu(&a).width(420.0).show(|ui| layout_menu(app, ui, "slide.new"));
+            egui::Popup::menu(&a).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).max_height_from_constrain(true).width(420.0).show(
+                |ui| {
+                    let max = ui.available_height().min(560.0);
+                    layout_menu(app, ui, "slide.new", max);
+                },
+            );
         }
     });
     group(ui, |ui| {

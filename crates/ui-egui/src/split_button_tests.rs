@@ -59,6 +59,91 @@ fn home_layout_opens_the_layout_menu_from_its_label_and_arrow() {
     both_halves_open_same_menu("Home", "Layout", "Title Slide");
 }
 
+/// Build a Home harness whose presentation has `n` layouts total. New layouts are named
+/// `Layout 0..`; the returned name is the last one in the list.
+fn harness_with_layouts(n: usize) -> (Harness<'static, SlideApp>, String) {
+    harness_with_layouts_at(n, 900.0)
+}
+
+fn harness_with_layouts_at(n: usize, height: f32) -> (Harness<'static, SlideApp>, String) {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let have: usize = s.doc().unwrap().doc.masters.iter().map(|m| m.layouts.len()).sum();
+    let added = n.saturating_sub(have);
+    for i in 0..added {
+        s.execute("master.insertLayout", &json!({"name": format!("Layout {i}")})).unwrap();
+    }
+    let last = if added == 0 { s.doc().unwrap().doc.masters[0].layouts.last().unwrap().name.clone() } else { format!("Layout {}", added - 1) };
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.tab = "Home".into();
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1800.0, height)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    (h, last)
+}
+
+#[test]
+fn the_last_of_many_layouts_is_reachable_by_scrolling() {
+    let (mut h, last_name) = harness_with_layouts(76);
+    click(&mut h, "Layout options");
+
+    let first = h.query_all_by_label("Title Slide").next().expect("the first layout tile is in the tree");
+    h.hover_at(first.rect().center());
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -40_000.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(10);
+
+    let last = h.query_all_by_label(last_name.as_str()).next().expect("the last layout must be in the tree");
+    let r = last.rect();
+    assert!(r.max.y <= 900.0 && r.min.y >= 0.0, "the last layout is off screen: {r:?}");
+}
+
+#[test]
+fn a_short_layout_list_fits_without_scrolling() {
+    let (mut h, last_name) = harness_with_layouts(11);
+    click(&mut h, "Layout options");
+    let last_rect = {
+        let last = h.query_all_by_label(last_name.as_str()).next().expect("the last default layout must be in the tree");
+        last.rect()
+    };
+    assert!(last_rect.max.y < 560.0, "the default layouts fit under the viewport cap");
+    assert_eq!(h.query_all_by_role(Role::ScrollBar).count(), 0, "a short layout list has no scrollbar");
+}
+
+#[test]
+fn a_scrollbar_click_keeps_the_layout_gallery_open() {
+    let (mut h, _) = harness_with_layouts(76);
+    click(&mut h, "Layout options");
+    let at = {
+        let bar = h.query_all_by_role(Role::ScrollBar).last().expect("the layout scrollbar");
+        bar.rect().center()
+    };
+    h.event(egui::Event::PointerMoved(at));
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(3);
+    assert!(h.query_by_label("Title Slide").is_some(), "the layout gallery stays open after a scrollbar click");
+}
+
+#[test]
+fn new_slide_actions_stay_reachable_in_a_short_viewport() {
+    let (mut h, _) = harness_with_layouts_at(76, 400.0);
+    click(&mut h, "New Slide options");
+    let action = h.get_by_label("Duplicate Selected Slides");
+    let r = action.rect();
+    assert!(r.min.y >= 0.0 && r.max.y <= 400.0, "the New Slide actions stay on screen: {r:?}");
+}
+
 /// Keyboard entry must recognize either named half as the menu's origin. In particular, Up
 /// enters at the last item rather than letting spatial focus navigation escape into the ribbon.
 #[test]
