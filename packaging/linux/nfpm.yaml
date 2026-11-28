@@ -44,16 +44,27 @@ overrides:
       - mesa-vulkan-drivers
       - xdg-desktop-portal
   rpm:
+    # Library sonames rather than package names, so the same requirements resolve on Fedora/RHEL
+    # and openSUSE (which has no libxkbcommon, vulkan-loader or libglvnd-egl package). The glibc
+    # floor names libm because the binaries' GLIBC_2.35 symbols (hypot, hypotf) are libm's: RHEL 9's
+    # glibc 2.34 provides libc.so.6(GLIBC_2.35) through backports, but not this, so it refuses.
     depends:
-      - libxkbcommon
-      - alsa-lib
-      - (vulkan-loader or libglvnd-egl)
+      - libc.so.6()(64bit)
+      - libm.so.6(GLIBC_2.35)(64bit)
+      - libgcc_s.so.1()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - (libvulkan.so.1()(64bit) or libEGL.so.1()(64bit))
+      - libasound.so.2()(64bit)
+    # The windowing libraries the GUI loads at runtime, by soname too, so the recommendations resolve on
+    # openSUSE as well. Without libX11-xcb and libxkbcommon-x11 the GUI cannot start on X11.
     recommends:
-      - libwayland-client
-      - libX11
-      - libXcursor
-      - libXi
-      - libXrandr
+      - libwayland-client.so.0()(64bit)
+      - libX11.so.6()(64bit)
+      - libXcursor.so.1()(64bit)
+      - libXi.so.6()(64bit)
+      - libX11-xcb.so.1()(64bit)
+      - libxkbcommon-x11.so.0()(64bit)
+      - libwayland-egl.so.1()(64bit)
       - mesa-vulkan-drivers
       - xdg-desktop-portal
 
@@ -64,11 +75,24 @@ contents:
   - src: ${STAGE}/usr/bin/${NFPM_CLI}
     dst: /usr/bin/${NFPM_CLI}
     file_info: { mode: 0755 }
+  # Named one by one rather than as a tree of /usr/share: a tree would also own shared directories
+  # such as /usr/share/mime, which openSUSE's filesystem package owns with other modes, and RPM
+  # refuses to install a package that conflicts with it. ${NFPM_DESK_ID} and ${NFPM_NAME} are filled
+  # in by package.sh (a Nightly renames them), which also drops the mime entry when none is staged.
+  - src: ${STAGE}/usr/share/applications/${NFPM_DESK_ID}.desktop
+    dst: /usr/share/applications/${NFPM_DESK_ID}.desktop
+  - src: ${STAGE}/usr/share/mime/packages/ai.storyteller.deckcraft.xml
+    dst: /usr/share/mime/packages/ai.storyteller.deckcraft.xml
+  - src: ${STAGE}/usr/share/metainfo/${NFPM_DESK_ID}.metainfo.xml
+    dst: /usr/share/metainfo/${NFPM_DESK_ID}.metainfo.xml
+  - src: ${STAGE}/usr/share/icons/hicolor/
+    dst: /usr/share/icons/hicolor/
+    type: tree
   - src: ${STAGE}/usr/lib/
     dst: /usr/lib/
     type: tree
-  - src: ${STAGE}/usr/share/
-    dst: /usr/share/
+  - src: ${STAGE}/usr/share/doc/${NFPM_NAME}/
+    dst: /usr/share/doc/${NFPM_NAME}/
     type: tree
 
 scripts:

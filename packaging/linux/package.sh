@@ -151,6 +151,7 @@ if has deb || has rpm; then
   export NFPM_NAME="deckcraft"
   export NFPM_BIN="deckcraft"
   export NFPM_CLI="deckcraft-cli"
+  NFPM_DESK_ID="$APP_ID"
   if [[ "$IS_NIGHTLY" = 1 ]]; then
     NIGHTLY_DESK_ID="$APP_ID.nightly-v1"
     NIGHTLY_ICON="$ROOT/assets/app-icon/deckcraft-nightly.png"
@@ -158,6 +159,7 @@ if has deb || has rpm; then
     export NFPM_NAME="deckcraft-nightly"
     export NFPM_BIN="deckcraft-nightly"
     export NFPM_CLI="deckcraft-nightly-cli"
+    NFPM_DESK_ID="$NIGHTLY_DESK_ID"
     NFPM_STAGE="$WORK/nfpm-root"
     rm -rf "$NFPM_STAGE"
     cp -R "$STAGE" "$NFPM_STAGE"
@@ -192,8 +194,12 @@ if has deb || has rpm; then
   DROP_LIB_TREE=
   # shellcheck disable=SC2016
   [[ -d "$NFPM_STAGE/usr/lib" ]] || DROP_LIB_TREE='\|^  - src: \${STAGE}/usr/lib/|,+2d;'
+  # nfpm refuses a named file that isn't staged, and a Nightly stages no mime file.
+  DROP_MIME=
   # shellcheck disable=SC2016
-  sed "${DROP_LIB_TREE}s|\${STAGE}|$NFPM_STAGE|g;s|\${NFPM_BIN}|$NFPM_BIN|g;s|\${NFPM_CLI}|$NFPM_CLI|g" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
+  [[ -d "$NFPM_STAGE/usr/share/mime" ]] || DROP_MIME='\|^  - src: \${STAGE}/usr/share/mime/|,+1d;'
+  # shellcheck disable=SC2016
+  sed "${DROP_LIB_TREE}${DROP_MIME}s|\${STAGE}|$NFPM_STAGE|g;s|\${NFPM_BIN}|$NFPM_BIN|g;s|\${NFPM_CLI}|$NFPM_CLI|g;s|\${NFPM_DESK_ID}|$NFPM_DESK_ID|g;s|\${NFPM_NAME}|$NFPM_NAME|g" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
   for fmt in deb rpm; do
     if has "$fmt"; then (cd "$ROOT" && nfpm package -f "$WORK/nfpm.yaml" -p "$fmt" -t "$DIST/$BASENAME.$fmt"); fi
   done
