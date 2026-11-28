@@ -1,3 +1,4 @@
+use super::slide_size::unit_abbr;
 use super::{Dialog, SlideApp, Ui, Value, buttons, check, edited, exact_of, field_of, json, num_text, parse_shown, text_row};
 
 fn put_dim(d: &mut Dialog, key: &str, exact: f64, shown: String) {
@@ -34,10 +35,11 @@ fn seed_size_position(app: &SlideApp, d: &mut Dialog) {
     let sw = num("scaleW").unwrap_or(100.0);
     let sh = num("scaleH").unwrap_or(100.0);
     let lock = d.params.get("lockAspect").and_then(Value::as_bool).unwrap_or(false);
-    put_dim(d, "x", x, num_text(x / 72.0));
-    put_dim(d, "y", y, num_text(y / 72.0));
-    put_dim(d, "w", w, num_text(w / 72.0));
-    put_dim(d, "h", h, num_text(h / 72.0));
+    let ppu = app.session.prefs.units.points_per_unit();
+    put_dim(d, "x", x, num_text(x / ppu));
+    put_dim(d, "y", y, num_text(y / ppu));
+    put_dim(d, "w", w, num_text(w / ppu));
+    put_dim(d, "h", h, num_text(h / ppu));
     put_dim(d, "rot", rot, num_text(rot));
     put_dim(d, "scaleW", sw, num_text(sw));
     put_dim(d, "scaleH", sh, num_text(sh));
@@ -52,12 +54,12 @@ fn scale_of(pt: f64, base: f64) -> f64 {
     if base > 0.0 { pt / base * 100.0 } else { 100.0 }
 }
 
-fn current_points(d: &Dialog, key: &str) -> Option<f64> {
-    if edited(d, key) { parse_shown(&field_of(d, key)).map(|inches| inches * 72.0) } else { exact_of(d, key) }
+fn current_points(d: &Dialog, key: &str, ppu: f64) -> Option<f64> {
+    if edited(d, key) { parse_shown(&field_of(d, key)).map(|shown| shown * ppu) } else { exact_of(d, key) }
 }
 
 /// Keep scale tied to size, and the other side tied when aspect is locked.
-fn reconcile_size_fields(d: &mut Dialog) {
+fn reconcile_size_fields(d: &mut Dialog, ppu: f64) {
     let lock = field_of(d, "lock") == "1";
     let was_locked = field_of(d, "prevlock") == "1";
     let base_w = parse_shown(&field_of(d, "baseW")).unwrap_or(1.0);
@@ -66,27 +68,27 @@ fn reconcile_size_fields(d: &mut Dialog) {
     let (w_s, h_s, sw_s, sh_s) = (field_of(d, "w"), field_of(d, "h"), field_of(d, "scaleW"), field_of(d, "scaleH"));
     let (prev_w, prev_h, prev_sw, prev_sh) = (field_of(d, "prevw"), field_of(d, "prevh"), field_of(d, "prevscaleW"), field_of(d, "prevscaleH"));
     if w_s != prev_w {
-        if let Some(inches) = parse_shown(&w_s) {
-            let w_pt = inches * 72.0;
+        if let Some(shown) = parse_shown(&w_s) {
+            let w_pt = shown * ppu;
             d.fields.insert("wPt".into(), w_pt.to_string());
             let pct = scale_of(w_pt, base_w);
             publish_dim(d, "scaleW", pct, num_text(pct));
             if lock {
                 let h_pt = if ar > 0.0 { w_pt / ar } else { w_pt };
-                publish_dim(d, "h", h_pt, num_text(h_pt / 72.0));
+                publish_dim(d, "h", h_pt, num_text(h_pt / ppu));
                 let hp = scale_of(h_pt, base_h);
                 publish_dim(d, "scaleH", hp, num_text(hp));
             }
         }
     } else if h_s != prev_h {
-        if let Some(inches) = parse_shown(&h_s) {
-            let h_pt = inches * 72.0;
+        if let Some(shown) = parse_shown(&h_s) {
+            let h_pt = shown * ppu;
             d.fields.insert("hPt".into(), h_pt.to_string());
             let pct = scale_of(h_pt, base_h);
             publish_dim(d, "scaleH", pct, num_text(pct));
             if lock {
                 let w_pt = h_pt * ar;
-                publish_dim(d, "w", w_pt, num_text(w_pt / 72.0));
+                publish_dim(d, "w", w_pt, num_text(w_pt / ppu));
                 let wp = scale_of(w_pt, base_w);
                 publish_dim(d, "scaleW", wp, num_text(wp));
             }
@@ -95,10 +97,10 @@ fn reconcile_size_fields(d: &mut Dialog) {
         if let Some(pct) = parse_shown(&sw_s) {
             let w_pt = base_w * pct / 100.0;
             d.fields.insert("scaleWPt".into(), pct.to_string());
-            publish_dim(d, "w", w_pt, num_text(w_pt / 72.0));
+            publish_dim(d, "w", w_pt, num_text(w_pt / ppu));
             if lock {
                 let h_pt = if ar > 0.0 { w_pt / ar } else { w_pt };
-                publish_dim(d, "h", h_pt, num_text(h_pt / 72.0));
+                publish_dim(d, "h", h_pt, num_text(h_pt / ppu));
                 publish_dim(d, "scaleH", pct, num_text(pct));
             }
         }
@@ -106,19 +108,19 @@ fn reconcile_size_fields(d: &mut Dialog) {
         if let Some(pct) = parse_shown(&sh_s) {
             let h_pt = base_h * pct / 100.0;
             d.fields.insert("scaleHPt".into(), pct.to_string());
-            publish_dim(d, "h", h_pt, num_text(h_pt / 72.0));
+            publish_dim(d, "h", h_pt, num_text(h_pt / ppu));
             if lock {
                 let w_pt = h_pt * ar;
-                publish_dim(d, "w", w_pt, num_text(w_pt / 72.0));
+                publish_dim(d, "w", w_pt, num_text(w_pt / ppu));
                 publish_dim(d, "scaleW", pct, num_text(pct));
             }
         }
     } else if lock
         && !was_locked
-        && let Some(w_pt) = current_points(d, "w")
+        && let Some(w_pt) = current_points(d, "w", ppu)
     {
         let h_pt = if ar > 0.0 { w_pt / ar } else { w_pt };
-        publish_dim(d, "h", h_pt, num_text(h_pt / 72.0));
+        publish_dim(d, "h", h_pt, num_text(h_pt / ppu));
         let hp = scale_of(h_pt, base_h);
         publish_dim(d, "scaleH", hp, num_text(hp));
         let wp = scale_of(w_pt, base_w);
@@ -131,10 +133,10 @@ fn reconcile_size_fields(d: &mut Dialog) {
     d.fields.insert("prevlock".into(), if lock { "1".into() } else { "0".into() });
 }
 
-fn shown_points(d: &Dialog, key: &str, label: &str) -> Result<f64, String> {
+fn shown_points(d: &Dialog, key: &str, label: &str, ppu: f64) -> Result<f64, String> {
     if edited(d, key) {
         let n = parse_shown(&field_of(d, key)).ok_or_else(|| format!("{label} must be a number"))?;
-        return Ok(n * 72.0);
+        return Ok(n * ppu);
     }
     exact_of(d, key).ok_or_else(|| format!("{label} must be a number"))
 }
@@ -146,25 +148,25 @@ fn shown_number(d: &Dialog, key: &str, label: &str) -> Result<f64, String> {
     exact_of(d, key).ok_or_else(|| format!("{label} must be a number"))
 }
 
-fn size_position_value(d: &Dialog) -> Result<Value, String> {
-    let x = shown_points(d, "x", "Horizontal")?;
-    let y = shown_points(d, "y", "Vertical")?;
+fn size_position_value(d: &Dialog, ppu: f64) -> Result<Value, String> {
+    let x = shown_points(d, "x", "Horizontal", ppu)?;
+    let y = shown_points(d, "y", "Vertical", ppu)?;
     let rot = shown_number(d, "rot", "Rotation")?;
     let base_w = parse_shown(&field_of(d, "baseW")).unwrap_or(1.0);
     let base_h = parse_shown(&field_of(d, "baseH")).unwrap_or(1.0);
     let mut w = if edited(d, "w") {
-        shown_points(d, "w", "Width")?
+        shown_points(d, "w", "Width", ppu)?
     } else if edited(d, "scaleW") {
         base_w * shown_number(d, "scaleW", "Scale width")? / 100.0
     } else {
-        shown_points(d, "w", "Width")?
+        shown_points(d, "w", "Width", ppu)?
     };
     let mut h = if edited(d, "h") {
-        shown_points(d, "h", "Height")?
+        shown_points(d, "h", "Height", ppu)?
     } else if edited(d, "scaleH") {
         base_h * shown_number(d, "scaleH", "Scale height")? / 100.0
     } else {
-        shown_points(d, "h", "Height")?
+        shown_points(d, "h", "Height", ppu)?
     };
     if field_of(d, "lock") == "1" {
         let ar = if base_h > 0.0 { base_w / base_h } else { 1.0 };
@@ -180,9 +182,12 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
 
 pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     seed_size_position(app, d);
+    let units = app.session.prefs.units;
+    let ppu = units.points_per_unit();
+    let abbr = unit_abbr(units);
     ui.label(egui::RichText::new("Size").strong());
-    text_row(ui, d, "Height (in):", "h");
-    text_row(ui, d, "Width (in):", "w");
+    text_row(ui, d, &format!("Height ({abbr}):"), "h");
+    text_row(ui, d, &format!("Width ({abbr}):"), "w");
     text_row(ui, d, "Rotation (°):", "rot");
     text_row(ui, d, "Scale height (%):", "scaleH");
     text_row(ui, d, "Scale width (%):", "scaleW");
@@ -190,12 +195,12 @@ pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dial
     ui.add_space(8.0);
     ui.label(egui::RichText::new("Position").strong());
     ui.label("From the top-left corner of the slide");
-    text_row(ui, d, "Horizontal (in):", "x");
-    text_row(ui, d, "Vertical (in):", "y");
-    reconcile_size_fields(d);
+    text_row(ui, d, &format!("Horizontal ({abbr}):"), "x");
+    text_row(ui, d, &format!("Vertical ({abbr}):"), "y");
+    reconcile_size_fields(d, ppu);
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
-        match size_position_value(d) {
+        match size_position_value(d, ppu) {
             Ok(p) => return app.run("shape.sizePosition", p).is_ok(),
             Err(msg) => {
                 app.set_status(msg);
