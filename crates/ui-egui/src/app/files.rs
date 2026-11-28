@@ -606,6 +606,7 @@ impl SlideApp {
                         self.save_as_dialog("deckcraft");
                     }
                 }
+                UiRequest::OpenUrl { url } => self.open_url(&url),
                 UiRequest::Media { action, shape, ms } => {
                     let owner = if self.show.is_some() { media::Owner::Show } else { media::Owner::Editor };
                     // The command resolved `shape` on the editor's slide, also while a show runs.

@@ -439,6 +439,10 @@ pub enum UiRequest {
         shape: ShapeId,
         ms: Option<u64>,
     },
+    /// Open a web or mail address (`link.follow`); already checked with `safe_url`.
+    OpenUrl {
+        url: String,
+    },
 }
 
 /// Playback state of a media shape as the UI host reports it (see [`Session::media_status`]).
