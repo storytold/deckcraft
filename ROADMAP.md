@@ -161,6 +161,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | What landed |
 |---|---|
 | 2026-11-20 | WMF pictures that draw sub-pictures through the scale and offset mapping records (charts and clip art from older Office versions) place each one in its part of the frame (#2069) |
+| 2026-11-18 | Presenter view: a slide strip along the bottom shows the previous slide, the current one outlined and at least five coming up; a click goes to that slide and a scrollbar moves through the deck. On by default; the Slide strip button and `show.presenterStrip` turn it off (#975) |
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
 | 2026-11-15 | DeckCraft v0.19.0 version preparation (#2134); the SmartArt and WordArt display names become Diagram and Decorative Text in DeckCraft's own feature labels — commands, contextual tab labels and messages — with the neutral labels guarded by tests; the wasm32 build no longer refers to the native-only opening generation (#1954); the control-protocol method reference is corrected (#2132) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
