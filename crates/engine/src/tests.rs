@@ -2766,6 +2766,64 @@ fn plain_outlines_are_unchanged() {
 }
 
 #[test]
+fn txt_outline_decodes_utf16_boms() {
+    let source = "Intro — café\r\n\tPoint one\r\n\t\tSub point 🚀\r\nSecond\r\n\tMore\r\n";
+    let want = vec![
+        ("Intro — café".to_string(), vec![(0, "Point one".to_string()), (1, "Sub point 🚀".to_string())]),
+        ("Second".to_string(), vec![(0, "More".to_string())]),
+    ];
+
+    let mut utf16_le = vec![0xFF, 0xFE];
+    utf16_le.extend(source.encode_utf16().flat_map(u16::to_le_bytes));
+
+    let mut utf16_be = vec![0xFE, 0xFF];
+    utf16_be.extend(source.encode_utf16().flat_map(u16::to_be_bytes));
+
+    for (label, bytes) in [("utf-16le bom", utf16_le.as_slice()), ("utf-16be bom", utf16_be.as_slice())] {
+        let p = crate::cmd::file::open_presentation("outline.txt", bytes).unwrap();
+        assert_eq!(outline_of(&p), want, "open_presentation ({label})");
+        assert_eq!(crate::cmd::file::outline_text(bytes), source, "outline_text ({label})");
+    }
+
+    // Truncated trailing byte and unpaired surrogate in UTF-16LE replace rather than panic.
+    let truncated_le = [0xFF, 0xFE, b'O', 0x00, b'k', 0x00, 0x00, 0xD8, 0x42];
+    let p = crate::cmd::file::open_presentation("truncated.txt", &truncated_le).unwrap();
+    assert_eq!(p.slides.len(), 1);
+    assert_eq!(p.slides[0].title(), "Ok\u{FFFD}\u{FFFD}");
+    assert_eq!(crate::cmd::file::outline_text(&truncated_le), "Ok\u{FFFD}\u{FFFD}");
+
+    // BOM-only UTF-16 files open as one blank slide.
+    for bom in [&[0xFF, 0xFE][..], &[0xFE, 0xFF][..]] {
+        let p = crate::cmd::file::open_presentation("empty.txt", bom).unwrap();
+        assert_eq!(p.slides.len(), 1);
+        assert_eq!(p.slides[0].title(), "");
+    }
+}
+
+#[test]
+fn txt_outline_strips_utf8_bom_and_keeps_plain_utf8() {
+    let source = "Intro — café\r\n\tPoint one\r\n\t\tSub point 🚀\r\nSecond\r\n\tMore\r\n";
+    let want = vec![
+        ("Intro — café".to_string(), vec![(0, "Point one".to_string()), (1, "Sub point 🚀".to_string())]),
+        ("Second".to_string(), vec![(0, "More".to_string())]),
+    ];
+
+    let mut utf8_bom = vec![0xEF, 0xBB, 0xBF];
+    utf8_bom.extend_from_slice(source.as_bytes());
+
+    for (label, bytes) in [("utf-8 bom", utf8_bom.as_slice()), ("utf-8 no bom", source.as_bytes())] {
+        let p = crate::cmd::file::open_presentation("outline.txt", bytes).unwrap();
+        assert_eq!(outline_of(&p), want, "open_presentation ({label})");
+        assert!(!p.slides[0].title().starts_with('\u{feff}'), "leading BOM kept ({label})");
+        assert_eq!(crate::cmd::file::outline_text(bytes), source, "outline_text ({label})");
+    }
+
+    let p = crate::cmd::file::open_presentation("empty.txt", &[0xEF, 0xBB, 0xBF]).unwrap();
+    assert_eq!(p.slides.len(), 1);
+    assert_eq!(p.slides[0].title(), "");
+}
+
+#[test]
 fn rtf_without_heading_paragraphs_opens_as_one_blank_slide() {
     let p = crate::cmd::file::open_presentation("empty.rtf", br"{\rtf1\ansi}").unwrap();
     assert_eq!(p.slides.len(), 1);

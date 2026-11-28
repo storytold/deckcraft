@@ -181,7 +181,7 @@ fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>, Ve
     let lower = name.to_ascii_lowercase();
     let rtf = deckcraft_format::rtf::sniff_rtf(bytes);
     if rtf || lower.ends_with(".txt") || lower.ends_with(".md") {
-        let text = String::from_utf8_lossy(bytes);
+        let text = if rtf { String::from_utf8_lossy(bytes).into_owned() } else { decode_outline_bytes(bytes) };
         let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
         if rtf {
             deckcraft_format::rtf::rtf_to_slides(&mut p, &text);
@@ -234,10 +234,37 @@ fn probe_clips(p: &mut Presentation) {
     }
 }
 
-/// An outline file's text: RTF is read into the tab-indented outline, anything else as UTF-8.
+/// Decode outline text bytes by BOM: `EF BB BF` strips the UTF-8 BOM, `FF FE` decodes UTF-16LE,
+/// `FE FF` decodes UTF-16BE, and anything else keeps lossy UTF-8 decoding.
+fn decode_outline_bytes(bytes: &[u8]) -> String {
+    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        String::from_utf8_lossy(rest).into_owned()
+    } else if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        decode_utf16(rest, u16::from_le_bytes)
+    } else if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        decode_utf16(rest, u16::from_be_bytes)
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+fn decode_utf16(bytes: &[u8], decode: fn([u8; 2]) -> u16) -> String {
+    let (chunks, tail) = bytes.as_chunks::<2>();
+    let mut out: String = char::decode_utf16(chunks.iter().copied().map(decode)).map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER)).collect();
+    if !tail.is_empty() {
+        out.push(char::REPLACEMENT_CHARACTER);
+    }
+    out
+}
+
+/// An outline file's text: RTF is read into the tab-indented outline; plain text and Markdown
+/// honour UTF-8, UTF-16LE and UTF-16BE BOMs and otherwise decode as UTF-8.
 pub fn outline_text(bytes: &[u8]) -> String {
-    let text = String::from_utf8_lossy(bytes);
-    if deckcraft_format::rtf::sniff_rtf(bytes) { deckcraft_format::rtf::rtf_to_outline(&text) } else { text.into_owned() }
+    if deckcraft_format::rtf::sniff_rtf(bytes) {
+        deckcraft_format::rtf::rtf_to_outline(&String::from_utf8_lossy(bytes))
+    } else {
+        decode_outline_bytes(bytes)
+    }
 }
 
 pub fn add_opened(s: &mut Session, name: &str, path: Option<String>, p: Presentation) -> usize {
