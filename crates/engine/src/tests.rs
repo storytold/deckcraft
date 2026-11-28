@@ -6061,15 +6061,47 @@ fn table_cell_commands_reject_an_invalid_cell_and_name_the_registered_command() 
     assert!(e.contains("table.insertColumnLeft"), "error should name the registered command: {e}");
 }
 
+/// #2260 (the follow-up #1189's review named): a resize of a row or column the table doesn't
+/// have is an error, and leaves the presentation and the undo and redo history as they were.
 #[test]
-fn table_column_width_of_a_huge_column_is_ignored() {
+fn table_resize_rejects_a_row_or_column_past_the_table() {
     let mut s = session();
     let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
-    for keep_total in [true, false] {
-        let r = s.execute("table.columnWidth", &json!({"id": id.0, "col": u64::MAX, "width": 50.0, "keepTotal": keep_total}));
-        assert!(r.is_ok(), "columnWidth must ignore a huge col (keepTotal {keep_total}), got {r:?}");
-        assert_eq!(table_of(&s, id).cols, vec![100.0, 100.0], "no column changes");
+    // A row height undone, so there is a redo step for the rejected resizes to keep.
+    s.execute("table.rowHeight", &json!({"id": id.0, "row": 0, "height": 30.0})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    for (cmd, params) in [
+        ("table.rowHeight", json!({"id": id.0, "row": 2, "height": 50.0})),
+        ("table.rowHeight", json!({"id": id.0, "row": 99, "height": 50.0})),
+        ("table.columnWidth", json!({"id": id.0, "col": 2, "width": 50.0})),
+        ("table.columnWidth", json!({"id": id.0, "col": 99, "width": 50.0})),
+        ("table.columnWidth", json!({"id": id.0, "col": 99, "width": 50.0, "keepTotal": true})),
+        ("table.columnWidth", json!({"id": id.0, "col": u64::MAX, "width": 50.0, "keepTotal": true})),
+    ] {
+        let doc = s.doc().unwrap().doc.clone();
+        let (undo, redo) = (s.doc().unwrap().history.undo.len(), s.doc().unwrap().history.redo.len());
+        let e = s.execute(cmd, &params).expect_err(&format!("{cmd} {params} should be rejected"));
+        assert!(e.to_string().contains(cmd), "the error should name {cmd}: {e}");
+        assert!(std::sync::Arc::ptr_eq(&s.doc().unwrap().doc, &doc), "{cmd} {params} must leave the presentation unchanged");
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo, "{cmd} {params} must not add an undo step");
+        assert_eq!(s.doc().unwrap().history.redo.len(), redo, "{cmd} {params} must keep the redo step");
     }
+    // The history behaves as if they never ran: redo still brings back the row height.
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(table_of(&s, id).rows.first().map(|r| r.height), Some(30.0), "the redo step is still the row height");
+}
+
+#[test]
+fn table_resize_in_range_still_works() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    let undo = s.doc().unwrap().history.undo.len();
+    s.execute("table.rowHeight", &json!({"id": id.0, "row": 1, "height": 50.0})).unwrap();
+    s.execute("table.columnWidth", &json!({"id": id.0, "col": 1, "width": 150.0})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.rows.get(1).map(|r| r.height), Some(50.0));
+    assert_eq!(t.cols, vec![100.0, 150.0]);
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo + 2, "one undo step each");
 }
 
 /// Slides imported from an outline join the section of the slide they follow, like `slide.new`.
