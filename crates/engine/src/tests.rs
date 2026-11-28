@@ -7552,6 +7552,53 @@ fn supported_paths_still_save() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn explicit_save_format_must_match_the_path() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-mismatch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptx").to_string_lossy().to_string();
+    std::fs::write(&path, b"sentinel").unwrap();
+    let before = s.doc().unwrap().path.clone();
+    let err = s.execute("file.saveAs", &json!({"path": path, "format": "deckcraft"})).unwrap_err();
+    assert!(err.to_string().contains("does not match"), "{err}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"sentinel", "the existing file is untouched");
+    assert_eq!(s.doc().unwrap().path, before, "the document keeps its path");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn existing_unsupported_destination_is_untouched() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-existing-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptm").to_string_lossy().to_string();
+    std::fs::write(&path, b"sentinel").unwrap();
+    let before = s.doc().unwrap().path.clone();
+    let err = s.execute("file.saveAs", &json!({"path": path})).unwrap_err();
+    assert!(err.to_string().contains("cannot save"), "{err}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"sentinel", "the existing file is untouched");
+    assert_eq!(s.doc().unwrap().path, before, "the document keeps its path");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explicit_txt_format_is_allowed_for_a_txt_path() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-txt-alias-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("outline.txt").to_string_lossy().to_string();
+    s.execute("file.saveAs", &json!({"path": path, "format": "txt"})).unwrap();
+    assert!(!std::fs::read(&path).unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,

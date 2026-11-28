@@ -476,6 +476,18 @@ fn writable_format(path: &str) -> Result<&'static str> {
     })
 }
 
+/// Whether an explicit save format names the same writer as the path. `txt`/`outline` are the
+/// same writer only for a `.txt` path, and `jpg`/`jpeg` are aliases; every other mismatch would
+/// write bytes that lie about the file type.
+fn same_save_format(path: &str, path_format: &str, format: &str) -> bool {
+    if format == path_format {
+        return true;
+    }
+    let lower = path.to_ascii_lowercase();
+    (lower.ends_with(".txt") && matches!((path_format, format), ("outline", "txt") | ("txt", "outline")))
+        || matches!((path_format, format), ("jpeg", "jpg") | ("jpg", "jpeg"))
+}
+
 /// Animated GIF bytes for `doc` with the options in `p` (see [`crate::gif_export::GifOptions::from_params`]).
 pub fn gif_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
     Ok(crate::gif_export::encode(doc, &crate::gif_export::GifOptions::from_params(p)?)?.bytes)
@@ -535,6 +547,11 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let path_format = writable_format(&path)?;
     let format = str_param(p, "format").unwrap_or(path_format);
+    if !same_save_format(&path, path_format, format) {
+        return Err(EngineError::Other(format!(
+            "{path}: format `{format}` does not match the file type; save as {path_format} or choose a matching extension"
+        )));
+    }
     let bytes = save_bytes(&s.doc()?.doc, format)?;
     write_file(&path, &bytes)?;
     mark_saved(s, Some(path.clone()))?;
