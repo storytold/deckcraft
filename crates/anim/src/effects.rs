@@ -21,6 +21,7 @@ pub(crate) struct EffectSpec {
     pub amount: Option<f64>,
     pub color: Option<Rgba>,
     pub path: Option<MotionPath>,
+    pub text_box: bool,
     /// Shape box in points (sanitized).
     pub xf: Xfrm,
     pub slide_w: f64,
@@ -279,10 +280,8 @@ impl EffectSpec {
                     }
                 }
             }
-            "desaturate" => {
-                let l = (0.299 * cur.r as f64 + 0.587 * cur.g as f64 + 0.114 * cur.b as f64).round().clamp(0.0, 255.0) as u8;
-                st.tint = Some(cur.lerp(Rgba::rgba(l, l, l, cur.a), e));
-            }
+            "desaturate" if self.text_box => st.text_desaturation = e,
+            "desaturate" => st.tint = Some(desaturate_color(cur, e)),
             "darken" => st.tint = Some(cur.lerp(Rgba::rgba(0, 0, 0, cur.a), 0.4 * e)),
             "lighten" => st.tint = Some(cur.lerp(Rgba::rgba(255, 255, 255, cur.a), 0.4 * e)),
             "transparency" => {
@@ -316,6 +315,12 @@ impl EffectSpec {
         };
         AnimState { offset_x: fx * self.slide_w, offset_y: fy * self.slide_h, ..Default::default() }
     }
+}
+
+/// Interpolate toward a gray of the same luma, retaining the source alpha.
+pub fn desaturate_color(color: Rgba, amount: f64) -> Rgba {
+    let gray = (0.299 * color.r as f64 + 0.587 * color.g as f64 + 0.114 * color.b as f64).round() as u8;
+    color.lerp(Rgba::rgba(gray, gray, gray, color.a), amount)
 }
 
 /// The path for a motion-path animation: its own, or the preset default.

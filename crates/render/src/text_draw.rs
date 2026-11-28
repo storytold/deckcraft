@@ -1,5 +1,5 @@
 use super::geometry::{blur, color, pre_translate, scale_of};
-use super::opts::ParaState;
+use super::opts::{ParaState, ShapeState};
 use super::{
     Affine, Arc, BezPath, Ctx, FontDb, HashMap, Opts, PhType, Rect, RenderContext, Rgba, Shape, TextBody, Vec2, colr, paint, peniko, resolve,
 };
@@ -109,8 +109,55 @@ pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: 
     draw_layout_with(ctx, l, tr, m, &[]);
 }
 
+/// Apply Desaturate after layout, where every run already has its own resolved colours.
+pub(crate) fn desaturate_layout(layout: &mut deckcraft_text::TextLayout, state: &ShapeState, ctx: &Ctx) {
+    use deckcraft_anim::desaturate_color;
+
+    if state.text_desaturation <= 0.0 && state.paras.iter().all(|(_, p)| p.text_desaturation <= 0.0) {
+        return;
+    }
+    let amount = |para| {
+        let extra = state.paras.iter().find(|(i, _)| *i == para).map_or(0.0, |(_, p)| p.text_desaturation);
+        combined_desaturation(state.text_desaturation, extra)
+    };
+    for run in &mut layout.runs {
+        let amount = amount(run.para);
+        if amount <= 0.0 {
+            continue;
+        }
+        run.color = desaturate_color(run.color, amount);
+        if let Some((color, _)) = &mut run.outline {
+            *color = desaturate_color(*color, amount);
+        }
+        if let Some(gradient) = &mut run.gradient {
+            for stop in &mut Arc::make_mut(gradient).stops {
+                stop.color = deckcraft_model::ColorRef::rgb(desaturate_color(ctx.color(&stop.color, None), amount));
+            }
+        }
+    }
+    for deco in layout.decos.iter_mut().filter(|d| !d.behind) {
+        deco.color = desaturate_color(deco.color, amount(deco.para));
+    }
+}
+
+fn combined_desaturation(shape: f64, paragraph: f64) -> f64 {
+    shape + (1.0 - shape) * paragraph
+}
+
 /// Draw a laid-out text block with per-paragraph animation states.
 pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
+    draw_animated_layout(ctx, l, tr, m, paras, 0.0);
+}
+
+/// The layout already carries animated text colours; pass the same amount to any glyph's own palette.
+pub(crate) fn draw_animated_layout(
+    ctx: &mut RenderContext,
+    l: &deckcraft_text::TextLayout,
+    tr: Rect,
+    m: Affine,
+    paras: &[(usize, ParaState)],
+    text_desaturation: f64,
+) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
     let lines_of = LineIndex::new(l);
@@ -144,13 +191,14 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
             continue;
         }
         let m = m * Affine::translate(ps.offset);
+        let desaturation = combined_desaturation(text_desaturation, ps.text_desaturation);
         // A gradient fill starts over on every line and spans that line's text (from its top to
         // its bottom, from its first to its last character), as in PowerPoint.
         let mut grads: Vec<(usize, peniko::Gradient)> = Vec::new();
         for (gid, x, y) in &run.glyphs {
             let at = m * glyph_place(run, *gid, *x, *y);
             let Some(g) = run.gradient.as_ref().filter(|g| !g.stops.is_empty()) else {
-                draw_glyph(ctx, run, *gid, at, ps.opacity);
+                draw_glyph_with(ctx, run, *gid, at, ps.opacity, None, desaturation);
                 continue;
             };
             let li = lines_of.line_at(run.para, *y);
@@ -161,7 +209,7 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
                 grads.push((li, paint::gradient(&g.shape, stops, bounds, run.alpha * ps.opacity)));
             }
             let fill = grads.iter().find(|(i, _)| *i == li).map(|(_, g)| (g, Affine::translate((-*x, -*y))));
-            draw_glyph_with(ctx, run, *gid, at, ps.opacity, fill);
+            draw_glyph_with(ctx, run, *gid, at, ps.opacity, fill, desaturation);
         }
     }
     for d in l.decos.iter().filter(|d| !d.behind) {
@@ -347,7 +395,7 @@ fn text_effect(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, which: T
 
 /// Draw glyph `gid` of `run` with its origin (on the baseline) mapped by `at`, faded by `opacity`.
 pub(crate) fn draw_glyph(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, opacity: f64) {
-    draw_glyph_with(ctx, run, gid, at, opacity, None);
+    draw_glyph_with(ctx, run, gid, at, opacity, None, 0.0);
 }
 
 /// [`draw_glyph`], filled with `fill` (a gradient laid out in the text's space, and the map from
@@ -359,6 +407,7 @@ fn draw_glyph_with(
     at: Affine,
     opacity: f64,
     fill: Option<(&peniko::Gradient, Affine)>,
+    desaturation: f64,
 ) {
     let alpha = run.alpha * opacity;
     if (alpha <= 0.0 || run.color.a == 0) && run.outline.is_none() {
@@ -367,7 +416,11 @@ fn draw_glyph_with(
     let k = run.size / run.face.upem.max(1.0);
     // Colour glyphs (emoji) paint their own colours; an outline (text outline effect) still
     // strokes the plain glyph below.
-    if alpha > 0.0 && run.outline.is_none() && run.face.is_color() && colr::paint(ctx, &run.face, gid, at, k, run.color, alpha) {
+    if alpha > 0.0
+        && run.outline.is_none()
+        && run.face.is_color()
+        && colr::paint(ctx, &run.face, gid, at, k, colr::Colors { foreground: run.color, opacity: alpha, desaturation })
+    {
         return;
     }
     let path = glyph(&run.face, gid);

@@ -596,21 +596,8 @@ impl Show {
 fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPlay], stamps: &[StepStamp]) -> ShapeState {
     let a = tl.state_ordered(id, None, step, t, plays, stamps);
     ShapeState {
-        visible: a.visible,
-        opacity: a.opacity,
-        offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y),
-        scale: (a.scale_x, a.scale_y),
-        rotate: a.rotate,
-        clip: a.clip,
-        tint: a.tint,
-        paras: tl
-            .paragraph_targets(id)
-            .into_iter()
-            .map(|p| {
-                let a = tl.state(id, Some(p), step, t);
-                (p, ParaState { visible: a.visible, opacity: a.opacity, offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y) })
-            })
-            .collect(),
+        paras: tl.paragraph_targets(id).into_iter().map(|p| (p, ParaState::from(tl.state_ordered(id, Some(p), step, t, plays, stamps)))).collect(),
+        ..ShapeState::from(a)
     }
 }
 

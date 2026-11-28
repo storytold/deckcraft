@@ -567,6 +567,36 @@ fn animations_start_after_the_slides_transition() {
 }
 
 #[test]
+fn paragraph_animations_follow_the_order_their_triggers_were_clicked() {
+    use deckcraft_model::{AnimClass, Animation, Shape, Slide, TextBody};
+
+    let text = ShapeId(1);
+    let reveal = ShapeId(2);
+    let hide = ShapeId(3);
+    let effect = |class, trigger| Animation { shape: text, paragraph: Some(0), class, trigger: Some(trigger), ..Default::default() };
+    let slide = Slide {
+        shapes: vec![
+            Shape { id: text, text: Some(TextBody::from_text("A paragraph")), ..Default::default() },
+            Shape { id: reveal, ..Default::default() },
+            Shape { id: hide, ..Default::default() },
+        ],
+        animations: vec![effect(AnimClass::Entrance, reveal), effect(AnimClass::Exit, hide)],
+        ..Default::default()
+    };
+    let tl = Timeline::new(&slide, 960.0, 540.0);
+    let visible = |plays: &[TriggerPlay], stamps: &[StepStamp]| {
+        state_for(&tl, text, 0, 0.0, plays, stamps).paras.iter().find(|(paragraph, _)| *paragraph == 0).unwrap().1.visible
+    };
+    let plays = [reveal, hide].map(|trigger| TriggerPlay { trigger, step: 1, t: 0.0 });
+    let clicked = |first, second| [StepStamp { trigger: first, step: 0, at: 1 }, StepStamp { trigger: second, step: 0, at: 2 }];
+
+    assert!(!visible(&[], &[]), "the paragraph waits for its entrance trigger");
+    assert!(visible(&plays[..1], &[]), "the entrance trigger reveals the paragraph");
+    assert!(!visible(&plays, &clicked(reveal, hide)), "the later exit hides the paragraph");
+    assert!(visible(&plays, &clicked(hide, reveal)), "the later entrance reveals the paragraph again");
+}
+
+#[test]
 fn going_back_plays_the_left_slides_transition_reversed() {
     // #1531: Back from B to A played A's own entrance transition. PowerPoint plays the one B came
     // in with, backwards.

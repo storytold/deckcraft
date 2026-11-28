@@ -2,7 +2,6 @@
 //! (Animations ▸ Preview, Animation Pane ▸ Play All). The slide show uses the same mapping.
 
 use deckcraft_anim::Timeline;
-use deckcraft_geom::Vec2;
 use deckcraft_model::ShapeId;
 use deckcraft_render::{ParaState, ShapeState};
 
@@ -13,21 +12,8 @@ pub const HOLD_SECS: f64 = 0.45;
 pub fn shape_state(tl: &Timeline, id: ShapeId, step: usize, t: f64) -> ShapeState {
     let a = tl.state(id, None, step, t);
     ShapeState {
-        visible: a.visible,
-        opacity: a.opacity,
-        offset: Vec2::new(a.offset_x, a.offset_y),
-        scale: (a.scale_x, a.scale_y),
-        rotate: a.rotate,
-        clip: a.clip,
-        tint: a.tint,
-        paras: tl
-            .paragraph_targets(id)
-            .into_iter()
-            .map(|p| {
-                let a = tl.state(id, Some(p), step, t);
-                (p, ParaState { visible: a.visible, opacity: a.opacity, offset: Vec2::new(a.offset_x, a.offset_y) })
-            })
-            .collect(),
+        paras: tl.paragraph_targets(id).into_iter().map(|p| (p, ParaState::from(tl.state(id, Some(p), step, t)))).collect(),
+        ..ShapeState::from(a)
     }
 }
 

@@ -36,6 +36,7 @@ pub use deckcraft_model::Rgba;
 use serde::{Deserialize, Serialize};
 
 pub use easing::ease;
+pub use effects::desaturate_color;
 pub use interact::{Click, HitShape, Target};
 pub use mesh::{MeshVertex, layer_mesh};
 pub use morph::{MorphFrame, MorphPath, MorphText, morph_crop, morph_frame, morph_pairs, morph_xfrm};
@@ -48,7 +49,7 @@ pub use transition::{DEFAULT_ASPECT, Layer, Source, transition_frame, transition
 ///
 /// Same meaning as the renderer's `ShapeState`: translation in points, scale and rotation (degrees)
 /// around the shape's centre, a reveal clip in shape-local unit space `[l, t, r, b]`, and a fill
-/// colour override.
+/// colour override or a reduction in the saturation of text colours.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AnimState {
     pub visible: bool,
@@ -60,11 +61,24 @@ pub struct AnimState {
     pub rotate: f64,
     pub clip: Option<[f64; 4]>,
     pub tint: Option<Rgba>,
+    #[serde(default)]
+    pub text_desaturation: f64,
 }
 
 impl Default for AnimState {
     fn default() -> Self {
-        AnimState { visible: true, opacity: 1.0, offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0, rotate: 0.0, clip: None, tint: None }
+        AnimState {
+            visible: true,
+            opacity: 1.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            text_desaturation: 0.0,
+        }
     }
 }
 
@@ -95,12 +109,14 @@ impl AnimState {
             rotate: self.rotate + d.rotate,
             clip,
             tint: d.tint.or(self.tint),
+            text_desaturation: self.text_desaturation + (1.0 - self.text_desaturation) * d.text_desaturation,
         }
     }
     /// Replace any non-finite number with its neutral value and clamp opacity and clip.
     pub fn sanitized(mut self) -> AnimState {
         let f = |v: f64, d: f64| if v.is_finite() { v } else { d };
         self.opacity = f(self.opacity, 1.0).clamp(0.0, 1.0);
+        self.text_desaturation = f(self.text_desaturation, 0.0).clamp(0.0, 1.0);
         self.offset_x = f(self.offset_x, 0.0);
         self.offset_y = f(self.offset_y, 0.0);
         self.scale_x = f(self.scale_x, 1.0);

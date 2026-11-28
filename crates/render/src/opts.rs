@@ -13,13 +13,41 @@ pub struct ShapeState {
     pub clip: Option<[f64; 4]>,
     /// Colour override for emphasis effects (fill).
     pub tint: Option<Rgba>,
+    /// Fraction by which to reduce the saturation of the text colours.
+    pub text_desaturation: f64,
     /// Per-paragraph states of by-paragraph text builds (paragraph index, state).
     pub paras: Vec<(usize, ParaState)>,
 }
 
 impl Default for ShapeState {
     fn default() -> Self {
-        ShapeState { visible: true, opacity: 1.0, offset: Vec2::ZERO, scale: (1.0, 1.0), rotate: 0.0, clip: None, tint: None, paras: vec![] }
+        ShapeState {
+            visible: true,
+            opacity: 1.0,
+            offset: Vec2::ZERO,
+            scale: (1.0, 1.0),
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            text_desaturation: 0.0,
+            paras: vec![],
+        }
+    }
+}
+
+impl From<deckcraft_anim::AnimState> for ShapeState {
+    fn from(state: deckcraft_anim::AnimState) -> Self {
+        ShapeState {
+            visible: state.visible,
+            opacity: state.opacity,
+            offset: Vec2::new(state.offset_x, state.offset_y),
+            scale: (state.scale_x, state.scale_y),
+            rotate: state.rotate,
+            clip: state.clip,
+            tint: state.tint,
+            text_desaturation: state.text_desaturation,
+            paras: Vec::new(),
+        }
     }
 }
 
@@ -30,11 +58,23 @@ pub struct ParaState {
     pub opacity: f64,
     /// Translation in shape-local points.
     pub offset: Vec2,
+    pub text_desaturation: f64,
 }
 
 impl Default for ParaState {
     fn default() -> Self {
-        ParaState { visible: true, opacity: 1.0, offset: Vec2::ZERO }
+        ParaState { visible: true, opacity: 1.0, offset: Vec2::ZERO, text_desaturation: 0.0 }
+    }
+}
+
+impl From<deckcraft_anim::AnimState> for ParaState {
+    fn from(state: deckcraft_anim::AnimState) -> Self {
+        ParaState {
+            visible: state.visible,
+            opacity: state.opacity,
+            offset: Vec2::new(state.offset_x, state.offset_y),
+            text_desaturation: state.text_desaturation,
+        }
     }
 }
 

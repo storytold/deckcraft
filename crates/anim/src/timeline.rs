@@ -267,7 +267,7 @@ impl Timeline {
                 };
                 let xf = xfrm_of(a.shape).or_else(|| shape.and_then(|s| s.xfrm)).unwrap_or(Xfrm::new(sw / 4.0, sh / 4.0, sw / 2.0, sh / 2.0));
                 let xf = sanitize_xfrm(xf, sw, sh);
-                let spec = Arc::new(build_spec(a, xf, sw, sh, &resolve));
+                let spec = Arc::new(build_spec(a, xf, sw, sh, shape.is_some_and(|s| s.text_box), &resolve));
                 let dur = secs(a.duration_ms);
                 let delay = secs(a.delay_ms);
                 let until_next_click = a.repeat == u32::MAX;
@@ -603,7 +603,7 @@ fn shape_index(shapes: &[Shape]) -> HashMap<ShapeId, &Shape> {
     out
 }
 
-fn build_spec(a: &Animation, xf: Xfrm, sw: f64, sh: f64, resolve: &dyn Fn(&deckcraft_model::ColorRef) -> Rgba) -> EffectSpec {
+fn build_spec(a: &Animation, xf: Xfrm, sw: f64, sh: f64, text_box: bool, resolve: &dyn Fn(&deckcraft_model::ColorRef) -> Rgba) -> EffectSpec {
     let effect = if a.class == AnimClass::Exit { exit_base(&a.effect).to_string() } else { a.effect.clone() };
     let path = if a.class == AnimClass::Path { Some(motion_path(&a.effect, &a.option, a.path.as_deref())) } else { None };
     EffectSpec {
@@ -617,6 +617,7 @@ fn build_spec(a: &Animation, xf: Xfrm, sw: f64, sh: f64, resolve: &dyn Fn(&deckc
         amount: a.amount,
         color: a.color.as_ref().map(resolve),
         path,
+        text_box,
         xf,
         slide_w: sw,
         slide_h: sh,
