@@ -296,6 +296,7 @@ fn insert_icon(s: &mut Session, p: &Value) -> Result<Value> {
             ..Default::default()
         }),
         style: Some(ShapeStyle::line(SchemeSlot::Tx1)),
+        tags: vec![("kind".to_string(), "icon".to_string())],
         ..Default::default()
     };
     let id = add_shape(s, "insert.icon", shape, true)?;

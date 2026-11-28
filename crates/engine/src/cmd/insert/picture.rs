@@ -128,12 +128,8 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
         _ => [0.0; 4],
     };
     let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad("insert.picture", NO_ID_SPACE)))?;
-    let shape = Shape {
-        xfrm: Some(rect),
-        kind: ShapeKind::Picture { fill: PictureFill { media, crop, ..Default::default() } },
-        descr: name.clone(),
-        ..Default::default()
-    };
+    let shape =
+        Shape { xfrm: Some(rect), kind: ShapeKind::Picture { fill: PictureFill { media, crop, ..Default::default() } }, ..Default::default() };
     if let Some((ph_id, _)) = target_ph {
         // Replace the placeholder with the picture (it keeps the placeholder link).
         let phv = s.doc()?.shape(ph_id).and_then(|x| x.ph.clone());
@@ -147,7 +143,7 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
                     p
                 });
                 sh.text = None;
-                sh.descr = name.clone();
+                sh.descr = String::new();
             }
             sel.shapes = vec![ph_id];
             Ok(())
