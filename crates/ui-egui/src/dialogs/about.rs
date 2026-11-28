@@ -23,12 +23,12 @@ pub fn about(_app: &mut SlideApp, ui: &mut Ui) {
         ui.label(egui::RichText::new(crate::flavor::app_name()).font(theme::bold(22.0)));
         ui.label(egui::RichText::new(version_line()).color(t.text_dim));
         ui.add_space(6.0);
-        ui.label("Presentations and slide shows, rebuilt from scratch in pure Rust.");
-        ui.label("An open-source, clean-room project. Not affiliated with Microsoft.");
+        ui.label(crate::i18n::tr("Presentations and slide shows, rebuilt from scratch in pure Rust."));
+        ui.label(crate::i18n::tr("An open-source, clean-room project. Not affiliated with Microsoft."));
         ui.add_space(6.0);
-        ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
+        ui.hyperlink_to(crate::i18n::tr("Join our community on Discord"), deckcraft_engine::links::DISCORD);
         ui.hyperlink_to("getartcraft.com/apps/deckcraft", deckcraft_engine::links::APP_PAGE);
-        ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+        ui.hyperlink_to(crate::i18n::tr("Source on GitHub"), deckcraft_engine::links::GITHUB);
         ui.add_space(6.0);
         ui.label(egui::RichText::new("MIT OR Apache-2.0 · © 2026 ArtCraft Team and the DeckCraft contributors").size(11.0).color(t.text_faint));
     });
@@ -38,7 +38,7 @@ pub fn about(_app: &mut SlideApp, ui: &mut Ui) {
 /// from `[workspace.package] version` (the single source of truth, `cargo xtask version`); the
 /// release workflow sets `DECKCRAFT_BUILD_SHA` / `DECKCRAFT_BUILD_DATE` at build time.
 pub fn version_line() -> String {
-    let mut s = format!("Version {}", crate::flavor::version());
+    let mut s = crate::i18n::format("Version {0}", &[crate::flavor::version()]);
     let sha = option_env!("DECKCRAFT_BUILD_SHA").map(|s| s.get(..9).unwrap_or(s)).filter(|s| !s.is_empty());
     let date = option_env!("DECKCRAFT_BUILD_DATE").filter(|s| !s.is_empty());
     match (sha, date) {

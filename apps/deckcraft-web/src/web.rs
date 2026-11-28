@@ -52,6 +52,11 @@ pub fn start() {
                     // The presenter popup draws DeckCraft's presenter view only, with no framework component, so
                     // it runs without the framework runtime.
                     if let Some(token) = crate::presenter::token() {
+                        let lang = query_param("lang")
+                            .and_then(|code| deckcraft_ui_egui::i18n::Language::from_code(&code))
+                            .unwrap_or(deckcraft_ui_egui::i18n::Language::System)
+                            .resolve(browser_locale().as_deref());
+                        deckcraft_ui_egui::i18n::set_language(lang);
                         let presenter = crate::presenter::Popup::new(token, cc.egui_ctx.clone()).map_err(std::io::Error::other)?;
                         return Ok(Box::new(presenter) as Box<dyn eframe::App>);
                     }
@@ -103,10 +108,12 @@ pub fn start() {
     });
 }
 
+/// Returns the current window search query string.
 fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
 }
 
+/// Retrieve a named query parameter from the current URL.
 fn query_param(key: &str) -> Option<String> {
     web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
 }
@@ -217,11 +224,18 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
                 log::error!("download of {name} failed: {e}");
             }
         })),
+        system_locale: browser_locale(),
         inbox: Some(inbox),
         ..Default::default()
     }
 }
 
+/// Return the browser's preferred UI locale (`navigator.language`), if available.
+fn browser_locale() -> Option<String> {
+    web_sys::window().and_then(|w| w.navigator().language())
+}
+
+/// Append an event to the shared asynchronous file inbox.
 fn push_inbox(inbox: &Inbox, event: InboxEvent) {
     inbox.lock().unwrap_or_else(|e| e.into_inner()).push(event);
 }
@@ -253,6 +267,7 @@ fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Deduce the download MIME type from the file extension.
 fn mime_for(name: &str) -> &'static str {
     match name.rsplit('.').next().map(str::to_ascii_lowercase).as_deref() {
         Some("png") => "image/png",

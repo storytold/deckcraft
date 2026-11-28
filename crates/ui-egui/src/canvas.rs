@@ -114,7 +114,7 @@ fn wheel_navigation(app: &mut SlideApp, ui: &mut Ui, carry_id: egui::Id, doc_uid
 fn empty_deck_prompt(app: &mut SlideApp, ui: &mut Ui, avail: Rect, t: &Tokens) {
     ui.advance_cursor_after_rect(avail);
     let resp = app.document_widget(ui, avail, Sense::click());
-    ui.painter().text(avail.center(), Align2::CENTER_CENTER, "Click to add first slide", theme::font(22.0), t.text_dim);
+    ui.painter().text(avail.center(), Align2::CENTER_CENTER, crate::i18n::tr("Click to add first slide"), theme::font(22.0), t.text_dim);
     // Enter on the focused document is the session's New Slide, not a click of the prompt.
     if resp.clicked_by(egui::PointerButton::Primary) || ui.input(|i| i.has_accesskit_action_request(resp.id, egui::accesskit::Action::Click)) {
         let _ = app.run("slide.new", json!({"layout": "title"}));
