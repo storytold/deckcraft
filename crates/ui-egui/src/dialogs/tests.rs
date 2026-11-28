@@ -107,15 +107,22 @@ fn export_dialog_writes_an_animated_gif() {
     harness.get_by_label("Seconds per slide:");
     harness.get_by_label("Loop forever").click_accesskit();
     harness.run_steps(2);
-    // A range outside the deck keeps the dialog open with a message, and nothing is written.
-    harness.state_mut().dialog.as_mut().unwrap().fields.insert("gifTo".into(), "9".into());
-    harness.run_steps(2);
-    harness.key_press(egui::Key::Enter);
-    harness.run_steps(2);
-    assert!(harness.state().dialog.is_some());
-    assert!(harness.state().status.as_ref().is_some_and(|(m, _)| m.contains("Slides")), "{:?}", harness.state().status);
-    assert!(!path.exists());
-    harness.state_mut().dialog.as_mut().unwrap().fields.insert("gifTo".into(), "2".into());
+    // Malformed and out-of-range slide bounds keep the dialog open without asking where to save.
+    for (key, invalid, valid) in [("gifFrom", "oops", "1"), ("gifTo", "oops", "2"), ("gifTo", "9", "2")] {
+        harness.state_mut().dialog.as_mut().unwrap().fields.insert(key.into(), invalid.into());
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_some());
+        assert!(
+            harness.state().status.as_ref().is_some_and(|(m, _)| m.contains("Slides: choose a range from 1 to 2")),
+            "{:?}",
+            harness.state().status
+        );
+        assert!(suggested.borrow().is_empty());
+        assert!(!path.exists());
+        harness.state_mut().dialog.as_mut().unwrap().fields.insert(key.into(), valid.into());
+    }
     harness.run_steps(2);
     harness.key_press(egui::Key::Enter);
     harness.run_steps(2);

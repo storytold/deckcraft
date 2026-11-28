@@ -49,7 +49,11 @@ pub(super) fn gif_options(app: &SlideApp, ui: &mut Ui, d: &mut Dialog) -> Result
         return Err(format!("Seconds per slide: enter {MIN_SECONDS} to {MAX_SECONDS}"));
     }
     let mut p = json!({"width": width, "secondsPerSlide": seconds, "loop": forever, "includeHidden": hidden});
-    let (from, to) = (num(d, "gifFrom", 1.0).round(), num(d, "gifTo", n as f64).round());
+    let mut bound = |key: &str, default: f64| {
+        let fallback = if d.fields.get(key).is_none_or(|text| text.trim().is_empty()) { default } else { f64::NAN };
+        num(d, key, fallback).round()
+    };
+    let (from, to) = (bound("gifFrom", 1.0), bound("gifTo", n as f64));
     if !(from >= 1.0 && from <= to && to <= n as f64) {
         return Err(format!("Slides: choose a range from 1 to {n}"));
     }
