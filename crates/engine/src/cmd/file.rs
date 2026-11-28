@@ -363,17 +363,29 @@ fn report_damage(s: &mut Session, damaged: &Damage) -> Result<()> {
     Ok(())
 }
 
-/// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
+/// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `txt`, `pdf`, `gif`).
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
         f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
-        "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
+        "outline" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
+        "txt" => Ok(outline_txt_bytes(&deckcraft_format::slides_to_outline(doc))),
         "rtf" => Ok(deckcraft_format::rtf::slides_to_rtf(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),
         "png" | "jpeg" | "jpg" => Err(EngineError::Other("saving a presentation as a single image isn't supported; use file.export".into())),
-        _ => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
+        "deckcraft" => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
+        _ => Err(EngineError::Other(format!("unknown save format `{format}`"))),
     }
+}
+
+/// The `.txt` outline bytes: CRLF for the reference app, without doubling a CR that is
+/// already in the text. A lone CR is an in-paragraph character, not a line break, so it becomes
+/// a space (as `slides_to_outline` does for a vertical tab): writing it as CRLF would split the
+/// paragraph into an unindented line on re-import. `TextBody::from_text` normalizes CR and CRLF
+/// (`text.rs:739`), but imported text can still carry one, so normalize before adding CRLF.
+/// Crate-visible so the regression test can feed it a CRLF string directly.
+pub(crate) fn outline_txt_bytes(text: &str) -> Vec<u8> {
+    text.replace("\r\n", "\n").replace('\r', " ").replace('\n', "\r\n").into_bytes()
 }
 
 /// Paper sizes for notes and handouts, for the UI's Print page.
@@ -466,6 +478,21 @@ pub fn writable_format_for_path(path: &str) -> Option<&'static str> {
     WRITABLE_EXTENSIONS.contains(&ext.as_str()).then(|| format_for_path(path))
 }
 
+/// The format a save path names, or an error listing the file types DeckCraft writes.
+fn writable_format(path: &str) -> Result<&'static str> {
+    writable_format_for_path(path).ok_or_else(|| {
+        EngineError::Other(format!(
+            "{path}: DeckCraft cannot save this file type; save as .pptx, .potx, .ppsx, .deckcraft, .pdf, .png, .jpg/.jpeg, .gif, .txt, .md or .rtf"
+        ))
+    })
+}
+
+/// `.txt` needs CRLF for the reference app's outline importer; every other outline target
+/// keeps LF.
+fn outline_format<'a>(path: &str, format: &'a str) -> &'a str {
+    if format == "outline" && path.to_ascii_lowercase().ends_with(".txt") { "txt" } else { format }
+}
+
 /// Animated GIF bytes for `doc` with the options in `p` (see [`crate::gif_export::GifOptions::from_params`]).
 pub fn gif_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
     Ok(crate::gif_export::encode(doc, &crate::gif_export::GifOptions::from_params(p)?)?.bytes)
@@ -487,7 +514,9 @@ pub fn format_for_path(path: &str) -> &'static str {
         "pdf"
     } else if l.ends_with(".gif") {
         "gif"
-    } else if l.ends_with(".txt") || l.ends_with(".md") {
+    } else if l.ends_with(".txt") {
+        "txt"
+    } else if l.ends_with(".md") {
         "outline"
     } else if l.ends_with(".rtf") {
         "rtf"
@@ -523,7 +552,9 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
         s.ui_requests.push(crate::UiRequest::PickFile { purpose: "saveAs".into() });
         return Ok(json!({"needsPath": true}));
     };
-    let format = str_param(p, "format").unwrap_or(format_for_path(&path));
+    let path_format = writable_format(&path)?;
+    let format = str_param(p, "format").unwrap_or(path_format);
+    let format = outline_format(&path, format);
     let bytes = save_bytes(&s.doc()?.doc, format)?;
     write_file(&path, &bytes)?;
     mark_saved(s, Some(path.clone()))?;
@@ -610,7 +641,11 @@ fn color_at(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.export", "missing `path`"))?.to_string();
-    let format = str_param(p, "format").unwrap_or(format_for_path(&path)).to_string();
+    let format = match str_param(p, "format") {
+        Some(f) => f.to_string(),
+        None => writable_format(&path)?.to_string(),
+    };
+    let format = outline_format(&path, &format).to_string();
     let st = s.doc()?;
     let scale = finite_scale(f64_or(p, "scale", 2.0));
     let transparent = bool_or(p, "transparentBackground", false);

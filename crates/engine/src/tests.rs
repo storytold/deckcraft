@@ -1326,11 +1326,105 @@ fn writable_format_for_path_rejects_formats_deckcraft_does_not_write() {
     assert_eq!(f("dir/A.PPTX"), Some("pptx"));
     assert_eq!(f("a.pdf"), Some("pdf"));
     assert_eq!(f("a.jpg"), Some("jpeg"));
-    assert_eq!(f("a.txt"), Some("outline"));
+    assert_eq!(f("a.txt"), Some("txt"));
+    assert_eq!(f("a.md"), Some("outline"));
     assert_eq!(f("a.gif"), Some("gif"));
     for path in ["a.odp", "a.bmp", "a.svg", "a.outline", "a", "dir.v2/a"] {
         assert_eq!(f(path), None, "{path}");
     }
+}
+
+#[test]
+fn txt_export_uses_crlf_even_with_explicit_outline() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-txt-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("outline.txt").to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path, "format": "outline"})).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("\r\n"), "TXT must use CRLF: {text:?}");
+    assert!(!text.replace("\r\n", "").contains('\n'), "no bare LF: {text:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn md_export_keeps_lf() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-md-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("outline.md").to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path, "format": "outline"})).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(!bytes.windows(2).any(|w| w == b"\r\n"), "Markdown must stay LF");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn txt_outline_export_round_trips_two_slides() {
+    let mut p = deckcraft_model::defaults::new_presentation(None);
+    p.slides.clear();
+    let n = deckcraft_format::outline_to_slides(&mut p, "Alpha heading\n\tFirst body\nBeta heading\n\tSecond body\n");
+    assert_eq!(n, 2);
+    let bytes = crate::cmd::file::save_bytes(&p, "txt").unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("\r\n"), "{text:?}");
+    assert!(!text.contains("\r\r\n"), "a CRLF input must not double the CR: {text:?}");
+
+    let mut q = deckcraft_model::defaults::new_presentation(None);
+    q.slides.clear();
+    assert_eq!(deckcraft_format::outline_to_slides(&mut q, &text), 2);
+    assert_eq!(q.slides[0].title(), "Alpha heading");
+    assert_eq!(q.slides[1].title(), "Beta heading");
+    let bodies: Vec<String> =
+        q.slides.iter().map(|s| s.shapes.iter().filter_map(|sh| sh.text.as_ref()).map(|t| t.text()).collect::<Vec<_>>().join(" ")).collect();
+    assert!(bodies[0].contains("First body"), "{:?}", bodies[0]);
+    assert!(bodies[1].contains("Second body"), "{:?}", bodies[1]);
+}
+
+#[test]
+fn txt_export_does_not_double_existing_crlf() {
+    let text = String::from_utf8(crate::cmd::file::outline_txt_bytes("Alpha\r\nBeta\r\n")).unwrap();
+    assert_eq!(text, "Alpha\r\nBeta\r\n");
+    assert!(!text.contains("\r\r\n"), "{text:?}");
+}
+
+#[test]
+fn txt_export_replaces_a_lone_cr_with_a_space() {
+    // A `.txt` import can leave a lone CR inside a body paragraph (`str::lines` splits on LF only).
+    let mut p = deckcraft_model::defaults::new_presentation(None);
+    p.slides.clear();
+    assert_eq!(deckcraft_format::outline_to_slides(&mut p, "Title\n\tGamma\rDelta\n"), 1);
+    let text = String::from_utf8(crate::cmd::file::save_bytes(&p, "txt").unwrap()).unwrap();
+    assert!(!text.replace("\r\n", "").contains('\r'), "a bare CR is a line terminator: {text:?}");
+    assert!(text.contains("\tGamma Delta\r\n"), "{text:?}");
+
+    // The paragraph must stay one line: the CR is not turned into a second outline line.
+    let mut q = deckcraft_model::defaults::new_presentation(None);
+    q.slides.clear();
+    assert_eq!(deckcraft_format::outline_to_slides(&mut q, &text), 1);
+    assert_eq!(q.slides[0].title(), "Title");
+    let body: String = q.slides[0].shapes.iter().filter_map(|sh| sh.text.as_ref()).map(|t| t.text()).collect::<Vec<_>>().join(" ");
+    assert!(body.contains("Gamma Delta"), "{body:?}");
+}
+
+#[test]
+fn save_as_txt_uses_crlf() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-txt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("outline.txt").to_string_lossy().to_string();
+    s.execute("file.saveAs", &json!({"path": path})).unwrap();
+    let text = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+    assert!(text.contains("\r\n"), "TXT must use CRLF");
+    assert!(!text.replace("\r\n", "").contains('\n'), "no bare LF");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -7448,6 +7542,106 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
         assert!(s.execute(cmd, &json!({"path": path})).is_err(), "{cmd} {name} should fail");
         assert!(!std::path::Path::new(&path).exists(), "{name} must not be written");
         assert_eq!(s.doc().unwrap().path, before);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsupported_save_paths_are_refused_and_write_nothing() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-ext-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["a.pptm", "a.ppt", "a.pot", "a.potm", "a.pps", "a.ppsm", "a.odp", "a.xml", "a.svg", "a.bmp", "a"] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        let before = s.doc().unwrap().path.clone();
+        let err = s.execute("file.saveAs", &json!({"path": path})).unwrap_err();
+        assert!(err.to_string().contains("cannot save"), "{name}: {err}");
+        assert!(!std::path::Path::new(&path).exists(), "{name} must not be written");
+        assert_eq!(s.doc().unwrap().path, before, "{name}: the document keeps its path");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsupported_paths_are_refused_even_with_an_explicit_format() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-ext-fmt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptm").to_string_lossy().to_string();
+    let err = s.execute("file.saveAs", &json!({"path": path, "format": "pptx"})).unwrap_err();
+    assert!(err.to_string().contains("cannot save"), "{err}");
+    assert!(!std::path::Path::new(&path).exists(), "the path guard wins over the explicit format");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsupported_extensionless_save_is_refused_even_with_an_explicit_format() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-extless-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("no-extension").to_string_lossy().to_string();
+    let err = s.execute("file.saveAs", &json!({"path": path, "format": "pptx"})).unwrap_err();
+    assert!(err.to_string().contains("cannot save"), "{err}");
+    assert!(!std::path::Path::new(&path).exists(), "the path guard wins over the explicit format");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn save_bytes_rejects_an_unknown_format() {
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let err = s.execute("file.saveBytes", &json!({"format": "odp"})).unwrap_err();
+    assert!(err.to_string().contains("unknown save format"), "{err}");
+    assert!(s.execute("file.saveBytes", &json!({"format": "deckcraft"})).is_ok());
+}
+
+#[test]
+fn unsupported_export_paths_are_refused() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-export-ext-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptm").to_string_lossy().to_string();
+    assert!(s.execute("file.export", &json!({"path": path})).is_err());
+    assert!(!std::path::Path::new(&path).exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn extensionless_export_with_an_explicit_format_still_writes() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-export-fmt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("out").to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path, "format": "png", "slide": 0})).unwrap();
+    assert!(std::path::Path::new(&path).exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn supported_paths_still_save() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-ok-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, magic) in [("a.pptx", b"PK".as_slice()), ("a.deckcraft", b"PK".as_slice()), ("a.txt", b"")] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        s.execute("file.saveAs", &json!({"path": path})).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!bytes.is_empty(), "{name}");
+        if !magic.is_empty() {
+            assert!(bytes.starts_with(magic), "{name}: not a ZIP");
+        }
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
