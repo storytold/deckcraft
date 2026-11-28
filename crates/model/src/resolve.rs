@@ -373,7 +373,40 @@ pub fn run(ctx: &Ctx, shape: &Shape, para: &crate::text::Paragraph, run: &RunPro
         // kept. A colour that arrived only from a list style is not.
         let from_def = run.link.is_none();
         if run.fill.is_none() && !(from_def && para.def_props.fill.is_some()) {
-            r.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Hlink)));
+            let mut link_color = ColorRef::scheme(SchemeSlot::Hlink);
+            // A built-in theme may use the same colour for its hyperlink and a shape fill. An
+            // opaque run highlight covers that fill. For a translucent highlight the effective
+            // colour depends on the painted content below it, so keep the theme hyperlink colour.
+            let shape_background = || {
+                let (shape_fill, ph) = fill(ctx, shape);
+                match shape_fill {
+                    Some(Fill::Solid { color }) => Some(ctx.color(&color, ph)),
+                    _ => None,
+                }
+            };
+            let background = match r.highlight.as_ref().map(|color| ctx.color(color, None)) {
+                Some(highlight) if highlight.a == 255 => Some(highlight),
+                Some(highlight) if highlight.a > 0 => None,
+                _ => shape_background(),
+            };
+            if let Some(bg) = background
+                && bg.a == 255
+                && ctx.color(&link_color, None).contrast(bg) < 4.5
+            {
+                let candidates = [SchemeSlot::Tx1, SchemeSlot::Bg1];
+                let best = candidates.into_iter().max_by(|a, b| {
+                    ctx.color(&ColorRef::scheme(*a), None).contrast(bg).total_cmp(&ctx.color(&ColorRef::scheme(*b), None).contrast(bg))
+                });
+                if let Some(slot) = best {
+                    link_color = ColorRef::scheme(slot);
+                }
+                if ctx.color(&link_color, None).contrast(bg) < 4.5 {
+                    let black = Rgba::BLACK;
+                    let white = Rgba::WHITE;
+                    link_color = ColorRef::rgb(if black.contrast(bg) >= white.contrast(bg) { black } else { white });
+                }
+            }
+            r.fill = Some(Fill::solid(link_color));
         }
         if run.underline.is_none() && !(from_def && para.def_props.underline.is_some()) {
             r.underline = Some("sng".into());

@@ -220,6 +220,84 @@ fn hyperlinked_runs_take_the_theme_hyperlink_look() {
 }
 
 #[test]
+fn linked_text_stays_readable_on_accent_filled_shapes_in_builtin_themes() {
+    use crate::text::{Action, Hyperlink};
+
+    for built_in in theme::builtin_themes() {
+        let mut p = Presentation::default();
+        std::sync::Arc::make_mut(&mut p.masters[0]).theme = built_in.clone();
+        let s = &p.slides[0];
+        let ctx = Ctx::for_slide(&p, s).unwrap();
+        let link = RunProps {
+            link: Some(Hyperlink {
+                action: Action::Url { url: "https://example.org".into() },
+                tooltip: String::new(),
+                highlight_click: false,
+                sound: None,
+                stop_sound: false,
+                zoom_return: None,
+            }),
+            ..Default::default()
+        };
+        for slot in [SchemeSlot::Accent1, SchemeSlot::Accent2, SchemeSlot::Accent3, SchemeSlot::Accent4, SchemeSlot::Accent5, SchemeSlot::Accent6] {
+            let shape = Shape { style: Some(ShapeStyle::accent(slot)), ..Default::default() };
+            let resolved = resolve::run(&ctx, &shape, &Paragraph::default(), &link);
+            let background = ctx.color(&ColorRef::scheme(slot), None);
+            let contrast = resolve::text_color(&ctx, &resolved).contrast(background);
+            assert!(contrast >= 4.5, "{} {slot:?}: link contrast {contrast:.1}:1", built_in.name);
+        }
+    }
+}
+
+#[test]
+fn linked_text_uses_opaque_highlight_as_its_background() {
+    use crate::text::{Action, Hyperlink};
+    use deckcraft_color::Rgba;
+
+    let p = Presentation::default();
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let shape = Shape { fill: Some(Fill::solid(ColorRef::rgb(Rgba::BLACK))), ..Default::default() };
+    let link = RunProps {
+        highlight: Some(ColorRef::rgb(Rgba::WHITE)),
+        link: Some(Hyperlink {
+            action: Action::Url { url: "https://example.org".into() },
+            tooltip: String::new(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        }),
+        ..Default::default()
+    };
+    let resolved = resolve::run(&ctx, &shape, &Paragraph::default(), &link);
+    assert!(resolve::text_color(&ctx, &resolved).contrast(Rgba::WHITE) >= 4.5);
+}
+
+#[test]
+fn translucent_highlight_keeps_the_theme_hyperlink_colour() {
+    use crate::text::{Action, Hyperlink};
+    use deckcraft_color::Rgba;
+
+    let p = Presentation::default();
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let shape = Shape { style: Some(ShapeStyle::accent(SchemeSlot::Accent1)), ..Default::default() };
+    let link = RunProps {
+        highlight: Some(ColorRef::rgb(Rgba::WHITE.with_alpha(128))),
+        link: Some(Hyperlink {
+            action: Action::Url { url: "https://example.org".into() },
+            tooltip: String::new(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        }),
+        ..Default::default()
+    };
+    let resolved = resolve::run(&ctx, &shape, &Paragraph::default(), &link);
+    assert_eq!(resolved.fill, Some(Fill::solid(ColorRef::scheme(SchemeSlot::Hlink))));
+}
+
+#[test]
 fn a_layout_colour_map_override_applies_to_its_slides() {
     // A dark "section" layout maps bg1→dk1 and tx1→lt1; a slide on it that keeps the master
     // mapping (`masterClrMapping`) follows the layout, as PowerPoint draws it.
