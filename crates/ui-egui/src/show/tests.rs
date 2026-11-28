@@ -1425,3 +1425,59 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
 }
+
+/// The slide grid (See All Slides, and the presenter remote's thumbnails) shows a slide as it
+/// looks when entered: media set to hide in the show is left out.
+#[test]
+fn grid_thumbnails_leave_out_media_hidden_during_show() {
+    let doc = |hide: bool| {
+        let mut p = deckcraft_model::defaults::new_presentation(None);
+        let (w, h) = (p.slide_size.width, p.slide_size.height);
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        slide.shapes.clear();
+        slide.shapes.push(deckcraft_model::Shape {
+            id: ShapeId(4200),
+            xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, w, h)),
+            kind: deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { video: true, hide_while_not_playing: hide, ..Default::default() }),
+            ..Default::default()
+        });
+        p
+    };
+    // A corner, away from the play glyph: a video without a poster is a dark box.
+    let corner = |p: &Presentation| {
+        let scale = 64.0 / p.slide_size.width;
+        super::render::thumb_image(p, 0, scale, (64, 36)).pixels[4 * 64 + 4]
+    };
+    let blank = corner(&deckcraft_model::defaults::new_presentation(None));
+    assert_ne!(corner(&doc(false)), blank, "the clip is drawn when not hidden");
+    assert_eq!(corner(&doc(true)), blank, "a clip hidden during the show is left out of the thumbnail");
+}
+
+/// A morph transition leaves a slide without its media hidden during the show: unmatched shapes
+/// of the outgoing slide fade out, and a hidden clip was fading out with them.
+#[test]
+fn morph_leaves_media_hidden_during_show_out_of_the_outgoing_slide() {
+    let mut p = deckcraft_model::defaults::new_presentation(None);
+    let (w, h) = (p.slide_size.width, p.slide_size.height);
+    let mut next = (*p.slides[0]).clone();
+    next.id = deckcraft_model::SlideId(p.slides[0].id.0 + 1000);
+    next.shapes.clear();
+    p.slides.push(std::sync::Arc::new(next));
+    let clip = |hide: bool| deckcraft_model::Shape {
+        id: ShapeId(4400),
+        xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, w / 2.0, h / 2.0)),
+        kind: deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { video: true, hide_while_not_playing: hide, ..Default::default() }),
+        ..Default::default()
+    };
+    let old_media = |p: &Presentation| {
+        let left = super::render::morph_outgoing(p, 0);
+        let frame = deckcraft_anim::morph_frame(p, left.as_ref().unwrap_or(&p.slides[0]), &p.slides[1], 0.5, &|_| false);
+        frame.shapes.iter().any(|(s, old)| *old && matches!(s.kind, deckcraft_model::ShapeKind::Media(_)))
+    };
+    for (hide, expected) in [(false, true), (true, false)] {
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        slide.shapes.clear();
+        slide.shapes.push(clip(hide));
+        assert_eq!(old_media(&p), expected, "hide during show: {hide}");
+    }
+}
