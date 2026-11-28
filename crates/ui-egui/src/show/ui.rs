@@ -448,7 +448,7 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
             let p = ((now - tr.start) / tr.dur.max(0.01)).clamp(0.0, 1.0);
             let hidden_b = |id: ShapeId| {
                 let st = state_for(&tl, id, 0, 0.0, &[], &[]);
-                !st.visible || st.opacity <= 0.0 || sl.hidden.contains(&id)
+                !st.visible || st.opacity <= 0.0 || st.dissolve.is_some_and(|d| d <= 0.0) || sl.hidden.contains(&id)
             };
             tr.from
                 .and_then(|i| doc.slides.get(i).map(|a| (i, a)))
