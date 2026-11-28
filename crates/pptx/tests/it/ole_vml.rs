@@ -32,6 +32,11 @@ fn deck() -> Vec<u8> {
 
 /// [`deck`] with `frames` in place of [`FRAME`].
 fn deck_with(frames: &str) -> Vec<u8> {
+    deck_with_vml(frames, VML)
+}
+
+/// [`deck`] with `frames` in place of [`FRAME`] and `vml` as the drawing.
+fn deck_with_vml(frames: &str, vml: &str) -> Vec<u8> {
     let bytes = deckcraft_pptx::export(&defaults::new_presentation(None)).expect("export");
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -55,7 +60,7 @@ fn deck_with(frames: &str) -> Vec<u8> {
         out.write_all(&d).expect("write");
     }
     for (name, data) in [
-        ("ppt/drawings/vmlDrawing1.vml", VML.as_bytes().to_vec()),
+        ("ppt/drawings/vmlDrawing1.vml", vml.as_bytes().to_vec()),
         ("ppt/drawings/_rels/vmlDrawing1.vml.rels", VML_RELS.as_bytes().to_vec()),
         ("ppt/media/other.png", png(10)),
         ("ppt/media/preview.png", png(200)),
@@ -75,6 +80,18 @@ fn an_ole_object_without_a_picture_shows_its_vml_preview() {
     let media = p.media.iter().find(|x| x.id == *m).expect("media");
     // The shape whose id is the object's spid, not the first one in the drawing.
     assert_eq!(media.name, "preview.png");
+}
+
+#[test]
+fn a_vml_preview_inside_a_conditional_comment_is_found_by_its_o_spid() {
+    let head = &VML[..VML.find('>').expect("xml start") + 1];
+    let vml = format!(
+        r#"{head}<!--[if gte vml 1]><v:shape id="_x0000_s1025" o:spid="_x0000_s2050"><v:imagedata o:relid="rIdB"/></v:shape><![endif]--></xml>"#
+    );
+    let p = deckcraft_pptx::import(&deck_with_vml(FRAME, &vml)).expect("import");
+    let s = p.slides[0].shapes.iter().find(|s| s.name == "Object 3").expect("frame");
+    let ShapeKind::Opaque { preview: Some(m), .. } = &s.kind else { panic!("{:?}", s.kind) };
+    assert_eq!(p.media.iter().find(|x| x.id == *m).map(|x| x.name.as_str()), Some("preview.png"));
 }
 
 #[test]

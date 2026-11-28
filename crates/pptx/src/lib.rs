@@ -332,10 +332,164 @@ fn has_media_shapes(shapes: &[Shape]) -> bool {
     })
 }
 
+fn has_unpreviewed_ole_shapes(shapes: &[Shape]) -> bool {
+    shapes.iter().any(|s| match &s.kind {
+        ShapeKind::Opaque { preview: None, .. } => true,
+        ShapeKind::Group { children, .. } => has_unpreviewed_ole_shapes(children),
+        _ => false,
+    })
+}
+
+/// The VML part with Office conditional-comment markers (`<!--[if …]>`, `<![if …]>`, `<![endif]-->`) removed, so shapes wrapped in them are parsed.
+fn strip_vml_conditionals(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    let mut changed = false;
+    while at < bytes.len() {
+        let rest = &bytes[at..];
+        let marker = rest.iter().position(|b| *b == b'<').map(|i| at + i);
+        let Some(start) = marker else {
+            out.extend_from_slice(rest);
+            break;
+        };
+        out.extend_from_slice(&bytes[at..start]);
+        let rest = &bytes[start..];
+        let conditional = rest.starts_with(b"<!--[if") || rest.starts_with(b"<![if") || rest.starts_with(b"<![endif");
+        if conditional {
+            let Some(end) = rest.iter().position(|b| *b == b'>') else {
+                out.extend_from_slice(rest);
+                break;
+            };
+            let mut next = start + end + 1;
+            if bytes.get(next..next + 3) == Some(b"-->") {
+                next += 3;
+            }
+            at = next;
+            changed = true;
+            continue;
+        }
+        out.push(b'<');
+        at = start + 1;
+    }
+    if changed { std::borrow::Cow::Owned(out) } else { std::borrow::Cow::Borrowed(bytes) }
+}
+
+fn collect_vml_shapes<'a>(e: &'a craft_xml::El, out: &mut Vec<&'a craft_xml::El>, depth: usize) {
+    if depth > 64 || out.len() >= 10_000 {
+        return;
+    }
+    if e.is(craft_xml::Local("shape")) {
+        out.push(e);
+    }
+    for c in e.elements() {
+        collect_vml_shapes(c, out, depth + 1);
+    }
+}
+
+fn vml_index(pkg: &mut craft_opc::LazyPackage, vml: &str) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(Some(raw)) = pkg.read_limited(vml, craft_pptx::MAX_XML_PART as u64) else {
+        return out;
+    };
+    let cleaned = strip_vml_conditionals(&raw);
+    let Ok(root) = craft_drawingml::xmlx::parse(&cleaned) else {
+        return out;
+    };
+    let rels = pkg.rels(vml).unwrap_or_default();
+    let mut shapes = Vec::new();
+    collect_vml_shapes(&root, &mut shapes, 0);
+    for s in shapes {
+        let Some(img) = s.find(craft_xml::Local("imagedata")) else { continue };
+        let Some(rid) = img.attr_local("relid").or_else(|| img.attr_local("id")) else { continue };
+        let Some(target) = rels.target(rid) else { continue };
+        let keys = [s.attr_local("spid"), s.attr_local("id")];
+        for key in keys.into_iter().flatten().filter(|k| !k.is_empty()) {
+            out.entry(key.to_string()).or_insert_with(|| target.to_string());
+        }
+    }
+    out
+}
+
+fn collect_ole_spids(e: &craft_xml::El, out: &mut Vec<(u32, String)>, depth: usize) {
+    if depth > 64 || out.len() >= 10_000 {
+        return;
+    }
+    if e.is(craft_xml::Local("graphicFrame"))
+        && let Some(id) = e
+            .path(&[craft_xml::Local("nvGraphicFramePr"), craft_xml::Local("cNvPr")])
+            .and_then(|c| c.attr_local("id"))
+            .and_then(craft_xml::value::to_u32_lossy)
+        && let Some(ole) = e.find(craft_xml::Local("oleObj"))
+        && let Some(spid) = ole.attr_local("spid").filter(|s| !s.is_empty())
+    {
+        out.push((id, spid.to_string()));
+    }
+    for c in e.elements() {
+        collect_ole_spids(c, out, depth + 1);
+    }
+}
+
+fn media_content_type(path: &str) -> &'static str {
+    match path.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("") {
+        e if e.eq_ignore_ascii_case("png") => "image/png",
+        e if e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg") => "image/jpeg",
+        e if e.eq_ignore_ascii_case("gif") => "image/gif",
+        e if e.eq_ignore_ascii_case("svg") => "image/svg+xml",
+        e if e.eq_ignore_ascii_case("emf") => "image/x-emf",
+        e if e.eq_ignore_ascii_case("wmf") => "image/x-wmf",
+        _ => "application/octet-stream",
+    }
+}
+
+fn apply_ole_vml_previews(pkg: &mut craft_opc::LazyPackage, slide_path: &str, se: &craft_xml::El, pres: &mut Presentation, slide_idx: usize) {
+    let mut ole_spids = Vec::new();
+    collect_ole_spids(se, &mut ole_spids, 0);
+    if ole_spids.is_empty() {
+        return;
+    }
+    let slide_rels = pkg.rels(slide_path).unwrap_or_default();
+    let vml_targets: Vec<String> = slide_rels.all("vmlDrawing").filter(|r| !r.external).map(|r| r.target.clone()).collect();
+    if vml_targets.is_empty() {
+        return;
+    }
+    let mut indices = Vec::new();
+    for vml in &vml_targets {
+        indices.push(vml_index(pkg, vml));
+    }
+    for (shape_id, spid) in ole_spids {
+        let needs_preview = pres
+            .slides
+            .get(slide_idx)
+            .and_then(|sl| deckcraft_model::find_shape(&sl.shapes, deckcraft_model::ShapeId(shape_id)))
+            .is_some_and(|sh| matches!(&sh.kind, ShapeKind::Opaque { preview: None, .. }));
+        if !needs_preview {
+            continue;
+        }
+        let Some(img_target) = indices.iter().find_map(|idx| idx.get(&spid)).cloned() else {
+            continue;
+        };
+        let Ok(Some(img_bytes)) = pkg.read_limited(&img_target, 64 << 20) else {
+            continue;
+        };
+        let name = img_target.rsplit_once('/').map_or(img_target.as_str(), |(_, n)| n).to_string();
+        let ct = media_content_type(&name);
+        let Some(media_id) = pres.add_media(&name, ct, img_bytes) else {
+            continue;
+        };
+        if let Some(slide_arc) = pres.slides.get_mut(slide_idx)
+            && let Some(sh) = deckcraft_model::find_shape_mut(&mut std::sync::Arc::make_mut(slide_arc).shapes, deckcraft_model::ShapeId(shape_id))
+            && let ShapeKind::Opaque { preview, .. } = &mut sh.kind
+        {
+            *preview = Some(media_id);
+        }
+    }
+}
+
 fn post_import_timing(bytes: &[u8], pres: &mut Presentation) {
     let need_builds = has_unfolded_paragraph_builds(pres);
     let need_media = pres.slides.iter().any(|s| has_media_shapes(&s.shapes));
-    if !need_builds && !need_media {
+    let need_ole = pres.slides.iter().any(|s| has_unpreviewed_ole_shapes(&s.shapes));
+    if !need_builds && !need_media && !need_ole {
         return;
     }
     let Ok(mut pkg) = craft_opc::LazyPackage::open(bytes, &craft_pptx::LIMITS) else {
@@ -354,10 +508,13 @@ fn post_import_timing(bytes: &[u8], pres: &mut Presentation) {
         return;
     };
     for (i, s) in list.children(craft_xml::Local("sldId")).take(MAX_SLIDE_ENTRIES).enumerate() {
-        let Some(slide_arc) = pres.slides.get_mut(i) else { break };
-        let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid)) else { continue };
-        let Ok(Some(sb)) = pkg.read_limited(target, craft_pptx::MAX_XML_PART as u64) else { continue };
+        let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid)).map(str::to_string) else { continue };
+        let Ok(Some(sb)) = pkg.read_limited(&target, craft_pptx::MAX_XML_PART as u64) else { continue };
         let Ok(se) = craft_drawingml::xmlx::parse(&sb) else { continue };
+        if need_ole && pres.slides.get(i).is_some_and(|sl| has_unpreviewed_ole_shapes(&sl.shapes)) {
+            apply_ole_vml_previews(&mut pkg, &target, &se, pres, i);
+        }
+        let Some(slide_arc) = pres.slides.get_mut(i) else { break };
         let Some(timing) = se.child(craft_xml::Local("timing")) else { continue };
         if need_media && has_media_shapes(&slide_arc.shapes) {
             apply_media_timing(timing, &mut std::sync::Arc::make_mut(slide_arc).shapes);
