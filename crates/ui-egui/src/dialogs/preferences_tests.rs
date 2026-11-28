@@ -51,6 +51,80 @@ fn the_interface_size_slider_is_labelled_on_screen() {
     assert!(label.center().y > slider.min.y && label.center().y < slider.max.y, "on the same row: {label:?}, {slider:?}");
 }
 
+/// The interface size value is shown with two decimals at every size: `1.75` at the maximum,
+/// not `1.750` beside a default of `1.00`.
+#[test]
+fn the_interface_size_value_always_has_two_decimals() {
+    for (scale, shown, longer) in [(1.75, "1.75", "1.750"), (0.75, "0.75", "0.750")] {
+        let mut h = harness();
+        h.state_mut().ui.ui_scale = scale;
+        h.run_steps(2);
+        open_options(&mut h);
+        assert!(h.query_by_value(shown).is_some(), "the slider shows {shown}");
+        assert!(h.query_by_value(longer).is_none(), "and not {longer}");
+    }
+}
+
+/// Showing two decimals doesn't round the size itself: opening Options with a size the
+/// slider can't show exactly leaves it as it was.
+#[test]
+fn opening_options_keeps_an_uneven_interface_size() {
+    let mut h = harness();
+    h.state_mut().ui.ui_scale = 1.234;
+    h.run_steps(2);
+    open_options(&mut h);
+    h.run_steps(2);
+    assert!(h.query_by_value("1.23").is_some(), "the slider shows two decimals");
+    assert_eq!(h.state().ui.ui_scale, 1.234, "the size isn't rounded by showing it");
+}
+
+/// Clicking into the shown value and leaving it without typing keeps the size too, though the
+/// text it read back is only two decimals.
+#[test]
+fn leaving_the_value_field_unedited_keeps_an_uneven_interface_size() {
+    let mut h = harness();
+    h.state_mut().ui.ui_scale = 1.234;
+    h.run_steps(2);
+    open_options(&mut h);
+    h.get_by_value("1.23").click();
+    h.run_steps(2);
+    h.key_press(egui::Key::Tab);
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ui_scale, 1.234, "an unedited value doesn't change the size");
+}
+
+/// A size typed into the value field still applies.
+#[test]
+fn a_size_typed_into_the_value_field_applies() {
+    let mut h = harness();
+    h.state_mut().ui.ui_scale = 1.234;
+    h.run_steps(2);
+    open_options(&mut h);
+    h.get_by_value("1.23").click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("1.5".into()));
+    h.run_steps(1);
+    h.key_press(egui::Key::Tab);
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ui_scale, 1.5, "the typed size applies");
+}
+
+/// A typed size with a space inside it still reads as egui reads numbers: spaces are ignored.
+#[test]
+fn a_typed_size_with_a_space_inside_applies() {
+    let mut h = harness();
+    h.state_mut().ui.ui_scale = 1.234;
+    h.run_steps(2);
+    open_options(&mut h);
+    h.get_by_value("1.23").click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("1.\u{2009}5".into()));
+    h.run_steps(1);
+    h.key_press(egui::Key::Tab);
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ui_scale, 1.5, "the thin space is ignored");
+}
+
 /// A checkbox applies as it is toggled and Cancel puts the old value back.
 #[test]
 fn options_cancel_undoes_the_changes() {

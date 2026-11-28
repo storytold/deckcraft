@@ -1339,6 +1339,12 @@ fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// A typed number normalised the way egui's own parser reads it: spaces anywhere are ignored
+/// (thousands separators, a pasted thin space) and the minus sign U+2212 reads as `-`.
+fn number_text(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).map(|c| if c == '\u{2212}' { '-' } else { c }).collect()
+}
+
 fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     // The controls apply as they change, so the dialog remembers what it opened with and
     // Cancel (or Esc, or the close button: see `show`) puts that back.
@@ -1357,10 +1363,18 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut scale = pending.unwrap_or(app.ui.ui_scale);
     // Labelled like the Measurement units row below it. The egui 0.37 migration (#1350) dropped
     // the slider's own text and kept only its accessible name, which left a bare "1.00".
+    // Two decimals on screen only: rounding the value itself would rewrite a saved size such
+    // as 1.234 just by opening the dialog. For the same reason, the shown text read back
+    // unchanged (focus in the value field, then out) means the size it was shown for.
+    let shown_for = f64::from(scale);
+    let shown = format!("{shown_for:.2}");
     let r = ui
         .horizontal(|ui| {
             ui.label("Interface size:");
-            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75))
+            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).custom_formatter(|v, _| format!("{v:.2}")).custom_parser(|text| {
+                let text = number_text(text);
+                if text == shown { Some(shown_for) } else { text.parse().ok() }
+            }))
         })
         .inner;
     let enabled = r.enabled();
