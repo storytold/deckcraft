@@ -119,6 +119,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
+    ("view.theme", "Display theme", None, "{value: system|light|dark}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -315,6 +316,9 @@ pub struct SlideApp {
     capture: capture::Capture,
     styled: bool,
     restyle: bool,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    desktop_theme: Option<craft_platform::appearance::SystemReader>,
+    pub(crate) shown_brightness: theme::Brightness,
     fonts_ready: bool,
     last_time: f64,
     /// When AutoRecover data was last written (monotonic seconds, not wall time).

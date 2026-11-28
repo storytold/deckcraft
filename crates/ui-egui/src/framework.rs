@@ -73,14 +73,14 @@ impl SlideApp {
     /// The framework's part of `App::raw_input_hook`, once per frame before the first pass: takes what the runtime
     /// gathered since the last frame and gives the coming passes the root values (theme mode, interface scale).
     pub fn before_input(&mut self, ctx: &egui::Context) {
-        embed::before_input(ctx, |output| self.frame_input(output));
+        embed::before_input(ctx, |output| self.frame_input(ctx, output));
     }
 
     /// The root values of this frame. DeckCraft registers no commands with the runtime and lets it toggle no chrome,
     /// so the output carries nothing it acts on. The interface scale is DeckCraft's own (`UiState::ui_scale`, which
     /// `ui_setup` applies), so the runtime's zoom and DeckCraft's agree.
-    fn frame_input(&mut self, _output: FrameOutput) -> FrameInput {
-        let mode = if self.ui.brightness == crate::theme::Brightness::Dark { craft_theme::Mode::Dark } else { craft_theme::Mode::Light };
+    fn frame_input(&mut self, ctx: &egui::Context, _output: FrameOutput) -> FrameInput {
+        let mode = if self.display_brightness(ctx) == crate::theme::Brightness::Dark { craft_theme::Mode::Dark } else { craft_theme::Mode::Light };
         // The slide show and the canvas read Ctrl/Cmd+wheel themselves, so a smooth Ctrl+wheel stays a wheel event.
         let root = RootEnv::new().mode(mode).scale(Scale::new(self.ui.ui_scale.clamp(0.5, 3.0))).ctrl_wheel_pinch(false);
         FrameInput::new(root).host(Arc::clone(&self.framework_host))

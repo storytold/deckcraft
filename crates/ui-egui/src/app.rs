@@ -95,6 +95,9 @@ impl SlideApp {
             capture: capture::Capture::default(),
             styled: false,
             restyle: true,
+            #[cfg(all(unix, not(target_os = "macos")))]
+            desktop_theme: None,
+            shown_brightness: theme::Brightness::Light,
             fonts_ready: false,
             last_time: 0.0,
             last_recovery: 0.0,

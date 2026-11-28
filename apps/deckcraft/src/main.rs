@@ -408,6 +408,8 @@ fn main() -> eframe::Result {
             deckcraft_ui_egui::framework::install(&cc.egui_ctx, x11)?;
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
             let mut app = SlideApp::new(Session::new(), services);
+            #[cfg(all(unix, not(target_os = "macos")))]
+            app.watch_desktop_theme(&cc.egui_ctx);
             // Presenter View asks winit how many displays there are when a show starts.
             #[cfg(all(unix, not(target_os = "macos")))]
             if let Some(window) = cc.winit_window().cloned() {

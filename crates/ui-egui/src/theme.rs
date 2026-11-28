@@ -11,6 +11,15 @@ pub enum Brightness {
     Dark,
 }
 
+pub type BrightnessPreference = Option<Brightness>;
+
+pub(crate) const THEME_CHOICES: [(&str, &str, BrightnessPreference); 3] =
+    [("system", "Use system setting", None), ("light", "Light", Some(Brightness::Light)), ("dark", "Dark", Some(Brightness::Dark))];
+
+pub fn resolve_brightness(preference: BrightnessPreference, system_dark: Option<bool>) -> Brightness {
+    preference.unwrap_or(if system_dark == Some(true) { Brightness::Dark } else { Brightness::Light })
+}
+
 /// Every colour the chrome uses.
 #[derive(Clone, Copy, Debug)]
 pub struct Tokens {

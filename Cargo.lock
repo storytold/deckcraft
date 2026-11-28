@@ -2002,6 +2002,7 @@ version = "0.19.0"
 dependencies = [
  "craft-host",
  "craft-keymap",
+ "craft-platform",
  "craft-theme",
  "craft-ui",
  "craft-update",

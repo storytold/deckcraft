@@ -155,8 +155,14 @@ impl SlideApp {
             }
             "view.collapseRibbon" => self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed,
             "view.dark" => {
-                let on = self.flag(p, self.ui.brightness == theme::Brightness::Dark);
-                self.ui.brightness = if on { theme::Brightness::Dark } else { theme::Brightness::Light };
+                let on = self.flag(p, self.shown_brightness == theme::Brightness::Dark);
+                self.ui.brightness = Some(if on { theme::Brightness::Dark } else { theme::Brightness::Light });
+                self.restyle = true;
+            }
+            "view.theme" => {
+                let value = p.get("value").and_then(Value::as_str).ok_or("expected `value`: system, light or dark")?;
+                let choice = theme::THEME_CHOICES.iter().find(|(id, _, _)| *id == value);
+                self.ui.brightness = choice.ok_or_else(|| format!("unknown theme `{value}`; use system, light or dark"))?.2;
                 self.restyle = true;
             }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),

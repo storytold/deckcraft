@@ -688,6 +688,43 @@ fn grid_options_dialog_lists_spacing_and_display() {
     assert!((harness.state().session.prefs.grid_spacing - 6.0).abs() < 1e-9);
 }
 
+pub(crate) fn pick_display_theme(h: &mut egui_kittest::Harness<'static, SlideApp>, label: &str) {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::Queryable;
+    h.get_by_role_and_label(Role::ComboBox, "Display theme").click_accesskit();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, label).click_accesskit();
+    h.run_steps(3);
+}
+
+#[test]
+fn system_appearance_restyles_and_explicit_choices_override_it() {
+    use crate::theme::Brightness::{Dark, Light};
+    let mut h = harness();
+    assert_eq!(h.state().ui.brightness, None);
+    for (theme, expected) in [(egui::Theme::Dark, Dark), (egui::Theme::Light, Light), (egui::Theme::Dark, Dark)] {
+        h.input_mut().system_theme = Some(theme);
+        h.run_steps(2);
+        assert_eq!(h.state().shown_brightness, expected);
+    }
+    for invalid in [json!({}), json!({"value": true}), json!({"value": "sepia"})] {
+        assert!(h.state_mut().run("view.theme", invalid).is_err());
+    }
+    assert_eq!(h.state().ui.brightness, None);
+    h.state_mut().run("view.theme", json!({"value": "light"})).unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().shown_brightness, Light);
+    h.state_mut().run("view.theme", json!({"value": "system"})).unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().shown_brightness, Dark);
+    assert_eq!(crate::theme::resolve_brightness(None, None), Light);
+
+    let stored: crate::state::UiState = serde_json::from_value(json!({"brightness": "dark"})).unwrap();
+    let round_trip: crate::state::UiState = serde_json::from_value(serde_json::to_value(stored).unwrap()).unwrap();
+    assert_eq!(round_trip.brightness, Some(Dark));
+    assert!(serde_json::to_value(&h.state().ui).unwrap().get("brightness").is_none(), "the saved default still follows the system");
+}
+
 /// Preferences (#752): Cancel, Esc and the window's close button put back what the dialog
 /// changed while it was open; Done keeps it.
 #[test]
@@ -707,7 +744,9 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
     let change = |harness: &mut egui_kittest::Harness<'static, SlideApp>| {
         harness.state_mut().run("app.preferences", json!({})).unwrap();
         harness.run_steps(2);
-        for label in ["Dark appearance", "Show smart guides", "Snap objects to grid"] {
+        pick_display_theme(harness, "Dark");
+        harness.run_steps(2);
+        for label in ["Show smart guides", "Snap objects to grid"] {
             harness
                 .query_all_by_role_and_label(egui::accesskit::Role::CheckBox, label)
                 .next()
@@ -715,7 +754,7 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
                 .click_accesskit();
             harness.run_steps(2);
         }
-        assert_ne!(harness.state().ui.brightness, dark_before, "the dialog previews the appearance");
+        assert_eq!(harness.state().ui.brightness, Some(crate::theme::Brightness::Dark), "the dialog previews the appearance");
         assert_ne!(harness.state().session.prefs.smart_guides, before.smart_guides);
     };
     let unchanged = |harness: &egui_kittest::Harness<'static, SlideApp>, how: &str| {
@@ -1787,10 +1826,9 @@ fn the_pen_ignores_a_swipe_during_the_show() {
     assert_eq!(harness.state().show.as_ref().map(|s| s.state.slide), Some(0));
 }
 
-/// Preferences › Interface size (#767): dragging the slider leaves the interface size alone
-/// until the pointer lets go, so the slider doesn't grow under the pointer mid-drag.
+/// Preferences previews the new interface size while the pointer is still down.
 #[test]
-fn interface_size_applies_when_the_slider_is_let_go() {
+fn interface_size_previews_while_dragging() {
     let mut harness =
         egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
@@ -1805,19 +1843,25 @@ fn interface_size_applies_when_the_slider_is_let_go() {
     let before = harness.state().ui.ui_scale;
     let rect = harness.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Interface size").next().expect("the Interface size slider").rect();
     let (from, to) = (rect.left_center() + egui::vec2(4.0, 0.0), rect.right_center() - egui::vec2(4.0, 0.0));
+    let original_ppp = harness.ctx.pixels_per_point();
+    let at_current_zoom =
+        |p: egui::Pos2, h: &egui_kittest::Harness<'_, SlideApp>| (p.to_vec2() * (original_ppp / h.ctx.pixels_per_point())).to_pos2();
     harness.hover_at(from);
     harness.run_steps(1);
     harness.drag_at(from);
     harness.run_steps(1);
     for k in 1..=8 {
-        harness.hover_at(from.lerp(to, k as f32 / 8.0));
-        harness.run_steps(1);
+        harness.hover_at(at_current_zoom(from.lerp(to, k as f32 / 8.0), &harness));
+        harness.run_steps(3);
     }
-    assert_eq!(harness.state().ui.ui_scale, before, "nothing rescales while the slider is held");
-    harness.drop_at(to);
+    let preview = harness.state().ui.ui_scale;
+    assert!(preview > before + 0.3, "the size previews while held: {before} -> {preview}");
+    harness.run_steps(4);
+    assert_eq!(harness.state().ui.ui_scale, preview, "the slider doesn't drift while held still");
+    harness.drop_at(at_current_zoom(to, &harness));
     harness.run_steps(2);
     let after = harness.state().ui.ui_scale;
-    assert!(after > before + 0.3, "letting go applies the size dragged to: {before} -> {after}");
+    assert_eq!(after, preview, "letting go retains the preview");
     assert!(harness.state().dialog.is_some(), "Preferences stays open");
 }
 /// The status bar's zoom slider has no room for a visible label; it still needs an accessible

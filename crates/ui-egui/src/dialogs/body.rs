@@ -1339,6 +1339,55 @@ fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+fn interface_size_slider(ui: &mut Ui, scale: &mut f32) {
+    // Updating zoom moves the dialog and changes the egui points per pixel. Keep the
+    // pointer-to-value mapping in the rail's original physical coordinates for this drag.
+    let id = ui.scope_id().with("interface_size_drag");
+    let anchor = ui.data_mut(|data| data.get_temp::<(f32, f32)>(id));
+    let pixels = ui.ctx().pixels_per_point();
+    let pointer_x = ui.input(|i| {
+        i.events.iter().rev().find_map(|event| match event {
+            egui::Event::PointerMoved(pos) | egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, .. } => Some(pos.x * pixels),
+            _ => None,
+        })
+    });
+    let bounds = 0.75..=1.75;
+    let mut value = f64::from(*scale);
+    let slider = egui::Slider::from_get_set(bounds.clone(), |candidate| {
+        if let Some(candidate) = candidate {
+            value = match anchor {
+                Some((left, right)) => {
+                    pointer_x.map_or(value, |x| egui::remap_clamp(f64::from(x), f64::from(left)..=f64::from(right), bounds.clone()))
+                }
+                None => candidate,
+            };
+        }
+        value
+    })
+    .show_value(false);
+    let response = ui.add(slider);
+    if response.is_pointer_button_down_on() && anchor.is_none() {
+        // Match the standard egui slider's handle inset so both end values remain reachable.
+        let handle = response.rect.height() / 2.5;
+        let inset = match ui.visuals().handle_shape {
+            egui::style::HandleShape::Circle => handle,
+            egui::style::HandleShape::Rect { aspect_ratio } => handle * aspect_ratio,
+        };
+        let rail = response.rect.x_range().shrink(inset);
+        ui.data_mut(|data| data.insert_temp(id, (rail.min * pixels, rail.max * pixels)));
+    } else if !response.is_pointer_button_down_on() && anchor.is_some() {
+        ui.data_mut(|data| data.remove::<(f32, f32)>(id));
+    }
+    response.widget_info(|| egui::WidgetInfo::slider(response.enabled(), value, "Interface size"));
+    let number = ui.add(egui::DragValue::new(&mut value).range(bounds).speed(0.01));
+    number.widget_info(|| {
+        let mut info = egui::WidgetInfo::drag_value(number.enabled(), value);
+        info.label = Some("Interface size value".into());
+        info
+    });
+    *scale = value as f32;
+}
+
 fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     // The controls apply as they change, so the dialog remembers what it opened with and
     // Cancel (or Esc, or the close button: see `show`) puts that back.
@@ -1346,35 +1395,33 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
     ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
-    let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
-        let _ = app.run("view.dark", json!({"on": dark}));
-    }
-    // While the pointer holds the slider its value only waits in the dialog: applying it
-    // would rescale the slider under the pointer and run it to an end (#767). It applies
-    // on release, and at once from the keyboard.
-    let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
-    let mut scale = pending.unwrap_or(app.ui.ui_scale);
+    ui.horizontal(|ui| {
+        ui.label("Display theme");
+        let selected = match app.ui.brightness {
+            None => "Use system setting",
+            Some(theme::Brightness::Light) => "Light",
+            Some(theme::Brightness::Dark) => "Dark",
+        };
+        egui::ComboBox::from_id_salt("display_theme")
+            .selected_text(selected)
+            .width(180.0)
+            .show_ui(ui, |ui| {
+                for (value, label, preference) in theme::THEME_CHOICES {
+                    if ui.selectable_label(app.ui.brightness == preference, label).clicked() {
+                        let _ = app.run("view.theme", json!({"value": value}));
+                        ui.close();
+                    }
+                }
+            })
+            .response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Display theme"));
+    });
     // Labelled like the Measurement units row below it. The egui 0.37 migration (#1350) dropped
     // the slider's own text and kept only its accessible name, which left a bare "1.00".
-    let r = ui
-        .horizontal(|ui| {
-            ui.label("Interface size:");
-            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75))
-        })
-        .inner;
-    let enabled = r.enabled();
-    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
-    if r.is_pointer_button_down_on() {
-        if r.changed() || pending.is_some() {
-            d.fields.insert("uiScale".into(), scale.to_string());
-        }
-    } else {
-        if r.changed() || pending.is_some() {
-            app.ui.ui_scale = scale;
-        }
-        d.fields.remove("uiScale");
-    }
+    ui.horizontal(|ui| {
+        ui.label("Interface size:");
+        interface_size_slider(ui, &mut app.ui.ui_scale);
+    });
     // PowerPoint takes the unit from the system's measurement setting; DeckCraft asks here.
     ui.horizontal(|ui| {
         ui.label("Measurement units:");
