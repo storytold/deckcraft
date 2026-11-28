@@ -24,6 +24,7 @@ pub mod doc_window;
 pub mod eyedropper;
 pub mod flavor;
 pub mod framework;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -143,6 +144,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.about", "About DeckCraft", None, "{}"),
     ("app.checkUpdates", "Check for Updates…", None, "{}"),
     ("app.palette", "Command Palette", Some("Cmd+Shift+P"), "{}"),
+    ("app.language", "Interface Language", None, "{language: system|en|zh-Hant}"),
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
@@ -324,6 +326,9 @@ pub struct SlideApp {
     pub(crate) notes_buf: (u64, usize, notes::Draft),
     /// Faces borrowed from the font database for text the interface fonts can't draw (#101).
     pub ui_fonts: uifonts::UiFonts,
+    /// The Traditional Chinese face has not been looked up yet for the current language: set when
+    /// the language changes so `prefer_traditional()` runs once, not on every frame.
+    pub(crate) prefer_traditional_pending: bool,
     /// Slide drag in the thumbnail pane or the Slide Sorter: the dragged slides and the drop gap.
     pub(crate) thumb_drag: Option<thumbs::SlideDrag>,
     /// Selection pane: folded groups, renaming, drag and drop.

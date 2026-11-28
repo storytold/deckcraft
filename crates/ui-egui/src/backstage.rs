@@ -53,6 +53,21 @@ pub enum Page {
 impl Page {
     pub const ALL: [Page; 8] = [Page::Home, Page::New, Page::Open, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::About];
 
+    /// The catalog key for the side-menu label and page heading. The English [`Page::label`] is
+    /// kept for command errors and tests that work in English.
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Page::Home => "nav.home",
+            Page::New => "nav.new",
+            Page::Open => "nav.open",
+            Page::Info => "nav.info",
+            Page::SaveAs => "nav.save_as",
+            Page::Print => "nav.print",
+            Page::Export => "nav.export",
+            Page::About => "nav.about",
+        }
+    }
+
     /// The id `app.backstage {page}` takes.
     pub fn id(self) -> &'static str {
         match self {
@@ -119,12 +134,12 @@ pub enum Nav {
 }
 
 impl Nav {
-    fn label(self) -> &'static str {
+    fn label_key(self) -> &'static str {
         match self {
-            Nav::Page(p) => p.label(),
-            Nav::Save => "Save",
-            Nav::Close => "Close",
-            Nav::Options => "Options",
+            Nav::Page(p) => p.label_key(),
+            Nav::Save => "nav.save",
+            Nav::Close => "nav.close",
+            Nav::Options => "nav.options",
         }
     }
     fn icon(self) -> Icon {
@@ -321,6 +336,7 @@ pub fn key(app: &mut SlideApp, key: Key, mods: deckcraft_engine::Mods) -> bool {
 /// Draws the File tab in place of the ribbon, slides and status bar.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let Some(mut bs) = app.backstage.take() else { return };
+    let lang = app.language();
     let t = Tokens::get(ui.ctx());
     let has_doc = app.session.active().is_some();
     if !has_doc && bs.page.needs_doc() {
@@ -333,7 +349,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 0.0;
         if has_doc {
             let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Back"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::text(lang, "nav.back")));
             let hovered = resp.hovered();
             if hovered {
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
@@ -345,7 +361,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 t.text,
                 false,
             );
-            if resp.on_hover_text("Back (Esc)").clicked() {
+            if resp.on_hover_text(crate::i18n::with_shortcut(lang, "nav.back", "Esc")).clicked() {
                 out.close = true;
             }
         } else {
@@ -356,7 +372,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             if k == 3 {
                 separator(ui, &t);
             }
-            if nav_item(ui, *nav, &bs, index, &t).clicked() {
+            if nav_item(ui, *nav, &bs, index, &t, lang).clicked() {
                 bs.focus = None;
                 commit_props(app, &bs);
                 match act(app, *nav, bs.page) {
@@ -371,7 +387,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.add_space(8.0);
             // Bottom-up: draw the last entry first.
             for (k, nav) in bottom.iter().enumerate().rev() {
-                if nav_item(ui, *nav, &bs, first_bottom + k, &t).clicked() {
+                if nav_item(ui, *nav, &bs, first_bottom + k, &t, lang).clicked() {
                     bs.focus = None;
                     commit_props(app, &bs);
                     match act(app, *nav, bs.page) {
@@ -398,7 +414,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 // page past the right margin and clip the tiles (#1421).
                 ui.set_max_width(ui.available_width().min(CONTENT_W));
                 if bs.page != Page::Home {
-                    ui.label(RichText::new(bs.page.label()).font(theme::bold(22.0)).color(t.text));
+                    ui.label(RichText::new(crate::i18n::text(lang, bs.page.label_key())).font(theme::bold(22.0)).color(t.text));
                     ui.add_space(16.0);
                 }
                 // Errors raised on a backstage page (a missing recent file, a failed open) would
@@ -436,10 +452,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 // ---------------------------------------------------------------- side menu
 
 /// Draw one clickable Backstage navigation row and return its interaction response.
-fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> egui::Response {
+fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens, lang: crate::i18n::Resolved) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, ITEM_H), Sense::click());
     let selected = nav == Nav::Page(bs.page);
-    let label = nav.label();
+    let label = crate::i18n::text(lang, nav.label_key());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     let p = ui.painter();
     let row = rect.shrink2(vec2(6.0, 1.0));

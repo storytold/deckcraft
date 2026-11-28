@@ -124,6 +124,18 @@ mod tests {
     }
 
     #[test]
+    fn the_interface_language_round_trips_through_settings() {
+        let d = dir("language");
+        let ui = UiState { language: crate::i18n::LanguageChoice::TraditionalChinese, ..Default::default() };
+        save(&d, &ui, &Prefs::default());
+        let (loaded, _) = load(&d);
+        assert_eq!(loaded.unwrap().language, crate::i18n::LanguageChoice::TraditionalChinese);
+        // A saved code that names no catalog falls back to System, never to a broken state.
+        std::fs::write(d.join(UI_FILE), r#"{"language":"zh-XX"}"#).unwrap();
+        assert_eq!(load(&d).0.unwrap().language, crate::i18n::LanguageChoice::System);
+    }
+
+    #[test]
     fn saving_round_trips_and_leaves_no_temporary_file() {
         let d = dir("save");
         let ui = UiState { zoom: Some(1.5), recent: vec!["/a.pptx".into()], ..Default::default() };
