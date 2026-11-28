@@ -411,6 +411,9 @@ pub struct Chart {
 pub struct LegendEntry {
     /// The entry's place in the legend, from 0 (`c:idx`).
     pub idx: u32,
+    /// The file deletes this entry from the legend (`c:legendEntry/c:delete`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
     /// Text size in points.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<f64>,

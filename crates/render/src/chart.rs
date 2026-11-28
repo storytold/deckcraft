@@ -580,15 +580,21 @@ fn draw_legend(ctx: &mut RenderContext, draw: &LegendDraw<'_, '_>, mut area: Rec
     let vertical = matches!(pos.as_str(), "l" | "r" | "tr");
     // Each entry's text: its own size, weight and colour (`c:legendEntry`) over the legend's.
     let own = |i: usize| c.legend_entries.iter().find(|e| usize::try_from(e.idx).ok() == Some(i));
-    let styles: Vec<(f64, bool, Rgba)> = (0..legend_items.len())
-        .map(|i| {
+    // An entry the file deletes (`c:legendEntry/c:delete`) is left out.
+    let shown: Vec<_> = legend_items.iter().enumerate().filter(|&(i, _)| !own(i).is_some_and(|e| e.deleted)).collect();
+    if shown.is_empty() {
+        return area;
+    }
+    let styles: Vec<(f64, bool, Rgba)> = shown
+        .iter()
+        .map(|&(i, _)| {
             let e = own(i);
             let size = e.and_then(|e| e.size).filter(|v| v.is_finite() && *v > 0.0).map_or(base, |v| v.min(400.0));
             let col = e.and_then(|e| e.color.as_ref()).map_or(text_col, |cr| rctx.color(cr, None));
             (size, e.and_then(|e| e.bold).unwrap_or(false), col)
         })
         .collect();
-    let item_ws: Vec<f64> = legend_items.iter().zip(&styles).map(|((n, _, _), (sz, _, _))| n.chars().count() as f64 * sz * 0.55 + sz * 1.6).collect();
+    let item_ws: Vec<f64> = shown.iter().zip(&styles).map(|((_, (n, _, _)), (sz, _, _))| n.chars().count() as f64 * sz * 0.55 + sz * 1.6).collect();
     let tallest = styles.iter().map(|s| s.0).fold(base, f64::max);
     let size = if vertical {
         (item_ws.iter().copied().fold(0.0, f64::max).min(width * 0.4), styles.iter().map(|s| s.0 * 1.5).sum::<f64>())
@@ -598,7 +604,7 @@ fn draw_legend(ctx: &mut RenderContext, draw: &LegendDraw<'_, '_>, mut area: Rec
     let (origin, plot_area) = legend_layout(pos, size, area, base, c.legend_overlay);
     area = plot_area;
     let (mut x, mut y) = (origin.x, origin.y);
-    for ((name, paint, outline), (sz, bold, col)) in legend_items.iter().zip(&styles) {
+    for ((_, (name, paint, outline)), (sz, bold, col)) in shown.iter().zip(&styles) {
         let (sz, bold, col) = (*sz, *bold, *col);
         let key = Rect::new(x, y + sz * 0.3, x + sz * 0.7, y + sz);
         fill_with(ctx, paint, key, m);
