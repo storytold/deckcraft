@@ -675,6 +675,11 @@ fn section_remove(s: &mut Session, p: &Value) -> Result<Value> {
         let sec = doc.sections.remove(i);
         if with_slides {
             doc.slides.retain(|x| !sec.slides.contains(&x.id));
+            // As in slide.delete: the deleted slides leave every custom show and the selection.
+            for show in &mut doc.custom_shows {
+                show.slides.retain(|x| !sec.slides.contains(x));
+            }
+            sel.slides.retain(|x| !sec.slides.contains(x));
             sel.slide = sel.slide.min(doc.slides.len().saturating_sub(1));
         } else if let Some(prev) = i.checked_sub(1).and_then(|k| doc.sections.get_mut(k)) {
             prev.slides.extend(sec.slides);
@@ -908,6 +913,29 @@ mod tests {
         s.execute("slide.move", &json!({"ids": repeated, "to": 0})).expect("repeats");
         assert_eq!(order(&s), [ids[2], ids[0], ids[1]]);
         assert_eq!(selected(&s), (0, vec![ids[2]]));
+    }
+
+    #[test]
+    fn removing_a_section_with_its_slides_prunes_them_from_custom_shows() {
+        let (mut s, ids) = deck(4);
+        s.execute("section.add", &json!({"name": "A", "at": 0})).expect("A");
+        s.execute("section.add", &json!({"name": "B", "at": 2})).expect("B");
+        let show = vec![deckcraft_model::SlideId(ids[0]), deckcraft_model::SlideId(ids[2]), deckcraft_model::SlideId(ids[3])];
+        s.edit(|doc, _| {
+            doc.custom_shows = vec![deckcraft_model::CustomShow { name: "Short".into(), slides: show.clone() }];
+            Ok(())
+        })
+        .expect("set custom show");
+        s.execute("slide.selectSlides", &json!({"ids": [ids[1], ids[3]]})).expect("select");
+
+        s.execute("section.remove", &json!({"index": 1, "slides": true})).expect("remove B and its slides");
+        assert_eq!(order(&s), [ids[0], ids[1]]);
+        let st = s.doc().expect("doc");
+        assert_eq!(st.doc.custom_shows[0].slides, [deckcraft_model::SlideId(ids[0])], "the deleted slides leave the custom show");
+        assert!(st.selection.slides.iter().all(|x| st.doc.slide_index(*x).is_some()), "the selection names only slides of the deck");
+
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(s.doc().expect("doc").doc.custom_shows[0].slides, show);
     }
 
     #[test]
