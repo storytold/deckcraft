@@ -776,6 +776,9 @@ fn run_props_from(r: cd_text::RunProps) -> dm_text::RunProps {
         }),
         spacing: r.spacing,
         kern: r.kern,
+        // The shared DrawingML run properties carry no `a:rPr/@kumimoji` field yet, so an
+        // imported run has no value to keep here; the exporter drops the field as well.
+        kumimoji: None,
         fill: r.fill.map(fill_from),
         outline: r.outline.map(line_from),
         highlight: r.highlight.map(color_ref_from),
