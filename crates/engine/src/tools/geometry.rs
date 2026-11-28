@@ -1,5 +1,7 @@
 use super::hit::table_rows;
-use super::{Drag, Guide, HistoryEntry, Point, Rect, Result, Session, Shape, ShapeId, ShapeKind, ToolKind, Value, Vec2, Xfrm, cmd, json, xfrm_of};
+use super::{
+    Affine, Drag, Guide, HistoryEntry, Point, Rect, Result, Session, Shape, ShapeId, ShapeKind, ToolKind, Value, Vec2, Xfrm, cmd, json, xfrm_of,
+};
 
 impl Session {
     /// End the freeform being drawn: create the shape (if it has at least two points).
@@ -99,17 +101,29 @@ impl Session {
     pub(super) fn execute_dup_in_place(&mut self, ids: &[ShapeId]) -> Result<()> {
         self.edit(|doc, sel| {
             let list = cmd::current_shapes(doc, sel).cloned().unwrap_or_default();
-            let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
+            // Insert in sibling draw order even when the selection was made in reverse.
+            let mut originals = Vec::new();
+            deckcraft_model::walk(&list, &mut |sh, _| {
+                if ids.contains(&sh.id) {
+                    originals.push(sh.clone());
+                }
+            });
+            let mut copies = originals.clone();
             let boxes: Vec<Xfrm> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
             cmd::edit::detach_on_slide(doc, sel, &mut copies);
-            cmd::edit::reid("edit.duplicate", doc, &mut copies)?;
+            let remap = cmd::edit::reid("edit.duplicate", doc, &mut copies)?;
             for (c, b) in copies.iter_mut().zip(boxes) {
                 c.xfrm = Some(b);
                 c.ph = None;
             }
-            let new_ids: Vec<ShapeId> = copies.iter().map(|c| c.id).collect();
+            // Return ids in selection order: drag_move pairs these with the original boxes.
+            let new_ids: Vec<ShapeId> = ids.iter().filter_map(|id| remap.get(id).copied()).collect();
             let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("duplicate", "no slide"))?;
-            shapes.extend(copies);
+            for (original, copy) in originals.iter().zip(copies) {
+                if let Some(siblings) = deckcraft_model::sibling_list_mut(shapes, original.id) {
+                    siblings.push(copy);
+                }
+            }
             sel.shapes = new_ids;
             Ok(())
         })
@@ -166,7 +180,9 @@ impl Session {
             }
         }
         for sh in st.shapes() {
-            if exclude.contains(&sh.id) || sh.hidden {
+            // An ancestor's bounds include the moving member and refit after each edit. Using
+            // that ancestor as a target would snap the member back to its own previous bounds.
+            if sh.hidden || exclude.iter().any(|id| deckcraft_model::find_shape(std::slice::from_ref(sh), *id).is_some()) {
                 continue;
             }
             let b = xfrm_of(&st.doc, &st.selection, sh).bounds();
@@ -229,12 +245,15 @@ impl Session {
     }
 
     /// Snap the edges that resize handle `handle` drags in the resized box `x` to the smart guides.
-    pub(super) fn snap_resize(&mut self, x: Xfrm, handle: u8, exclude: &[ShapeId], tol: f64) -> Xfrm {
-        if x.rot != 0.0 {
+    pub(super) fn snap_resize(&mut self, x: Xfrm, parent: Affine, handle: u8, exclude: &[ShapeId], tol: f64) -> Xfrm {
+        let [sx, b, c, sy, _, _] = parent.as_coeffs();
+        // Edge snapping requires slide-aligned axes, just as for an ungrouped box. Translation,
+        // scale and reflection preserve them; rotation/shear and collapsed parents do not.
+        if x.rot != 0.0 || b != 0.0 || c != 0.0 || sx == 0.0 || sy == 0.0 || !parent.as_coeffs().iter().all(|v| v.is_finite()) {
             self.tool.guides.clear();
             return x;
         }
-        let r = x.rect();
+        let r = parent.transform_rect_bbox(x.rect());
         // Only the dragged edges move, so only they look for a line to snap to. The handles sit in
         // the box's unflipped frame: in a flipped box, also one that a drag past the opposite edge
         // just flipped, the dragged handle is on the other side.
@@ -242,7 +261,11 @@ impl Session {
         let (top, bottom) = (matches!(handle, 0..=2), matches!(handle, 4..=6));
         let (moves_left, moves_right) = if x.flip_h { (right, left) } else { (left, right) };
         let (moves_top, moves_bottom) = if x.flip_v { (bottom, top) } else { (top, bottom) };
-        let (off, guides) = self.snap_edges(r, exclude, tol * 1.5, true, [moves_left, false, moves_right], [moves_top, false, moves_bottom]);
+        let xs = if sx < 0.0 { [moves_right, false, moves_left] } else { [moves_left, false, moves_right] };
+        let ys = if sy < 0.0 { [moves_bottom, false, moves_top] } else { [moves_top, false, moves_bottom] };
+        let (off, guides) = self.snap_edges(r, exclude, tol * 1.5, true, xs, ys);
+        // Map only the slide displacement back, so the opposite parent-space edge stays fixed.
+        let off = Vec2::new(off.x / sx, off.y / sy);
         let mut nx = x;
         if moves_left {
             nx.x += off.x;

@@ -1,7 +1,7 @@
 use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, shape_in_front};
 use super::{
-    Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, ShapeId, ShapeKind, TABLE_ERASER,
-    TextTarget, ToolKind, Value, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
+    Affine, Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, ShapeId, ShapeKind,
+    TABLE_ERASER, TextTarget, ToolKind, Value, Xfrm, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
 };
 
 impl Session {
@@ -41,8 +41,9 @@ impl Session {
                     continue;
                 }
                 let x = xfrm_of(&st.doc, &st.selection, sh);
+                let parent = cmd::parent_transform(st, *id);
                 if sh.is_line() {
-                    let a = x.affine();
+                    let a = parent * x.affine();
                     for (end, q) in [(0u8, a * Point::new(0.0, 0.0)), (1u8, a * Point::new(x.w, x.h))] {
                         if (q - p).hypot() <= tol * 1.6 {
                             return Some(Hit::LineEnd { id: *id, end });
@@ -52,16 +53,16 @@ impl Session {
                 }
                 let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
                 for hd in &geo.handles {
-                    if (x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
+                    if (parent * x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Adjust { id: *id, index: hd.index });
                     }
                 }
                 for hd in wordart_handles(&st.doc, &st.selection, sh, x.w, x.h) {
-                    if (x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
+                    if (parent * x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Warp { id: *id, index: hd.index });
                     }
                 }
-                let (pts, rot) = box_handles(&x);
+                let (pts, rot) = super::transformed_box_handles(&x, parent);
                 if (rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
                     return Some(Hit::Rotate { id: *id });
                 }
@@ -76,7 +77,7 @@ impl Session {
         // of the text covers that spot (#931).
         if let Some(e) = edited_box(st)
             && e.movable
-            && edit_zone(&e.xfrm, p, tol) == EditZone::Frame
+            && e.zone(p, tol) == EditZone::Frame
             && !shape_in_front(st, st.shapes(), e.id, p, tol, 0)
         {
             return Some(Hit::Frame { id: e.id });
@@ -220,7 +221,7 @@ impl Session {
         }
     }
 
-    /// Handle a pointer press and start the applicable tool interaction.
+    /// Start a gesture at a slide-space point, converting grouped resize and rotation origins.
     fn down(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
         if let Some(Drag::Freeform { mode, mut points, .. }) = self.tool.drag.clone() {
             // Next click of a freeform: close on the start point, else add a vertex.
@@ -311,21 +312,55 @@ impl Session {
                 let origs: Vec<(ShapeId, Xfrm)> =
                     ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
                 let ids: Vec<ShapeId> = origs.iter().map(|(id, _)| *id).collect();
+                let parent = cmd::parent_transform(st, id);
+                let determinant = parent.determinant();
+                // A collapsed parent has no unique slide-to-child mapping for this handle.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
                 self.begin("Size");
-                self.tool.drag = Some(Drag::Resize { id, orig, ids, handle, origs, start: p });
+                let start = parent.inverse() * p;
+                self.tool.drag = Some(Drag::Resize { id, orig, ids, handle, origs, start });
             }
             Some(Hit::LineEnd { id, end }) => {
+                let parent = cmd::parent_transform(st, id);
+                let determinant = parent.determinant();
+                // A collapsed parent cannot map a dragged endpoint back into child space.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
                 self.begin("Size");
                 self.tool.drag = Some(Drag::LineEnd { id, end, orig });
             }
             Some(Hit::Rotate { id }) => {
                 let ids: Vec<ShapeId> = if st.selection.shapes.contains(&id) { st.selection.shapes.clone() } else { vec![id] };
-                let origs: Vec<(ShapeId, Xfrm)> = ids.iter().filter_map(|i| st.shape(*i).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
+                let mut origs: Vec<_> = ids
+                    .iter()
+                    .filter_map(|i| st.shape(*i).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s), cmd::parent_transform(st, *i))))
+                    .collect();
                 let center = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s).center()).unwrap_or(p);
-                let start = (p.y - center.y).atan2(p.x - center.x);
+                let grabbed_parent = cmd::parent_transform(st, id);
+                if origs.iter().any(|(_, _, parent)| {
+                    let det = parent.determinant();
+                    det == 0.0 || !det.is_finite() || !parent.inverse().is_finite()
+                }) {
+                    return Ok(Value::Null);
+                }
+                // Keep the existing local gesture for a shared parent. Across parents, both
+                // pointer samples and every box must instead use the same slide-space pivot.
+                let (to_frame, center) = if origs.iter().all(|(_, _, parent)| *parent == grabbed_parent) {
+                    for (_, _, parent) in &mut origs {
+                        *parent = Affine::IDENTITY;
+                    }
+                    (grabbed_parent.inverse(), center)
+                } else {
+                    (Affine::IDENTITY, grabbed_parent * center)
+                };
+                let local = to_frame * p;
+                let start = (local.y - center.y).atan2(local.x - center.x);
                 self.begin("Rotate");
-                self.tool.drag = Some(Drag::Rotate { ids, center, start, origs });
+                self.tool.drag = Some(Drag::Rotate { to_frame, center, start, origs });
             }
             // Only reached outside Edit Points (handled above).
             Some(Hit::Vertex { .. } | Hit::Handle { .. }) => {}
@@ -346,6 +381,12 @@ impl Session {
                 self.tool.drag = Some(Drag::Move { ids: vec![id], start: p, origs, moved: false, duplicate: mods.alt, enter_text: None });
             }
             Some(Hit::Warp { id, index }) => {
+                let parent = cmd::parent_transform(st, id);
+                let determinant = parent.determinant();
+                // An invalid pointer mapping would replace the adjustment with a fallback value.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
                 let found = st.shape(id).and_then(|sh| {
                     let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection)?;

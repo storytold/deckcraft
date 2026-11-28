@@ -4,7 +4,7 @@ use super::ime::{composition_range, model_pos, walk_backward, walk_forward};
 use super::layout::{ctx_for, fit_text_box, layout_for, pos_param};
 use super::{
     DocState, HistoryEntry, Pos, Result, Session, ShapeId, ShapeKind, TextBody, Value, bad, body_of, bool_or, ed, edit_shapes, edit_text, id_param,
-    json, ok, push_undo, str_param, xfrm_of,
+    json, ok, push_undo, str_param,
 };
 
 /// A table cell's text laid out the way it is drawn, mapped into slide coordinates.
@@ -13,8 +13,8 @@ pub(super) fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) 
     let ShapeKind::Table(tb) = &sh.kind else { return None };
     let cell = tb.cell(row, col)?;
     let ctx = ctx_for(&st.doc, &st.selection)?;
-    let heights = crate::cmd::table_drawn_heights(&st.doc, &st.selection, tb);
-    let rect = deckcraft_render::table_cell_rects(tb, &heights).into_iter().find(|(r, c, _)| *r == row && *c == col)?.2;
+    let frame = crate::cmd::table::table_frame(st, sh)?;
+    let rect = frame.cell_rect(row, col)?;
     let mut body = deckcraft_render::table_cell_body(&ctx, tb, row, col, cell);
     if body.paragraphs.is_empty() {
         body.paragraphs.push(deckcraft_model::text::Paragraph::default());
@@ -26,8 +26,7 @@ pub(super) fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) 
         &body,
         &deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
     );
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    let to_slide = deckcraft_render::text_transform(x.affine(), rect, layout.rotation);
+    let to_slide = deckcraft_render::text_transform(frame.affine, rect, layout.rotation);
     Some(CellText { layout, to_slide })
 }
 

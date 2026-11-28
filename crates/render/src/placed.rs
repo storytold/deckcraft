@@ -198,7 +198,7 @@ fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId
 /// group whose child coordinates scale the shape, the text is set at the shape's size in slide
 /// points under `m` with that scale taken out, so insets and font sizes stay in points; otherwise
 /// in `w` × `h` under `m` itself.
-pub(crate) fn text_space(rel: Affine, m: Affine, depth: usize, w: f64, h: f64) -> (f64, f64, Affine) {
+pub fn text_space(rel: Affine, m: Affine, depth: usize, w: f64, h: f64) -> (f64, f64, Affine) {
     let c = rel.as_coeffs();
     let (sx, sy) = (c[0].hypot(c[1]), c[2].hypot(c[3]));
     let ok = |k: f64| k.is_finite() && k > 1e-9;

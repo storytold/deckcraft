@@ -41,6 +41,7 @@ fn member_at(children: &[Shape], to_abs: Affine, p: Point, tol: f64) -> Option<S
 pub(super) struct EditedBox {
     pub(super) id: ShapeId,
     pub(super) xfrm: Xfrm,
+    parent: Affine,
     /// Its frame can be grabbed to move it: not a line (no frame to grab) and not locked.
     pub(super) movable: bool,
 }
@@ -48,6 +49,11 @@ pub(super) struct EditedBox {
 /// Whether a visible shape drawn in front of `target` is under `p`: the shapes above it in its
 /// list, topmost first, and inside a group that holds it, the members above it.
 pub(super) fn shape_in_front(st: &crate::DocState, shapes: &[Shape], target: ShapeId, p: Point, tol: f64, depth: usize) -> bool {
+    front_at(st, shapes, target, p, tol, Affine::IDENTITY, depth)
+}
+
+/// Keep the pointer and tolerance in slide space; opposing nested scales can cancel out.
+fn front_at(st: &crate::DocState, shapes: &[Shape], target: ShapeId, p: Point, tol: f64, parent: Affine, depth: usize) -> bool {
     if depth > 64 {
         return false;
     }
@@ -56,23 +62,84 @@ pub(super) fn shape_in_front(st: &crate::DocState, shapes: &[Shape], target: Sha
             return false;
         }
         if deckcraft_model::find_shape(std::slice::from_ref(s), target).is_some() {
-            // The group holding the text: look among its members.
-            return shape_in_front(st, s.children(), target, p, tol, depth + 1);
+            let ShapeKind::Group { child, .. } = &s.kind else { return false };
+            let x = xfrm_of(&st.doc, &st.selection, s);
+            let ch = Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
+            return front_at(st, s.children(), target, p, tol, parent * deckcraft_geom::group_child_affine(&x, ch), depth + 1);
         }
-        if !s.hidden && hit_shape(st, s, p, tol).is_some() {
+        if covers_point(st, s, p, tol, parent, depth) {
             return true;
         }
     }
     false
 }
 
+/// Occlusion needs a boolean, rather than a selectable target. Measure the drawn outline in
+/// slide space so neither anisotropic nor nested transforms inflate the click tolerance.
+fn covers_point(st: &crate::DocState, sh: &Shape, p: Point, tol: f64, parent: Affine, depth: usize) -> bool {
+    use deckcraft_geom::KurboShape;
+    if depth > 64 || sh.hidden {
+        return false;
+    }
+    let x = xfrm_of(&st.doc, &st.selection, sh);
+    if let ShapeKind::Group { children, child } = &sh.kind {
+        let ch = Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
+        let parent = parent * deckcraft_geom::group_child_affine(&x, ch);
+        return children.iter().rev().any(|s| covers_point(st, s, p, tol, parent, depth + 1));
+    }
+    if parent == Affine::IDENTITY {
+        return hit_shape(st, sh, p, tol).is_some();
+    }
+    if let ShapeKind::Ink { strokes } = &sh.kind {
+        return strokes.iter().any(|s| s.points.iter().any(|(x, y, _)| (parent * Point::new(*x, *y) - p).hypot() <= tol + s.width));
+    }
+    let transform = parent * x.affine();
+    let has_box = sh.text.as_ref().is_some_and(|t| !t.is_empty())
+        || sh.ph.is_some()
+        || sh.text_box
+        || matches!(
+            sh.kind,
+            ShapeKind::Picture { .. }
+                | ShapeKind::Table(_)
+                | ShapeKind::Chart(_)
+                | ShapeKind::Media(_)
+                | ShapeKind::Model3d { .. }
+                | ShapeKind::Opaque { .. }
+        );
+    let outline =
+        if has_box && !sh.is_line() { Rect::new(0.0, 0.0, x.w, x.h).to_path(0.1) } else { deckcraft_render::shape_geometry(sh, x.w, x.h).outline() };
+    // The renderer keeps grouped pen widths in slide points, independently of child scale.
+    let tol = if sh.is_line() { tol.max(sh.line.as_ref().and_then(|l| l.width).unwrap_or(1.0)) } else { tol };
+    let outline = transform * outline;
+    let fill = cmd::text::ctx_for(&st.doc, &st.selection).map(|ctx| deckcraft_model::resolve::fill(&ctx, sh).0).unwrap_or_else(|| sh.fill.clone());
+    let filled = has_box || !matches!(fill, None | Some(deckcraft_model::Fill::None));
+    (filled && !sh.is_line() && outline.winding(p) != 0) || deckcraft_geom::near_path(&outline, p, tol)
+}
+
+/// The edited shape's frame and containing-group transform, excluding notes and table cells.
 pub(super) fn edited_box(st: &crate::DocState) -> Option<EditedBox> {
     let t = st.selection.text.as_ref()?;
     if t.notes || t.cell.is_some() {
         return None;
     }
     let sh = st.shape(t.shape)?;
-    Some(EditedBox { id: t.shape, xfrm: xfrm_of(&st.doc, &st.selection, sh), movable: !sh.is_line() && !sh.locked })
+    Some(EditedBox {
+        id: t.shape,
+        xfrm: xfrm_of(&st.doc, &st.selection, sh),
+        parent: cmd::parent_transform(st, t.shape),
+        movable: !sh.is_line() && !sh.locked,
+    })
+}
+
+impl EditedBox {
+    /// Classify a slide-space click using the frame's group-local coordinates and tolerance.
+    pub(super) fn zone(&self, p: Point, tol: f64) -> EditZone {
+        let transform = self.parent * self.xfrm.affine();
+        let inv = transform.inverse();
+        let [a, b, c, d, _, _] = inv.as_coeffs();
+        // Rows of the inverse map slide-distance bands to each local axis, including skew.
+        edit_zone_local(self.xfrm.w, self.xfrm.h, inv * p, tol * a.hypot(c), tol * b.hypot(d))
+    }
 }
 
 /// Where a point falls against the box of the text being edited.
@@ -88,14 +155,18 @@ pub(super) enum EditZone {
 /// Classify slide point `p` against box `x`, in the box's own (rotated, flipped) frame. Inside
 /// small boxes the band narrows to a quarter of the box so their text stays reachable.
 pub(super) fn edit_zone(x: &Xfrm, p: Point, tol: f64) -> EditZone {
-    let l = x.affine().inverse() * p;
-    let (w, h) = (x.w.max(0.0), x.h.max(0.0));
-    let tol = if tol.is_finite() { tol.max(0.0) } else { 0.0 };
-    if !(l.x.is_finite() && l.y.is_finite()) || l.x < -tol || l.y < -tol || l.x > w + tol || l.y > h + tol {
+    edit_zone_local(x.w, x.h, x.affine().inverse() * p, tol, tol)
+}
+
+fn edit_zone_local(w: f64, h: f64, l: Point, tx: f64, ty: f64) -> EditZone {
+    let (w, h) = (w.max(0.0), h.max(0.0));
+    let tx = if tx.is_finite() { tx.max(0.0) } else { 0.0 };
+    let ty = if ty.is_finite() { ty.max(0.0) } else { 0.0 };
+    if !(l.x.is_finite() && l.y.is_finite()) || l.x < -tx || l.y < -ty || l.x > w + tx || l.y > h + ty {
         return EditZone::Outside;
     }
-    let inner = tol.min(w / 4.0).min(h / 4.0);
-    if l.x > inner && l.y > inner && l.x < w - inner && l.y < h - inner { EditZone::Inside } else { EditZone::Frame }
+    let (ix, iy) = (tx.min(w / 4.0), ty.min(h / 4.0));
+    if l.x > ix && l.y > iy && l.x < w - ix && l.y < h - iy { EditZone::Inside } else { EditZone::Frame }
 }
 
 pub(super) fn contains_rect(outer: Rect, inner: Rect) -> bool {
@@ -224,7 +295,10 @@ pub(super) fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) ->
     // Table borders resize rows and columns.
     let near = local.x >= -tol && local.y >= -tol && local.x <= x.w + tol && local.y <= x.h + tol;
     if near && let Some(f) = cmd::table::table_frame(st, sh) {
-        match f.border_at(f.local(p), tol) {
+        // This hit walk may already be in a containing group's space. Keep its point local;
+        // table_frame itself maps to slide space for cell outlines and pointer gestures.
+        let table_local = sh.xfrm.unwrap_or(x).affine().inverse() * p;
+        match f.border_at(table_local, tol) {
             Some(cmd::table::TableBorder::Column(col)) => return Some(Hit::TableColumn { id: sh.id, col }),
             Some(cmd::table::TableBorder::Row(row)) => return Some(Hit::TableRow { id: sh.id, row }),
             None => {}
@@ -301,7 +375,7 @@ pub(super) fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) ->
 
 /// Text position under slide point `p` in shape `sh`.
 pub fn text_pos(st: &crate::DocState, sh: &Shape, p: Point) -> (usize, usize) {
-    cmd::text::text_pos_at(st, &TextSel { shape: sh.id, ..Default::default() }, p)
+    cmd::text::text_pos_at(st, &TextSel { shape: sh.id, ..Default::default() }, p).unwrap_or((0, 0))
 }
 
 /// Row heights of table `t` as drawn: rows grow to fit their text.
