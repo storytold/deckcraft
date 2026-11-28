@@ -33,6 +33,8 @@ rfd = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
 cpal = "0.16"
+# The screens a slide show and Presenter View go to (the same winit eframe runs on).
+winit = { version = "0.30", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # An explicit AppUserModelID for DeckCraft Nightly, so its taskbar group and toasts are not stable's.
