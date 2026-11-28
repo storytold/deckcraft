@@ -330,7 +330,7 @@ fn slide_ids_param(v: &Value, doc: &Presentation, cmd: &str) -> Result<HashSet<S
 
 /// Keeps sections in step after `moved` landed as a run at `at`: the run joins the section of
 /// the slide just before it (the first section when it opens the deck), in document order.
-fn reassign_sections(doc: &mut Presentation, moved: &[SlideId], at: usize) {
+pub(crate) fn reassign_sections(doc: &mut Presentation, moved: &[SlideId], at: usize) {
     if doc.sections.is_empty() {
         return;
     }

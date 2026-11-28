@@ -514,14 +514,24 @@ pub fn accept(doc: &mut Presentation, rev: &Presentation, change: &Change) -> cr
             let Some(b) = change.revised.and_then(|r| rev.slides.get(r)).cloned() else { return Ok(None) };
             let sl = adopt(doc, rev, &b, None)?;
             let at = change.slide.min(doc.slides.len());
+            let id = sl.id;
             doc.slides.insert(at, Arc::new(sl));
+            // The new slide joins the section of the slide before it, as slide.new does.
+            crate::cmd::slide::reassign_sections(doc, &[id], at);
             Ok(Some(at))
         }
         ChangeKind::Deleted => {
             if change.slide >= doc.slides.len() || doc.slides.len() <= 1 {
                 return Ok(None);
             }
-            doc.slides.remove(change.slide);
+            let gone = doc.slides.remove(change.slide).id;
+            // As in slide.delete: the slide leaves its section and every custom show.
+            for sec in &mut doc.sections {
+                sec.slides.retain(|x| *x != gone);
+            }
+            for show in &mut doc.custom_shows {
+                show.slides.retain(|x| *x != gone);
+            }
             Ok(Some(change.slide.min(doc.slides.len().saturating_sub(1))))
         }
     }
@@ -809,6 +819,33 @@ mod tests {
         s.execute("review.endCompare", &json!({})).unwrap();
         assert!(s.execute("review.revisions", &json!({})).is_err());
         assert!(s.execute("review.accept", &json!({"all": true})).is_err());
+    }
+
+    #[test]
+    fn accepted_slides_keep_sections_and_custom_shows_in_step() {
+        let (mut s, rev, _) = decks();
+        let ids = |s: &Session| -> Vec<deckcraft_model::SlideId> { s.doc().unwrap().doc.slides.iter().map(|x| x.id).collect() };
+        let before = ids(&s);
+        assert!(!s.doc().unwrap().doc.sections.is_empty(), "the sample deck has sections");
+        let show: Vec<_> = before.iter().take(3).copied().collect();
+        s.edit(|doc, _| {
+            doc.custom_shows = vec![deckcraft_model::CustomShow { name: "Short".into(), slides: show.clone() }];
+            Ok(())
+        })
+        .unwrap();
+        s.execute("review.compare", &json!({"name": "rev.deckcraft", "data": rev})).unwrap();
+        s.execute("review.accept", &json!({"all": true})).unwrap();
+
+        let st = s.doc().unwrap();
+        let after = ids(&s);
+        let gone = before[1];
+        assert!(!after.contains(&gone), "the revision deleted slide 2");
+        let in_sections: Vec<_> = st.doc.sections.iter().flat_map(|x| x.slides.iter().copied()).collect();
+        assert_eq!(in_sections, after, "every slide is in one section, in deck order, and no section keeps the deleted slide");
+        let new = st.doc.slides.iter().find(|x| super::slide_title(x) == "Brand new").unwrap().id;
+        assert!(st.doc.section_of(new).is_some(), "the inserted slide joins a section");
+        assert!(!st.doc.custom_shows[0].slides.contains(&gone), "the deleted slide leaves the custom show");
+        assert_eq!(st.doc.custom_shows[0].slides.len(), show.len() - 1);
     }
 
     #[test]
