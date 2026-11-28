@@ -282,6 +282,8 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
             out.keep = false;
         } else if show.blank.is_some() {
             show.blank = None;
+        } else if show.finish_transition(now) {
+            // The click only finishes the slide's transition (#2084).
         } else {
             // A shape with an action or a triggered animation, or the background.
             let none = Under::default();
@@ -322,7 +324,7 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
         if next {
             if show.ended {
                 out.keep = false;
-            } else {
+            } else if !show.finish_transition(now) {
                 out.actions.push(show.state.next(doc));
             }
         } else {
@@ -772,7 +774,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         if child.button("Close").clicked() {
             out.keep = false;
         }
-        if child.button("▶").clicked() {
+        if child.button("▶").clicked() && !show.finish_transition(now) {
             let a = show.state.next(doc);
             if !show.apply(a, doc, now) {
                 out.keep = false;
@@ -792,7 +794,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
             let a = show.state.prev(doc);
             show.apply(a, doc, now);
         }
-        if b(&mut child, "▶").clicked() {
+        if b(&mut child, "▶").clicked() && !show.finish_transition(now) {
             let a = show.state.next(doc);
             if !show.apply(a, doc, now) {
                 out.keep = false;

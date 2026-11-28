@@ -42,6 +42,9 @@ pub(super) fn handle_keys(
             } else {
                 false
             }
+        } else if advances(show, k) && show.finish_transition(now) {
+            // While the slide's transition plays, a forward key only finishes it (#2084).
+            true
         } else {
             navigation_key(show, doc, k, m, presenter, &mut keep, &mut actions) || tool_key(show, k, m, now, presenter)
         };
@@ -58,6 +61,12 @@ pub(super) fn handle_keys(
         }
     }
     (keep, consumed)
+}
+
+/// Whether `k` moves the show forward (what `navigation_key` answers with the next step).
+fn advances(show: &Show, k: egui::Key) -> bool {
+    use egui::Key::*;
+    !show.ended && (matches!(k, ArrowRight | ArrowDown | Space | PageDown | N) || (k == Enter && show.goto.is_empty()))
 }
 
 /// Whether the grid that the presenter key G opens is showing in this viewport.
