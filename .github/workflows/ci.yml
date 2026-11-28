@@ -21,7 +21,7 @@ jobs:
   # also runs with require-craft-fonts: true, so the build script enforces actual required faces.
   # Keep this pin identical to gate, freebsd.yml and release.yml.
   font-pin:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && 'artcraft-k8s-main' || 'ubuntu-latest' }}
     env:
       # Same craft-fonts commit as release.yml.
       CRAFT_FONTS_REF: 37827adc41fd165f9a9234ac40f94dbad353aa69
@@ -57,6 +57,7 @@ jobs:
     # Tracks @main so suite-wide CI fixes reach every app without a PR in each repository.
     uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
     with:
+      os: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && '["artcraft-k8s-main"]' || '["ubuntu-24.04"]' }}
       # Same craft-fonts commit as release.yml.
       craft-fonts-ref: 37827adc41fd165f9a9234ac40f94dbad353aa69
       require-craft-fonts: true
