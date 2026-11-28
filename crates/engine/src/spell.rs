@@ -3,8 +3,10 @@
 //! A subset of Hunspell: `SET` (UTF-8 and ISO-8859-1), `FLAG` (default, `long`, `num`, `UTF-8`),
 //! `PFX`/`SFX` with strip, conditions and cross products, continuation flags on affixes (one
 //! level: a suffix that allows a further suffix), `NEEDAFFIX`, `FORBIDDENWORD`, `NOSUGGEST`,
-//! `KEEPCASE`, `TRY`, `REP` and `WORDCHARS`. Compounding, `ICONV`/`OCONV` and morphology are not
-//! read; words they would accept are reported as misspelt.
+//! `KEEPCASE`, `TRY`, `REP` and `WORDCHARS`, and a single `COMPOUNDFLAG`. `ICONV`/`OCONV` and morphology
+//! are not read. Dictionaries with full compounding (`COMPOUNDBEGIN`/`COMPOUNDEND`, `COMPOUNDRULE`,
+//! `COMPOUNDPERMITFLAG`: German, Dutch…) are checked by the `spellbook` crate instead, so a compound
+//! such as `Käsekuchen` is not reported as misspelt.
 //!
 //! No dictionary ships with DeckCraft. They are looked up in the folders the system's own spell
 //! checkers use (and `DECKCRAFT_DICTIONARIES`), so whatever the user installed is used.
@@ -90,9 +92,29 @@ impl Affix {
     }
 }
 
+/// Hunspell's own checker for dictionaries whose compounding the reader below doesn't cover (German,
+/// Dutch…): `COMPOUNDBEGIN`/`COMPOUNDMIDDLE`/`COMPOUNDEND`, `COMPOUNDRULE` and `COMPOUNDPERMITFLAG` with
+/// affixes on the parts. Pure Rust; a compound such as `Käsekuchen` is accepted only by it.
+#[derive(Default)]
+struct Compounding(Option<spellbook::Dictionary>);
+
+impl std::fmt::Debug for Compounding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() { "Compounding(loaded)" } else { "Compounding(none)" })
+    }
+}
+
+/// Does the affix file use compounding beyond a single `COMPOUNDFLAG`?
+fn needs_full_compounding(aff: &str) -> bool {
+    aff.lines().filter_map(|l| l.split('#').next()?.split_whitespace().next()).any(|k| {
+        matches!(k, "COMPOUNDBEGIN" | "COMPOUNDMIDDLE" | "COMPOUNDRULE" | "COMPOUNDPERMITFLAG" | "COMPOUNDFORBIDFLAG" | "CHECKCOMPOUNDPATTERN")
+    })
+}
+
 /// A loaded dictionary.
 #[derive(Debug, Default)]
 pub struct Dictionary {
+    compounding: Compounding,
     words: HashMap<String, Vec<Vec<Flag>>>,
     pfx: Vec<Affix>,
     sfx: Vec<Affix>,
@@ -134,6 +156,7 @@ fn one_flag(s: Option<&str>, mode: FlagMode) -> Option<Flag> {
 impl Dictionary {
     /// Parse a dictionary from the bytes of its `.aff` and `.dic` files.
     pub fn parse(aff: &[u8], dic: &[u8]) -> Dictionary {
+        let (aff_raw, dic_raw) = (aff, dic);
         let head = String::from_utf8_lossy(aff);
         let latin1 = head.lines().any(|l| {
             let mut w = l.split_whitespace();
@@ -222,12 +245,23 @@ impl Dictionary {
             };
             d.words.entry(word.to_string()).or_default().push(flags);
         }
+        if let (Ok(a), Ok(w)) = (std::str::from_utf8(aff_raw), std::str::from_utf8(dic_raw))
+            && needs_full_compounding(a)
+        {
+            match spellbook::Dictionary::new(a, w) {
+                Ok(sb) => d.compounding = Compounding(Some(sb)),
+                Err(e) => log::warn!("dictionary compounding not available: {e}"),
+            }
+        }
         d
     }
 
     /// Add `word` (no flags), as a user's own dictionary entry.
     pub fn add_word(&mut self, word: &str) {
         self.words.entry(word.to_string()).or_default().push(vec![]);
+        if let Some(sb) = self.compounding.0.as_mut() {
+            let _ = sb.add(word);
+        }
     }
 
     fn has(&self, flags: &[Flag], f: Option<Flag>) -> bool {
@@ -379,6 +413,9 @@ impl Dictionary {
         if word.is_empty() || word.chars().all(|c| !c.is_alphabetic()) {
             return true;
         }
+        if let Some(sb) = &self.compounding.0 {
+            return sb.check(word);
+        }
         if self.check_exact(word) {
             return true;
         }
@@ -408,6 +445,12 @@ impl Dictionary {
         // Edit-distance candidates grow with the word: nothing is suggested for a run-on token.
         if word.chars().count() > MAX_SUGGEST_CHARS {
             return vec![];
+        }
+        if let Some(sb) = &self.compounding.0 {
+            let mut out = vec![];
+            sb.suggest(word, &mut out);
+            out.truncate(n);
+            return out;
         }
         let cap = word.chars().next().is_some_and(char::is_uppercase);
         let upper = word.chars().count() > 1 && word.chars().any(char::is_uppercase) && !word.chars().any(char::is_lowercase);
@@ -979,6 +1022,15 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert!(find_in(std::slice::from_ref(&inner), "en/../../evil").is_none());
         assert!(!valid_lang("") && !valid_lang("a".repeat(17).as_str()) && valid_lang("en-US") && valid_lang("pt_BR"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn full_compounding_accepts_parts_a_dictionary_marks_as_begin_and_end() {
+        // COMPOUNDBEGIN/COMPOUNDEND dictionaries (German, Dutch) go through the Hunspell-compatible checker.
+        let d = Dictionary::parse(b"SET UTF-8\nCOMPOUNDBEGIN x\nCOMPOUNDEND z\nCOMPOUNDMIN 3\n", "3\nfoot/x\nball/xz\nKäse/xz\n".as_bytes());
+        assert!(d.check("football") && d.check("Käse") && d.check("ballKäse"));
+        assert!(!d.check("footbal") && !d.check("ballfoot") && !d.check("footfoot"));
+        assert!(d.suggest("fot", 3).contains(&"foot".to_string()));
     }
 
     #[test]

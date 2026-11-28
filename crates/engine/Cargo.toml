@@ -28,6 +28,8 @@ thiserror = { workspace = true }
 log = { workspace = true }
 image = { workspace = true }
 chrono = { workspace = true }
+# Hunspell-compatible checker for compounding dictionaries (German, Dutch…), see spell.rs.
+spellbook = "0.4"
 
 [dev-dependencies]
 deckcraft-anim = { workspace = true }
