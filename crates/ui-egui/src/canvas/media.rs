@@ -63,7 +63,14 @@ pub(super) fn media_bar(app: &mut SlideApp, ui: &mut Ui, xf: Xf) {
     let w = r.width().max(230.0);
     let bar = Rect::from_min_size(pos2(r.center().x - w / 2.0, r.max.y + 6.0), vec2(w, 26.0));
     let status = app.media.status(id);
-    match crate::media::control_bar(ui, bar, status.as_ref(), &clip) {
+    let action = crate::media::control_bar(ui, bar, status.as_ref(), &clip);
+    // The bar of a clip under the pointer works without selecting it first: using it selects the
+    // clip, so clicking off it then stops it as it does a selected clip (#2328).
+    let selected = app.session.active().is_some_and(|d| d.selection.shapes.contains(&id));
+    if action.is_some() && !selected {
+        let _ = app.run("edit.select", json!({"ids": [id.0]}));
+    }
+    match action {
         Some(crate::media::BarAction::Toggle) => app.media.toggle(uid, &doc, id, &clip, crate::media::Owner::Editor),
         Some(crate::media::BarAction::Seek(t)) => app.media.seek(uid, &doc, id, &clip, t, crate::media::Owner::Editor),
         Some(crate::media::BarAction::Nudge(dt)) => {
@@ -71,5 +78,10 @@ pub(super) fn media_bar(app: &mut SlideApp, ui: &mut Ui, xf: Xf) {
             app.media.seek(uid, &doc, id, &clip, (pos + dt).max(0.0), crate::media::Owner::Editor);
         }
         None => {}
+    }
+    // A voice the bar just started is measured from this slide and selection, not from wherever
+    // the editor is by the next tick.
+    if action.is_some() {
+        app.note_editor_media(id);
     }
 }

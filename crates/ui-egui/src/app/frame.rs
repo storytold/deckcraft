@@ -76,33 +76,78 @@ impl SlideApp {
         }
     }
 
+    /// Record where the editor is for the voice of `id` just started from the editor (its media
+    /// bar), so a slide or selection change before the next tick is measured from here.
+    pub(crate) fn note_editor_media(&mut self, id: deckcraft_model::ShapeId) {
+        let (Some(d), Some(play)) = (self.session.active(), self.media.play_count(id)) else { return };
+        if self.media.owner(id) != Some(media::Owner::Editor) || self.media_seen.get(&id).is_some_and(|(p, ..)| *p == play) {
+            return;
+        }
+        let (slide, selected) = editor_place(d);
+        self.media_seen.insert(id, (play, slide, selected));
+    }
+
     /// Media clocks. Voices belong to the open presentation: closing the last one, or switching
-    /// decks, stops them. The editor's media also stops when its slide is left. This runs from
-    /// `logic` on every call so a minimized window keeps playing; texture upload stays in `ui`.
+    /// decks, stops them. The editor's media also stops, as in PowerPoint, when its slide is left
+    /// (#2329) or the clip is deselected (#2328); selecting it again plays it from the start. This
+    /// runs from `logic` on every call so a minimized window keeps playing; texture upload stays
+    /// in `ui`.
     pub(super) fn tick_media_clock(&mut self, ctx: &egui::Context) {
         let uid = self.session.active().map(|d| d.uid);
         self.media.set_document(uid);
         if !self.media.any_active() {
+            self.media_seen.clear();
             self.session.media_status.clear();
             return;
         }
         if self.show.is_none()
             && let Some(d) = self.session.active()
         {
-            let here: Vec<deckcraft_model::ShapeId> = if d.selection.target == deckcraft_engine::Target::Slides {
-                media::slide_media(&d.doc, d.selection.slide).into_iter().map(|m| m.0).collect()
-            } else {
-                vec![]
-            };
-            let gone: Vec<_> =
-                self.media.ids().into_iter().filter(|id| !here.contains(id) && self.media.owner(*id) == Some(media::Owner::Editor)).collect();
-            for id in gone {
+            let (slide, selected) = editor_place(d);
+            let here: Vec<deckcraft_model::ShapeId> =
+                if slide.is_some() { media::slide_media(&d.doc, d.selection.slide).into_iter().map(|m| m.0).collect() } else { vec![] };
+            let mut stop = vec![];
+            let editor: Vec<_> = self.media.ids().into_iter().filter(|id| self.media.owner(*id) == Some(media::Owner::Editor)).collect();
+            for id in &editor {
+                let play = self.media.play_count(*id).unwrap_or(0);
+                // A clip is judged against where the editor was when it started, so a script that
+                // changes slide or selection and plays in one batch keeps its playback.
+                match self.media_seen.get_mut(id) {
+                    Some((p, was_slide, was_selected)) if *p == play => {
+                        // Another slide's clip can have the same shape id: a slide change stops it.
+                        let left = *was_slide != slide;
+                        // A selection change stops the clips it deselected. One played without
+                        // selecting it (media.play from the CLI or MCP) plays on until then.
+                        let deselected = *was_selected != selected && !selected.contains(id);
+                        if left || deselected || !here.contains(id) {
+                            stop.push(*id);
+                        } else {
+                            // Playing on: later changes are measured from here, so selecting the
+                            // clip and then deselecting it stops it even if the selection is back
+                            // where it started.
+                            *was_selected = selected.clone();
+                        }
+                    }
+                    _ if !here.contains(id) => stop.push(*id),
+                    _ => {
+                        self.media_seen.insert(*id, (play, slide, selected.clone()));
+                    }
+                }
+            }
+            for id in stop {
                 self.media.stop(id);
             }
+            self.media_seen.retain(|id, _| editor.contains(id) && self.media.status(*id).is_some());
         }
         let playing = self.media.tick_clock(monotonic_secs(), &mut self.session);
         if playing {
             ctx.request_repaint_after(std::time::Duration::from_millis(15));
         }
     }
+}
+
+/// Where the editor is: its slide (none outside the slides) and the selected shapes.
+fn editor_place(d: &deckcraft_engine::DocState) -> (Option<deckcraft_model::SlideId>, Vec<deckcraft_model::ShapeId>) {
+    let slide = (d.selection.target == deckcraft_engine::Target::Slides).then(|| d.doc.slides.get(d.selection.slide).map(|s| s.id)).flatten();
+    (slide, d.selection.shapes.clone())
 }

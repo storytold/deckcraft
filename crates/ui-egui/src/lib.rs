@@ -301,6 +301,9 @@ pub struct SlideApp {
     /// creating or closing a presentation leaves it.
     pub backstage: Option<backstage::Backstage>,
     pending_urls: Vec<String>,
+    /// For each clip playing in the editor: the play that started it, and the editor's slide and
+    /// selected shapes when it started. Leaving that slide, or deselecting the clip since, stops it.
+    media_seen: HashMap<deckcraft_model::ShapeId, (u64, Option<deckcraft_model::SlideId>, Vec<deckcraft_model::ShapeId>)>,
     print_previews: app::files::PrintPreviews,
     #[cfg(not(target_arch = "wasm32"))]
     updates_rt: updates_ui::Runtime,
