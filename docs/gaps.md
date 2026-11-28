@@ -267,7 +267,8 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   whole presentation's (`format.languageAll`: every run, notes, masters, layouts and the default
   text style) (`lang`/`noProof` round-trip in PPTX). No grammar checking. The web build checks on the UI
   thread a few milliseconds per frame. No dictionaries ship with DeckCraft, so without one
-  installed (always on Windows and the web) only a short list of common misspellings is found.
+  installed (always on Windows and the web) only repeated words and, in English, a short list of
+  common misspellings are found.
   `review.thesaurus` looks up the selected word (checklist row partial). AutoCorrect has
   PowerPoint's options (two initial capitals, sentence and day capitals, caps lock, fractions, an
   editable replace list), and AutoFormat superscripts ordinals (1st) and starts bulleted and
@@ -374,6 +375,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | trivial | Spelling without a dictionary: the built-in misspelling list applies to English text only; other languages get repeated words |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

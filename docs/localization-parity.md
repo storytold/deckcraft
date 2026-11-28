@@ -51,9 +51,13 @@ the next re-measure.
 ## Proofing languages
 
 PowerPoint checks spelling in dozens of languages and lets each run carry a proofing language.
-DeckCraft keeps `a:rPr/@lang` on round trip and checks each run in its own language against the
-Hunspell dictionaries installed on the system (`crates/engine/src/spell.rs`), falling back to a
-built-in list of common English misspellings when there is none (`review.spelling`); see
+DeckCraft keeps `a:rPr/@lang` on round trip and checks each run in its own language against
+Hunspell dictionaries installed on the system (`crates/engine/src/spell.rs`). A dictionary is an
+`.aff`/`.dic` pair named by its `.aff`; European Portuguese uses `pt_PT.aff` and `pt_PT.dic`. The run's
+language tag selects the pair, preferring its own locale (`pt_BR` for Brazilian Portuguese) over
+another installed pair of that language. Without a dictionary, the check reports repeated words for
+non-English text and runs the built-in list of common misspellings
+(`crates/engine/src/cmd/review.rs`) for English text; see
 [gaps.md](gaps.md#proofing-spelling-thesaurus-autocorrect).
 Review › Language sets the proofing language of the selected text or, with *Whole presentation*,
 of every text in the file and the default for new text (`format.languageAll`). Each run is shaped
@@ -67,6 +71,7 @@ A dictionary of the other script would flag every word, so it is never used.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | trivial | A tag in any case (`pt-pt`) finds its own locale's dictionary (`pt_PT`) before another of its language; without a dictionary the built-in misspelling list checks English text only |
 | 2026-10-31 | minor | Review › Language offers Serbian (Cyrillic and Latin); each run's language tag picks a dictionary in the script it names |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |
 | 2026-10-21 | minor | Review › Language can set the proofing language of the whole presentation |
