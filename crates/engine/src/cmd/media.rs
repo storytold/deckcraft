@@ -182,7 +182,7 @@ mod tests {
     use deckcraft_model::ShapeId;
     use serde_json::json;
 
-    use crate::cmd::base64_encode;
+    use crate::cmd::{base64_decode, base64_encode};
     use crate::{MediaStatus, Session, UiRequest};
 
     fn wav() -> Vec<u8> {
@@ -289,6 +289,72 @@ mod tests {
         let r = s.execute("insert.audio", &json!({"name": "song.wma", "data": base64_encode(&asf)})).expect("insert");
         assert_eq!(r["playable"], false);
         assert!(r["warning"].as_str().is_some_and(|w| w.contains("can't be played")), "{r}");
+    }
+
+    #[test]
+    fn audio_only_asf_saves_as_sound() {
+        let mut s = Session::with_new();
+        let bytes = include_bytes!("../../../media/tests/fixtures/tone.wma");
+        let r = s.execute("insert.audio", &json!({"name": "tone.asf", "data": base64_encode(bytes)})).expect("insert");
+        assert_eq!(r["contentType"], "audio/x-ms-wma", "{r}");
+
+        let saved = s.execute("file.saveBytes", &json!({"format": "pptx"})).expect("save");
+        let zip = base64_decode(saved["data"].as_str().unwrap()).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(zip)).unwrap();
+        let names: Vec<String> = (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).collect();
+        assert!(names.iter().any(|n| n == "ppt/media/media1.wma"), "{names:?}");
+        assert!(!names.iter().any(|n| n.ends_with(".wmv")), "{names:?}");
+
+        s.execute("file.openBytes", &json!({"name": "deck.pptx", "data": saved["data"]})).expect("open");
+        let info = s.execute("media.info", &json!({})).expect("info");
+        assert_eq!(info["video"], false, "{info}");
+        assert!(info["durationMs"].as_u64().is_some_and(|ms| ms > 0), "{info}");
+        assert_eq!(info["contentType"], "audio/x-ms-wma", "{info}");
+    }
+
+    #[test]
+    fn a_video_container_inserted_as_video_stays_a_movie() {
+        let mut s = Session::with_new();
+        let clip = include_bytes!("../../../media/tests/fixtures/clip-h264.mp4");
+        let r = s.execute("insert.video", &json!({"name": "clip.mp4", "data": base64_encode(clip)})).expect("insert");
+        assert_eq!(r["contentType"], "video/mp4", "{r}");
+
+        let saved = s.execute("file.saveBytes", &json!({"format": "pptx"})).expect("save");
+        s.execute("file.openBytes", &json!({"name": "deck.pptx", "data": saved["data"]})).expect("open");
+        let info = s.execute("media.info", &json!({})).expect("info");
+        assert_eq!(info["video"], true, "{info}");
+        assert_eq!(info["contentType"], "video/mp4", "{info}");
+    }
+
+    #[test]
+    fn insert_video_still_rejects_an_audio_only_file() {
+        let mut s = Session::with_new();
+        let bytes = include_bytes!("../../../media/tests/fixtures/tone.wma");
+        let err = s.execute("insert.video", &json!({"name": "tone.asf", "data": base64_encode(bytes)})).unwrap_err();
+        assert!(err.to_string().contains("has no video"), "{err}");
+    }
+
+    #[test]
+    fn unreadable_audio_is_still_refused() {
+        let mut s = Session::with_new();
+        let err = s.execute("insert.audio", &json!({"name": "tone.wma", "data": base64_encode(b"not media")})).unwrap_err();
+        assert!(err.to_string().contains("is not a supported audio file"), "{err}");
+    }
+
+    #[test]
+    fn audio_only_ogv_saves_as_sound() {
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &json!({"layout": "blank"}));
+        let bytes = include_bytes!("../../../media/tests/fixtures/tone.ogg");
+        let r = s.execute("insert.audio", &json!({"name": "tone.ogv", "data": base64_encode(bytes)})).expect("insert");
+        assert_eq!(r["contentType"], "audio/ogg", "{r}");
+
+        let saved = s.execute("file.saveBytes", &json!({"format": "pptx"})).expect("save");
+        let zip = base64_decode(saved["data"].as_str().unwrap()).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(zip)).unwrap();
+        let names: Vec<String> = (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).collect();
+        assert!(names.iter().any(|n| n == "ppt/media/media1.ogg"), "{names:?}");
+        assert!(!names.iter().any(|n| n.ends_with(".ogv")), "{names:?}");
     }
 
     #[test]

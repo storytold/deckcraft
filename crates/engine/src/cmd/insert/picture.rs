@@ -73,6 +73,19 @@ pub fn content_type(name: &str, bytes: &[u8]) -> &'static str {
     }
 }
 
+/// The audio MIME for a container whose bytes are audio-only, so the PPTX writer stores it as
+/// sound rather than a movie. Video-bearing containers keep their `video/*` type.
+fn audio_content_type(ct: &'static str) -> &'static str {
+    match ct {
+        "video/x-ms-wmv" => "audio/x-ms-wma",
+        "video/mp4" => "audio/mp4",
+        "video/webm" => "audio/webm",
+        "video/ogg" => "audio/ogg",
+        "video/quicktime" => "audio/mp4",
+        _ => ct,
+    }
+}
+
 /// Natural size of an image in points (96 dpi), fitted inside the slide.
 fn fitted(s: &Session, bytes: &[u8]) -> (f64, f64) {
     let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes))
@@ -175,6 +188,10 @@ fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {
         Err(_) if !video && !ct.starts_with("audio/") => return Err(bad(cmd, format!("{name} is not a supported audio file ({ct})"))),
         _ => {}
     }
+    // The extension decides the container's MIME even when the probe finds only an audio stream
+    // (#2390): keep it `audio/*` so the writer stores sound, not a movie. The validation above
+    // still uses the original `ct`, because an unreadable file has no audio stream.
+    let ct = if !video && has_audio && !has_video { audio_content_type(ct) } else { ct };
     let (duration_ms, width, height, playable) = match &info {
         Ok(i) => {
             let (w, h) = i.video.as_ref().map(|v| (v.width, v.height)).unwrap_or((0, 0));
@@ -243,4 +260,24 @@ pub(super) fn audio(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn video(s: &mut Session, p: &Value) -> Result<Value> {
     media(s, p, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::audio_content_type;
+
+    #[test]
+    fn audio_content_type_maps_every_audio_only_container() {
+        for (video, audio) in [
+            ("video/x-ms-wmv", "audio/x-ms-wma"),
+            ("video/mp4", "audio/mp4"),
+            ("video/webm", "audio/webm"),
+            ("video/ogg", "audio/ogg"),
+            ("video/quicktime", "audio/mp4"),
+        ] {
+            assert_eq!(audio_content_type(video), audio, "{video}");
+        }
+        assert_eq!(audio_content_type("audio/mpeg"), "audio/mpeg");
+        assert_eq!(audio_content_type("application/octet-stream"), "application/octet-stream");
+    }
 }
