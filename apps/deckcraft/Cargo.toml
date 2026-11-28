@@ -32,7 +32,7 @@ craft-update = { workspace = true }
 rfd = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
-cpal = "0.16"
+cpal = "0.18"
 
 [target.'cfg(windows)'.dependencies]
 # An explicit AppUserModelID for DeckCraft Nightly, so its taskbar group and toasts are not stable's.
