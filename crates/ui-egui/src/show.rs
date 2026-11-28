@@ -80,6 +80,7 @@ pub struct Show {
     pub grid: bool,
     /// The Presenter View's own See All Slides: the grid replaces the slide and notes in that window only; the audience keeps the slide.
     pub presenter_grid: bool,
+    pub swapped: bool,
     /// The next click on the slide zooms in there.
     pub zoom_arm: bool,
     zoom: Option<Zoom>,
@@ -117,6 +118,12 @@ pub struct Show {
     /// visible frame. `run_logic` does not refresh `InputState::time`, so this lets a hidden show
     /// keep playing from wall time without a draw.
     hidden_anchor: Option<(f64, web_time::Instant)>,
+    pub monitor_choice: Option<String>,
+    pub hud_toast: Option<(String, f64)>,
+    pub cached_monitors: Vec<crate::monitors::MonitorInfo>,
+    pub placed: bool,
+    pub last_monitor_scan: f64,
+    pub pending_swap: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -248,6 +255,7 @@ impl Show {
             blank: None,
             grid: false,
             presenter_grid: false,
+            swapped: false,
             zoom_arm: false,
             zoom: None,
             thumbs: vec![],
@@ -270,6 +278,12 @@ impl Show {
             media_clock: None,
             media_cues: vec![],
             hidden_anchor: None,
+            monitor_choice: None,
+            hud_toast: None,
+            cached_monitors: crate::monitors::detect_monitors(),
+            placed: false,
+            last_monitor_scan: 0.0,
+            pending_swap: false,
         }
     }
 

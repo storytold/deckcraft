@@ -275,10 +275,64 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let _ = combo.response.labelled_by(field.id);
+    ui.add_space(8.0);
+    ui.label("Multiple monitors");
+    let monitors = crate::monitors::detect_monitors();
+    let primary = crate::monitors::get_primary_monitor(&monitors);
+    let extended = crate::monitors::get_extended_monitor(&monitors, &primary);
+    let primary_name = primary.name.clone();
+    let extended_name = extended.as_ref().map(|m| m.name.clone());
+    let auto_name = extended.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| primary_name.clone());
+
+    let mon_choice = d.fields.entry("monitor".into()).or_insert_with(|| app.ui.presentation_monitor.clone());
+    let mon_label = match mon_choice.as_str() {
+        "primary" => format!("Primary ({primary_name})"),
+        "extended" => {
+            if let Some(ext) = &extended_name {
+                format!("Extended ({ext})")
+            } else {
+                format!("Extended (None: {primary_name})")
+            }
+        }
+        "auto" => format!("Automatic ({auto_name})"),
+        other => {
+            if let Some(m) = monitors.iter().find(|m| m.name == other) {
+                crate::monitors::format_monitor_label(m)
+            } else {
+                format!("Monitor: {other}")
+            }
+        }
+    };
+    craft_ui::ComboBox::from_id_salt("setup_monitor").selected_text(mon_label).show_ui(ui, |ui| {
+        if ui.selectable_label(mon_choice == "auto", format!("Automatic ({auto_name})")).clicked() {
+            *mon_choice = "auto".into();
+        }
+        if let Some(ext) = &extended_name {
+            if ui.selectable_label(mon_choice == "extended", format!("Extended Display ({ext})")).clicked() {
+                *mon_choice = "extended".into();
+            }
+        } else {
+            let _ = ui.selectable_label(false, format!("Extended Display (None: {primary_name})"));
+        }
+        if ui.selectable_label(mon_choice == "primary", format!("Primary Monitor ({primary_name})")).clicked() {
+            *mon_choice = "primary".into();
+        }
+        for m in &monitors {
+            let label = crate::monitors::format_monitor_label(m);
+            if ui.selectable_label(*mon_choice == m.name, &label).clicked() {
+                *mon_choice = m.name.clone();
+            }
+        }
+    });
+    let pv = check(ui, d, "Use Presenter View", "pv", app.ui.presenter_view);
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
         let ty = d.get("type", "speaker");
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
+        if let Some(m) = d.fields.get("monitor") {
+            app.ui.presentation_monitor = m.clone();
+        }
+        app.ui.presenter_view = pv;
         run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
         run(app, "show.keepCursor", json!({"on": kc}));
     }

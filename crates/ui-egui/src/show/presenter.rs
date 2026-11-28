@@ -81,6 +81,46 @@ fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) 
     crate::textures::to_color_image(&deckcraft_render::render_slide(doc, n, &opts), false)
 }
 
+/// Swaps audience Slide Show and Presenter View monitors if a second display is available and window routing is supported.
+pub(crate) fn swap_presentation_displays(ctx: &egui::Context, show: &mut Show, now: f64) -> bool {
+    if !crate::monitors::has_second_display() {
+        show.hud_toast = Some((
+            "Single display: only one screen detected".to_string(),
+            now + 2.0,
+        ));
+        return false;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if !crate::monitors::can_route_windows() {
+        show.hud_toast = Some((
+            "Cannot switch displays: xdotool required to move windows on X11".to_string(),
+            now + 2.5,
+        ));
+        return false;
+    }
+
+    if now - show.last_monitor_scan > 2.0 || show.cached_monitors.is_empty() {
+        show.cached_monitors = crate::monitors::detect_monitors();
+        show.last_monitor_scan = now;
+    }
+
+    show.swapped = !show.swapped;
+    let choice = show.monitor_choice.as_deref().unwrap_or("auto");
+    let (aud_mon, pres_mon) = crate::monitors::get_active_routing_from(&show.cached_monitors, choice, show.swapped);
+    let (aud_pos, pres_pos) = crate::monitors::presentation_placement_from(&show.cached_monitors, choice, show.swapped);
+    let audience_id = egui::ViewportId::from_hash_of("deckcraft_show");
+    let presenter_id = egui::ViewportId::from_hash_of("deckcraft_presenter");
+    ctx.send_viewport_cmd_to(audience_id, egui::ViewportCommand::OuterPosition(aud_pos));
+    ctx.send_viewport_cmd_to(presenter_id, egui::ViewportCommand::OuterPosition(pres_pos));
+    crate::monitors::route_presentation(choice, show.swapped);
+    show.placed = true;
+    show.hud_toast = Some((
+        format!("Slide Show -> {} | Presenter View -> {}", aud_mon.name, pres_mon.name),
+        now + 2.5,
+    ));
+    true
+}
+
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
 pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, keep: &mut bool) {
     let cur = show.state.slide;
@@ -146,8 +186,10 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     let button = |ui: &mut Ui, s: &str| {
         ui.add(egui::Button::new(egui::RichText::new(s).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
     };
+    let audience_id = ctx.viewport_id();
+    let presenter_id = egui::ViewportId::from_hash_of("deckcraft_presenter");
     ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("deckcraft_presenter"),
+        presenter_id,
         egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now, true) {
@@ -157,6 +199,21 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
             let elapsed = show.timer.elapsed(now);
             let paused = show.timer.paused();
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::from_gray(24)).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
+                match &show.hud_toast {
+                    Some((msg, until)) if now < *until => {
+                        ui.horizontal(|ui| {
+                            egui::Frame::NONE
+                                .fill(Color32::from_rgb(30, 100, 180))
+                                .corner_radius(CornerRadius::same(6))
+                                .inner_margin(egui::Margin::symmetric(12, 6))
+                                .show(ui, |ui| {
+                                    ui.label(egui::RichText::new(msg).color(Color32::WHITE).strong());
+                                });
+                        });
+                        ui.add_space(6.0);
+                    }
+                    _ => {}
+                }
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(format_elapsed(elapsed)).size(22.0).color(if paused {
                         Color32::from_gray(160)
@@ -192,6 +249,45 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
                         toggle_blank(show, Color32::WHITE);
                     }
+                    if button(ui, "Swap (F6)").on_hover_text("Swap Slide Show and Presenter View monitors (F6 / Alt+S)").clicked() {
+                        swap_presentation_displays(ctx, show, now);
+                    }
+                    if now - show.last_monitor_scan > 2.0 || show.cached_monitors.is_empty() {
+                        show.cached_monitors = crate::monitors::detect_monitors();
+                        show.last_monitor_scan = now;
+                    }
+                    let choice = show.monitor_choice.as_deref().unwrap_or("auto");
+                    let all_monitors = show.cached_monitors.clone();
+                    let (aud_mon, _) = crate::monitors::get_active_routing_from(&all_monitors, choice, show.swapped);
+                    let switcher_label = format!("Display: {}", aud_mon.name);
+                    let combo = craft_ui::ComboBox::from_id_salt("presenter_display_settings")
+                        .selected_text(egui::RichText::new(switcher_label).size(14.0).color(Color32::WHITE))
+                        .show_ui(ui, |ui| {
+                            ui.label(egui::RichText::new("Slide Show Target:").strong().size(13.0));
+                            for m in &all_monitors {
+                                let label = crate::monitors::format_monitor_label(m);
+                                let is_active = aud_mon.name == m.name;
+                                if ui.selectable_label(is_active, &label).clicked() {
+                                    show.monitor_choice = Some(m.name.clone());
+                                    show.swapped = false;
+                                    let (new_aud, new_pres) = crate::monitors::get_active_routing_from(&all_monitors, &m.name, false);
+                                    let (aud_pos, pres_pos) = crate::monitors::presentation_placement_from(&all_monitors, &m.name, false);
+                                    ctx.send_viewport_cmd_to(audience_id, egui::ViewportCommand::OuterPosition(aud_pos));
+                                    ctx.send_viewport_cmd_to(presenter_id, egui::ViewportCommand::OuterPosition(pres_pos));
+                                    crate::monitors::route_presentation(&m.name, false);
+                                    show.placed = true;
+                                    show.hud_toast = Some((
+                                        format!("Slide Show -> {} | Presenter View -> {}", new_aud.name, new_pres.name),
+                                        now + 2.5,
+                                    ));
+                                }
+                            }
+                            ui.separator();
+                            if ui.button("Swap Displays (F6)").clicked() {
+                                swap_presentation_displays(ctx, show, now);
+                            }
+                        });
+                    combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Display Settings"));
                     if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
                         show.presenter_grid = !show.presenter_grid;
                     }

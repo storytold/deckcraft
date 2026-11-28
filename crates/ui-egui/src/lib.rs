@@ -27,6 +27,7 @@ pub mod framework;
 pub mod icons;
 pub mod media;
 pub mod menus;
+pub mod monitors;
 pub mod opening;
 pub mod os_window;
 pub mod presenter;
