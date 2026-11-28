@@ -910,7 +910,7 @@ fn norm(s: &str) -> String {
 }
 
 /// Weight implied by a style name.
-fn style_weight(style: &str) -> f32 {
+pub(crate) fn style_weight(style: &str) -> f32 {
     let s = norm(style);
     const TABLE: &[(&str, f32)] = &[
         ("extralight", 200.0),
@@ -930,7 +930,7 @@ fn style_weight(style: &str) -> f32 {
     TABLE.iter().find(|(k, _)| s.contains(k)).map(|(_, w)| *w).unwrap_or(400.0)
 }
 
-fn style_italic(style: &str) -> bool {
+pub(crate) fn style_italic(style: &str) -> bool {
     let s = norm(style);
     s.contains("italic") || s.contains("oblique") || s == "it"
 }
@@ -1377,7 +1377,8 @@ impl FontDb {
 
     fn loaded_fallback_filtered(&self, c: char, exclude: u32, accept: &impl Fn(&FontFace) -> bool) -> Option<Arc<FontFace>> {
         let faces = self.read_faces();
-        let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.id != exclude).collect();
+        // Axis instances made for a run's style (`Bold {wght:700}`) are left out so they do not change which family a fallback picks; the base face covers the same characters.
+        let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.id != exclude && !f.style.contains('{')).collect();
         order.sort_by_key(|f| (!f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic, (f.weight - 400.0).abs() as i32));
         order.into_iter().find(|f| f.covers(c) && accept(f)).cloned()
     }
