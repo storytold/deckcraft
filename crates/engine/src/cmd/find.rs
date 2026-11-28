@@ -84,15 +84,16 @@ impl Opts {
     fn eq(&self, a: char, b: char) -> bool {
         a == b || (!self.case && a.to_lowercase().eq(b.to_lowercase()))
     }
-    /// Non-overlapping matches as char ranges.
-    fn matches(&self, text: &[char]) -> Vec<(usize, usize)> {
+    /// Non-overlapping matches whose char ranges pass `accept`.
+    fn matches(&self, text: &[char], accept: impl Fn(usize, usize) -> bool) -> Vec<(usize, usize)> {
         let n = self.pat.len();
         let word = |c: Option<&char>| c.is_some_and(|c| c.is_alphanumeric() || *c == '_');
         let mut out = vec![];
         let mut i = 0;
         while i + n <= text.len() {
             let hit = text[i..i + n].iter().zip(&self.pat).all(|(a, b)| self.eq(*a, *b))
-                && (!self.whole || (!word(i.checked_sub(1).and_then(|j| text.get(j))) && !word(text.get(i + n))));
+                && (!self.whole || (!word(i.checked_sub(1).and_then(|j| text.get(j))) && !word(text.get(i + n))))
+                && accept(i, i + n);
             if hit {
                 out.push((i, i + n));
                 i += n;
@@ -117,7 +118,7 @@ fn para_matches(p: &Paragraph, o: &Opts) -> Vec<(usize, usize)> {
         spans.push((off, off + n, matches!(r.kind, RunKind::Text)));
         off += n;
     }
-    o.matches(&para_chars(p)).into_iter().filter(|&(a, b)| spans.iter().all(|&(s, e, text)| text || e <= a || s >= b || s == e)).collect()
+    o.matches(&para_chars(p), |a, b| spans.iter().all(|&(s, e, text)| text || e <= a || s >= b || s == e))
 }
 
 /// Replace chars `a..b` of the paragraph; the replacement takes the first run's formatting.
@@ -217,9 +218,9 @@ mod tests {
     #[test]
     fn matching_honours_case_and_whole_words() {
         let t: Vec<char> = "Cat cat category".chars().collect();
-        assert_eq!(opts("cat", false, false).matches(&t).len(), 3);
-        assert_eq!(opts("cat", true, false).matches(&t).len(), 2);
-        assert_eq!(opts("cat", false, true).matches(&t), vec![(0, 3), (4, 7)]);
+        assert_eq!(opts("cat", false, false).matches(&t, |_, _| true).len(), 3);
+        assert_eq!(opts("cat", true, false).matches(&t, |_, _| true).len(), 2);
+        assert_eq!(opts("cat", false, true).matches(&t, |_, _| true), vec![(0, 3), (4, 7)]);
     }
 
     fn text_run(t: &str) -> Run {
@@ -234,6 +235,16 @@ mod tests {
     fn a_match_never_spans_a_line_break() {
         let p = Paragraph { runs: vec![text_run("a"), br(), text_run("b")], ..Default::default() };
         assert!(para_matches(&p, &opts("ab", true, false)).is_empty());
+    }
+
+    #[test]
+    fn a_field_does_not_hide_an_overlapping_text_match() {
+        let field = Run { kind: RunKind::Field { field: "slidenum".into() }, ..text_run("1") };
+        let mut p = Paragraph { runs: vec![field.clone(), text_run("11")], ..Default::default() };
+        let matches = para_matches(&p, &opts("11", true, false));
+        assert_eq!(matches, vec![(1, 3)]);
+        splice(&mut p, matches[0].0, matches[0].1, "X");
+        assert_eq!(p.runs, vec![field, text_run("X")]);
     }
 
     #[test]
