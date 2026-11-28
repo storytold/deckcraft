@@ -77,6 +77,7 @@ impl SlideApp {
             show_instance: 0,
             #[cfg(not(target_arch = "wasm32"))]
             opening_generation: 0,
+            anim_row: None,
             canvas_rect: None,
             eyedropper: None,
             canvas_scale: 1.0,
@@ -213,6 +214,16 @@ impl SlideApp {
         }
     }
 
+    /// The index of the Animation Pane row still in force, if any.
+    pub fn anim_row_index(&self) -> Option<usize> {
+        let r = self.anim_row.as_ref()?;
+        let d = self.session.active()?;
+        if !r.matches(d) {
+            return None;
+        }
+        Some(r.index)
+    }
+
     /// Background work, run on every logic call (visible, hidden or `run_logic`).
     ///
     /// Only consumed queues and monotonic deadlines live here: control requests, asynchronous
@@ -240,6 +251,11 @@ impl SlideApp {
             // Inbox results are host file bytes and do not need fonts or a painted frame. A
             // window that starts hidden must still apply a file picked before its first UI pass.
             self.drain_inbox();
+        }
+        // Editing text ends a clicked Animation Pane row: a text edit can renumber or remove the
+        // box's paragraph effects, so the row's index may later name another bullet's effect.
+        if self.session.active().is_some_and(|d| d.selection.text.is_some()) {
+            self.anim_row = None;
         }
         self.drain_screenshots();
         // `raw_input_hook` ran before this logic pass. This is normally a no-op now that
