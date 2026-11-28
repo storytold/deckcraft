@@ -43,7 +43,7 @@ Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` 
 |---|---|---|---|
 | 1 | Stability: #60, #40/#59, soak and fuzz the editor | 10–20 | Stability 60 → 85% |
 | 2 | PPTX real-deck corpus and fixes | 20–35 | File formats 58 → 75% |
-| 3 | PPTX round-trip losses (#70, #74), `.potx`/`.ppsx`/`.pptm` content types, MicroType embedded-font subsets | 8–15 | File formats → 80% |
+| 3 | PPTX round-trip losses (#70, #74), `.potx`/`.ppsx`/`.pptm` content types | 8–15 | File formats → 80% |
 | 4 | EMF/WMF and SVG pictures | 8–14 | File formats, Pictures |
 | 5 | Vector PDF, printing | 10–16 | File formats, Files |
 | 6 | Localization infrastructure + zh-Hans, es, fr, de, ja (with IME) | 27–46 | Localization 8 → ~40% |
@@ -119,6 +119,7 @@ plan above.
 | 2026-10-15 | trivial | PPTX trigger click steps survive save, including by-paragraph builds. Interactive-deck gaps remain media actions, audio triggers and click-box geometry; milestone scope and feature scores unchanged |
 | 2026-10-14 | trivial | M13 reliability: remote MCP validates IDs and envelopes, caps replies and rejects incomplete frames; #718 |
 | 2026-10-14 | minor | Community PR wave folded: one Review gate row, one Current focus item 2, one beta row each for items 9 and 10 (timeline and timer controls are in), one after-beta paragraph, one M9 and M10 row, one corpus row in the 2026-10-07 history |
+| 2026-10-27 | trivial | Beta item 3: MicroType Express embedded-font subsets are drawn |
 | 2026-10-13 | trivial | Beta item 3: embedded fonts are in, except MicroType Express subsets |
 | 2026-10-13 | minor | M9: the WordArt Transform gallery applies a text warp; adjust handles stay open |
 | 2026-10-13 | trivial | Owned PPTX corpus check started; notes-master header and footer kept. Beta item 2 stays open for a larger corpus |
