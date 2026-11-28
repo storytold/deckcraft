@@ -62,6 +62,10 @@ fn home_layout_opens_the_layout_menu_from_its_label_and_arrow() {
 /// Build a Home harness whose presentation has `n` layouts total. New layouts are named
 /// `Layout 0..`; the returned name is the last one in the list.
 fn harness_with_layouts(n: usize) -> (Harness<'static, SlideApp>, String) {
+    harness_with_layouts_at(n, 900.0)
+}
+
+fn harness_with_layouts_at(n: usize, height: f32) -> (Harness<'static, SlideApp>, String) {
     let mut s = Session::with_new();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     let have: usize = s.doc().unwrap().doc.masters.iter().map(|m| m.layouts.len()).sum();
@@ -72,7 +76,7 @@ fn harness_with_layouts(n: usize) -> (Harness<'static, SlideApp>, String) {
     let last = if added == 0 { s.doc().unwrap().doc.masters[0].layouts.last().unwrap().name.clone() } else { format!("Layout {}", added - 1) };
     let mut app = SlideApp::new(s, Services::default());
     app.ui.tab = "Home".into();
-    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1800.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1800.0, height)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -129,6 +133,15 @@ fn a_scrollbar_click_keeps_the_layout_gallery_open() {
     h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
     h.run_steps(3);
     assert!(h.query_by_label("Title Slide").is_some(), "the layout gallery stays open after a scrollbar click");
+}
+
+#[test]
+fn new_slide_actions_stay_reachable_in_a_short_viewport() {
+    let (mut h, _) = harness_with_layouts_at(76, 400.0);
+    click(&mut h, "New Slide options");
+    let action = h.get_by_label("Duplicate Selected Slides");
+    let r = action.rect();
+    assert!(r.min.y >= 0.0 && r.max.y <= 400.0, "the New Slide actions stay on screen: {r:?}");
 }
 
 /// Keyboard entry must recognize either named half as the menu's origin. In particular, Up

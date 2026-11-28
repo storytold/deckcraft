@@ -48,13 +48,13 @@ fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
     });
 }
 
-pub(super) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
+pub(super) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str, max_height: f32) {
     let layouts: Vec<(String, deckcraft_model::LayoutId)> = app
         .session
         .active()
         .and_then(|d| d.doc.masters.first().map(|m| m.layouts.iter().map(|l| (l.name.clone(), l.id)).collect()))
         .unwrap_or_default();
-    egui::ScrollArea::vertical().id_salt(("layouts", cmd)).max_height(560.0).auto_shrink([false, true]).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt(("layouts", cmd)).max_height(max_height.clamp(120.0, 560.0)).auto_shrink([false, true]).show(ui, |ui| {
         egui::Grid::new(("layouts", cmd)).spacing(vec2(6.0, 6.0)).show(ui, |ui| {
             for (k, (name, id)) in layouts.iter().enumerate() {
                 let idx = app.session.active().and_then(|d| d.doc.masters.first().and_then(|m| m.layouts.iter().position(|l| l.id == *id)));
@@ -106,14 +106,22 @@ fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "slide.new", json!({}));
         }
         if let Some(a) = arrow {
-            egui::Popup::menu(&a).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(420.0).show(|ui| new_slide_menu(app, ui));
+            egui::Popup::menu(&a)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .max_height_from_constrain(true)
+                .width(420.0)
+                .show(|ui| new_slide_menu(app, ui));
         }
         rows(ui, |ui| {
             let (main, arrow) = small_button_ex(ui, Icon::Layout, "Layout", enabled(app, "slide.layout"), false, true);
             if let Some(arrow) = arrow {
                 widgets::split_popup(&main, &arrow)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                    .show(|ui| layout_menu(app, ui, "slide.layout"));
+                    .max_height_from_constrain(true)
+                    .show(|ui| {
+                        let max = ui.available_height().min(560.0);
+                        layout_menu(app, ui, "slide.layout", max);
+                    });
             }
             small(app, ui, Icon::ResetSlide, "Reset", "slide.reset", json!({}));
             let (main, arrow) = small_button_ex(ui, Icon::Section, "Section", enabled(app, "section.add"), false, true);
@@ -126,7 +134,10 @@ fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
 
 /// The New Slide button's menu: layouts, duplication, outline import and slide reuse.
 fn new_slide_menu(app: &mut SlideApp, ui: &mut Ui) {
-    layout_menu(app, ui, "slide.new");
+    // Leave room for the separator and the three actions below the gallery, so a short
+    // viewport scrolls the gallery instead of pushing the actions off screen.
+    let gallery_max = (ui.available_height() - 104.0).clamp(120.0, 560.0);
+    layout_menu(app, ui, "slide.new", gallery_max);
     ui.separator();
     if ui.button("Duplicate Selected Slides").clicked() {
         run(app, "slide.duplicate", json!({}));
