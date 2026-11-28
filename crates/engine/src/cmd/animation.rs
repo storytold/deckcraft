@@ -392,7 +392,7 @@ fn timing(s: &mut Session, p: &Value) -> Result<Value> {
     let delay = p.get("delay").and_then(Value::as_u64).map(|v| v.min(600_000) as u32);
     let repeat = p.get("repeat").and_then(Value::as_u64).map(|v| v.min(u32::MAX as u64) as u32);
     let rewind = bool_param(p, "rewind");
-    let trigger = p.get("trigger").map(|v| v.as_u64().and_then(|x| u32::try_from(x).ok()).map(deckcraft_model::ShapeId));
+    let trigger = p.get("trigger").map(|_| id_param(p, "trigger", "animation.timing")).transpose()?;
     each_target(s, p, |a| {
         if let Some(x) = start {
             a.start = x;
@@ -663,6 +663,24 @@ mod tests {
 
     fn triggers(s: &Session) -> Vec<Option<deckcraft_model::ShapeId>> {
         s.doc().unwrap().current_slide().unwrap().animations.iter().map(|x| x.trigger).collect()
+    }
+
+    #[test]
+    fn invalid_timing_trigger_keeps_the_existing_trigger() {
+        let (mut s, [animated, trigger_id, _, _]) = setup_triggers();
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [animated]})).unwrap();
+        s.execute("animation.timing", &json!({"index": 0, "trigger": trigger_id})).unwrap();
+        let expected = vec![Some(deckcraft_model::ShapeId(trigger_id as u32))];
+
+        s.execute("animation.timing", &json!({"index": 0, "delay": 25})).unwrap();
+        assert_eq!(triggers(&s), expected);
+        for trigger in [json!(trigger_id.to_string()), json!(u64::from(u32::MAX) + 1)] {
+            let err = s.execute("animation.timing", &json!({"index": 0, "trigger": trigger})).unwrap_err();
+            assert!(err.to_string().contains("`trigger` is not a valid shape id"), "{err}");
+            assert_eq!(triggers(&s), expected);
+        }
+        s.execute("animation.timing", &json!({"index": 0, "trigger": null})).unwrap();
+        assert_eq!(triggers(&s), vec![None]);
     }
 
     #[test]
