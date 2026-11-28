@@ -2,7 +2,7 @@
 
 use deckcraft_engine::Session;
 use deckcraft_model::style::PictureMode;
-use deckcraft_model::{Background, Fill};
+use deckcraft_model::{Background, Fill, ShapeId};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
@@ -73,4 +73,115 @@ fn apply_to_all_copies_the_picture() {
     assert!(matches!(doc.slides[1].background, Some(Background::Fill { fill: Fill::Picture(_) })));
     assert_eq!(doc.slides[1].background, doc.slides[0].background);
     assert_eq!(doc.masters[0].background, doc.slides[0].background);
+}
+
+/// Selecting a shape while Format Background is open switches the pane to Format Shape,
+/// and deselecting switches back to Format Background.
+#[test]
+fn format_background_switches_to_format_shape_on_selection_and_back_on_deselect() {
+    let mut s = Session::with_new();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 200.0, 120.0]})).unwrap();
+    let id = r.get("id").and_then(|v| v.as_u64()).unwrap();
+    // Start with deselect so no shape is selected.
+    s.execute("edit.select", &json!({"ids": []})).unwrap();
+
+    let mut h = harness(SlideApp::new(s, Services::default()));
+    assert_eq!(h.state().ui.pane.as_deref(), Some("background"));
+    assert!(h.query_all_by_label("Format Background").next().is_some());
+    assert!(h.query_by_label("Follow the layout").is_some());
+
+    // Selecting the shape switches the format pane to "format" (Format Shape).
+    h.state_mut().session.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("format"));
+    assert!(h.query_all_by_label("Format Shape").next().is_some());
+    assert!(h.query_by_label("Follow the layout").is_none());
+
+    // Deselecting switches back to "background" (Format Background).
+    h.state_mut().session.execute("edit.select", &json!({"ids": []})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("background"));
+    assert!(h.query_all_by_label("Format Shape").next().is_none());
+    assert!(h.query_by_label("Follow the layout").is_some());
+}
+
+/// Explicitly opening the background pane via view.pane clears the active shape selection.
+#[test]
+fn format_background_command_clears_shape_selection() {
+    let mut s = Session::with_new();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 200.0, 120.0]})).unwrap();
+    let id = r.get("id").and_then(|v| v.as_u64()).unwrap();
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("format".into());
+    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("format"));
+    assert_eq!(h.state().session.active().unwrap().selection.shapes.len(), 1);
+
+    // Opening background pane clears shape selection and opens Format Background.
+    h.state_mut().run("view.pane", json!({"pane": "background"})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("background"));
+    assert!(h.state().session.active().unwrap().selection.shapes.is_empty());
+    assert!(h.query_all_by_label("Format Background").next().is_some());
+}
+
+/// Panes unrelated to shape formatting (such as the Animation Pane) keep their state
+/// when selection changes.
+#[test]
+fn unrelated_pane_is_not_affected_by_selection_changes() {
+    let mut s = Session::with_new();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 200.0, 120.0]})).unwrap();
+    let id = r.get("id").and_then(|v| v.as_u64()).unwrap();
+    s.execute("edit.select", &json!({"ids": []})).unwrap();
+
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("animation".into());
+    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("animation"));
+
+    // Selecting a shape does not change the animation pane.
+    h.state_mut().session.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("animation"));
+}
+
+/// Editing text outside of slide shapes (e.g. speaker notes where selection.text has notes: true)
+/// does not trigger Format Shape and keeps Format Background.
+#[test]
+fn speaker_notes_text_does_not_switch_to_format_shape() {
+    let s = Session::with_new();
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("background".into());
+    if let Some(d) = app.session.active_mut() {
+        d.selection.shapes.clear();
+        d.selection.text =
+            Some(deckcraft_engine::TextSel { shape: ShapeId(0), anchor: (0, 0), caret: (0, 0), cell: None, notes: true, line_end: None });
+    }
+    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("background"));
+    assert!(h.query_all_by_label("Format Background").next().is_some());
+    assert!(h.query_by_label("Format Shape").is_none());
 }
