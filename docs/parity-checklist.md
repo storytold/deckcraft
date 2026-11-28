@@ -4,6 +4,8 @@
 
 > **Last updated:** 2026-11-09 · Legacy `.ppt` import (#239): the row moves from M to P and lists what the import leaves out, as `docs/gaps.md` does. Files 76% → 78%.
 >
+> **Previously (2026-11-04):** Edit Points rejects malformed path indices; Edit points remains P. Scores unchanged.
+>
 > **Previously (2026-11-03):** Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
 >
 > **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
@@ -248,6 +250,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | trivial | Edit Points rejects malformed path indices; Edit points remains P and summary scores are unchanged |
 | 2026-11-02 | trivial | Reflection transform/fade serialization retained; its P score stays because rendering remains partial |
 | 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles; row remains P because other reuse behavior is still partial, summary scores unchanged |
 | 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |
