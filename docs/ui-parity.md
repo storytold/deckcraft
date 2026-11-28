@@ -95,7 +95,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Edit points on freeforms | yes | partial: Edit Shape ▸ Edit Points turns any shape into a freeform; drag vertices and their Bézier handles (hold Shift, Ctrl/Cmd or Alt/Option while dragging a handle for a smooth, straight or corner point), Ctrl/Cmd-click to add or delete, right-click a point for Smooth/Straight/Corner Point, Delete Point and Open/Close Path, or a segment for Straight/Curved Segment, Add Point, Delete Segment (grayed out on an open outline) and Open/Close Path |
 | WordArt adjust handles | yellow handles on transformed text | yes, one per adjust when the text has a warp; dragging sets that guide value |
 | Crop handles, crop to shape, aspect ratio | yes | partial |
-| Text caret, selection, double/triple click, drag-select | yes | yes |
+| Text caret, selection, double/triple click, drag-select | yes | yes; the selection is shaded behind the glyphs, in shapes and table cells: a solid blue, paler under dark text, so black, white and mixed text all read on it. WordArt on a guide keeps a translucent veil |
 | Exact size/position, lock aspect | yes | yes — Size and Position dialog (height, width, rotation, scale %, lock aspect, position from the top-left), one undo step; ribbon spinners still resize one side at a time |
 | Drag the frame of a text box being edited to move it | yes | yes |
 | Click the frame of a text box or placeholder to select it whole (then move, duplicate or delete it) | yes | yes; a click inside takes the caret |
@@ -173,6 +173,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-22 | trivial | Selected slide text is shaded behind its glyphs, so white text on a white slide stays readable; scores unchanged |
 | 2026-11-10 | trivial | Change File Type and Save As export every slide as PNG or JPEG (#2019); scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |

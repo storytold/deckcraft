@@ -38,6 +38,20 @@ impl Default for ParaState {
     }
 }
 
+/// A text selection to shade behind the glyphs of the text being edited. Painted under the text,
+/// not over it, so the text keeps its own colour and stands out from the shading (white text on a
+/// white slide is invisible on a bare background, and a veil over the slide cannot tell them apart).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextHighlight {
+    pub shape: ShapeId,
+    /// The table cell (row, col) holding the text, if it is in a table.
+    pub cell: Option<(usize, usize)>,
+    /// The selected range, from and to (paragraph, char).
+    pub from: (usize, usize),
+    pub to: (usize, usize),
+    pub color: Rgba,
+}
+
 pub struct RenderOpts<'a> {
     /// Pixels per point.
     pub scale: f64,
@@ -54,6 +68,8 @@ pub struct RenderOpts<'a> {
     /// Text being edited: replace its prompt with gray markers on empty list paragraphs.
     /// Ignored outside editor rendering.
     pub editing_text: Option<ShapeId>,
+    /// The selection to shade behind the text being edited. Ignored outside editor rendering.
+    pub text_highlight: Option<TextHighlight>,
     /// Animated GIF pictures and how far into their play they are (seconds); others show frame 1.
     pub gif_times: &'a [(ShapeId, f64)],
     /// Worker threads (0 = this thread; required when effects use filters).
@@ -83,6 +99,7 @@ impl Default for RenderOpts<'_> {
             skip: &[],
             skip_text: None,
             editing_text: None,
+            text_highlight: None,
             gif_times: &[],
             threads: 0,
             offset: (0.0, 0.0),

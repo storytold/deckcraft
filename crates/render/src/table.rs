@@ -384,6 +384,7 @@ pub fn draw(
     _h: f64,
     fields: &dyn deckcraft_text::Fields,
     editing: bool,
+    highlight: Option<&crate::TextHighlight>,
 ) -> Option<kurbo::Rect> {
     let _ = pres;
     let style_def = resolve_style(rctx, t);
@@ -480,7 +481,8 @@ pub fn draw(
         if editing {
             crate::preview_empty_bullets(&mut l);
         }
-        crate::draw_layout(ctx, &l, *rect, m);
+        let selection = highlight.filter(|h| h.cell == Some((*r, *c))).map(|h| (h.from, h.to, h.color));
+        crate::draw_layout_selected(ctx, &l, *rect, m, &[], selection);
         let _ = peniko::Fill::NonZero;
     }
     covered
