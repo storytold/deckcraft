@@ -262,6 +262,13 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("slide.delete", "no such slide"));
     }
     s.edit(|doc, sel| {
+        // Count only slides that are in the deck, each once: an id that names no slide, or a
+        // repeat, deletes nothing and must not be reported as deleted.
+        let mut seen = HashSet::new();
+        let ids: Vec<SlideId> = ids.iter().copied().filter(|id| doc.slide_index(*id).is_some() && seen.insert(*id)).collect();
+        if ids.is_empty() {
+            return Err(bad("slide.delete", "no such slide"));
+        }
         let first = ids.iter().filter_map(|id| doc.slide_index(*id)).min().unwrap_or(0);
         doc.slides.retain(|x| !ids.contains(&x.id));
         for sec in &mut doc.sections {
@@ -908,6 +915,17 @@ mod tests {
         s.execute("slide.move", &json!({"ids": repeated, "to": 0})).expect("repeats");
         assert_eq!(order(&s), [ids[2], ids[0], ids[1]]);
         assert_eq!(selected(&s), (0, vec![ids[2]]));
+    }
+
+    #[test]
+    fn delete_reports_only_slides_it_deleted() {
+        let (mut s, ids) = deck(3);
+        assert!(s.execute("slide.delete", &json!({"ids": [999_999]})).is_err(), "an id that names no slide deletes nothing");
+        assert_eq!(order(&s), ids);
+        let r = s.execute("slide.delete", &json!({"ids": [ids[1], ids[1], 999_999]})).expect("delete");
+        assert_eq!(order(&s), [ids[0], ids[2]]);
+        assert_eq!(r["deleted"], 1, "{r}");
+        assert_eq!(r["remaining"], 2, "{r}");
     }
 
     #[test]
