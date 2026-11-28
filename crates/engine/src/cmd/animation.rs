@@ -26,7 +26,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Animation",
             ["Animations", "Advanced Animation"],
             None,
-            "{effect, class?, option?, path?: [[x,y],…] or OOXML string, closed?: bool, start?: onClick|withPrevious|afterPrevious, duration?: ms, delay?: ms, ids?} → {count, path?}",
+            "{effect, class?, option?, path?: [[x,y],…] or OOXML string, closed?: bool, start?: onClick|withPrevious|afterPrevious, duration?: ms, delay?: ms, smoothStart?: number (0–1), smoothEnd?: number (0–1), bounceEnd?: number (0–1), ids?} → {count, path?}",
             has_selection,
             add
         ),
@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Timing",
             ["Animations", "Timing"],
             None,
-            "{index? (else selected shapes), start?: onClick|withPrevious|afterPrevious, duration?: ms, delay?: ms, repeat?: n, rewind?: bool, trigger?: shape id | null}",
+            "{index? (else selected shapes), start?: onClick|withPrevious|afterPrevious, duration?: ms, delay?: ms, repeat?: n, rewind?: bool, trigger?: shape id | null, smoothStart?: number (0–1), smoothEnd?: number (0–1), bounceEnd?: number (0–1)}",
             has_slide,
             timing
         ),
@@ -314,9 +314,20 @@ fn slide_extent(s: &mut Session) -> Result<(f64, f64)> {
     Ok((size.width, size.height))
 }
 
+fn easing_fraction(p: &Value, key: &str, cmd: &str) -> Result<Option<f64>> {
+    p.get(key)
+        .map(|value| value.as_f64().filter(|v| (0.0..=1.0).contains(v)).ok_or_else(|| bad(cmd, format!("`{key}` must be a number between 0 and 1"))))
+        .transpose()
+}
+
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
-    let a = build(p, slide_extent(s)?)?;
+    let a = Animation {
+        smooth_start: easing_fraction(p, "smoothStart", "animation.add")?.unwrap_or_default(),
+        smooth_end: easing_fraction(p, "smoothEnd", "animation.add")?.unwrap_or_default(),
+        bounce_end: easing_fraction(p, "bounceEnd", "animation.add")?.unwrap_or_default(),
+        ..build(p, slide_extent(s)?)?
+    };
     let path = a.path.clone();
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.add", "no slide"))?);
@@ -393,6 +404,9 @@ fn timing(s: &mut Session, p: &Value) -> Result<Value> {
     let repeat = p.get("repeat").and_then(Value::as_u64).map(|v| v.min(u32::MAX as u64) as u32);
     let rewind = bool_param(p, "rewind");
     let trigger = p.get("trigger").map(|v| v.as_u64().and_then(|x| u32::try_from(x).ok()).map(deckcraft_model::ShapeId));
+    let smooth_start = easing_fraction(p, "smoothStart", "animation.timing")?;
+    let smooth_end = easing_fraction(p, "smoothEnd", "animation.timing")?;
+    let bounce_end = easing_fraction(p, "bounceEnd", "animation.timing")?;
     each_target(s, p, |a| {
         if let Some(x) = start {
             a.start = x;
@@ -411,6 +425,15 @@ fn timing(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(t) = trigger {
             a.trigger = t;
+        }
+        if let Some(x) = smooth_start {
+            a.smooth_start = x;
+        }
+        if let Some(x) = smooth_end {
+            a.smooth_end = x;
+        }
+        if let Some(x) = bounce_end {
+            a.bounce_end = x;
         }
     })
 }
@@ -543,6 +566,29 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn add_and_timing_set_animation_easing_without_resetting_omitted_values() {
+        let mut s = Session::with_new();
+        let id = shape(&mut s);
+        s.execute("animation.add", &json!({"effect": "float", "ids": [id], "smoothStart": 0.25, "smoothEnd": 0.5, "bounceEnd": 0.1})).unwrap();
+        let anims = s.execute("animation.get", &json!({})).unwrap();
+        assert_eq!(anims[0]["smoothStart"], 0.25);
+        assert_eq!(anims[0]["smoothEnd"], 0.5);
+        assert_eq!(anims[0]["bounceEnd"], 0.1);
+
+        s.execute("animation.timing", &json!({"index": 0, "smoothEnd": 0, "bounceEnd": 0.75})).unwrap();
+        assert!(s.execute("animation.timing", &json!({"index": 0, "smoothStart": 0.5, "bounceEnd": 1.1})).is_err());
+        let anims = s.execute("animation.get", &json!({})).unwrap();
+        assert_eq!(anims[0]["smoothStart"], 0.25);
+        assert_eq!(anims[0]["smoothEnd"], 0.0);
+        assert_eq!(anims[0]["bounceEnd"], 0.75);
+
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let reopened = deckcraft_pptx::import(&bytes).unwrap();
+        let effect = &reopened.slides[0].animations[0];
+        assert_eq!((effect.smooth_start, effect.smooth_end, effect.bounce_end), (0.25, 0.0, 0.75));
+    }
 
     #[test]
     fn clear_rejects_invalid_index() {
