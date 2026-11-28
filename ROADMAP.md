@@ -2,6 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-22 · **Change:** trivial (progress log: Save refuses to overwrite an open file changed outside DeckCraft, #2233; File parity score unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-20 · **Change:** trivial (progress log: WMF scale and offset mapping records place sub-pictures, #2069; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-15 · **Change:** trivial (DeckCraft v0.19.0 version preparation (#2134); the SmartArt and WordArt display names become Diagram and Decorative Text (#1981) in DeckCraft's own feature labels — commands, contextual tab labels and messages — with the neutral labels guarded by tests (the PowerPoint-matching empty-diagram placeholder prompt still reads "Click icon to add SmartArt graphic", and saved control-channel identifiers such as the tab id "SmartArt Design" keep their keys); the wasm32 build no longer refers to the native-only opening generation (#1954); the control-protocol method reference is corrected (#2132); parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -160,6 +161,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-22 | Save detects when another program changed the open file and refuses to overwrite it; Save As keeps the edited DeckCraft version separately (#2233) |
 | 2026-11-20 | WMF pictures that draw sub-pictures through the scale and offset mapping records (charts and clip art from older Office versions) place each one in its part of the frame (#2069) |
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
 | 2026-11-15 | DeckCraft v0.19.0 version preparation (#2134); the SmartArt and WordArt display names become Diagram and Decorative Text in DeckCraft's own feature labels — commands, contextual tab labels and messages — with the neutral labels guarded by tests; the wasm32 build no longer refers to the native-only opening generation (#1954); the control-protocol method reference is corrected (#2132) |

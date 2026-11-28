@@ -4,9 +4,8 @@
 //! `file.recovery.open` reopens what was left there as unsaved presentations that remember where
 //! they were saved.
 //!
-//! An entry is `<uid>.deckcraft` (the presentation) plus `<uid>.json` (`{"path", "title",
-//! "saved", "owner"}`: the original file, the title, when it was written (Unix seconds) and the
-//! instance that owns it).
+//! An entry is `<uid>.deckcraft` (the presentation) plus `<uid>.json` (the original path and
+//! fingerprint, resolved destination, title, timestamp and owning instance).
 //!
 //! Several instances share the folder. Document uids are unique across processes, each instance
 //! holds a lock on `owner-<instance>.lock` while it runs, and `file.recovery.open` leaves alone
@@ -151,7 +150,11 @@ pub fn save(s: &Session, dir: &Path) -> Result<usize> {
         let (doc, meta) = files(dir, d.uid);
         let bytes = deckcraft_format::save(&d.doc).map_err(|e| EngineError::Other(e.to_string()))?;
         write_atomic(&doc, &bytes)?;
-        let m = json!({"path": d.path, "title": d.title(), "saved": now_secs(), "owner": instance_id()});
+        let m = json!({
+            "path": d.path, "fileFingerprint": d.file_fingerprint,
+            "fileResolvedPath": d.file_resolved_path,
+            "title": d.title(), "saved": now_secs(), "owner": instance_id(),
+        });
         write_atomic(&meta, m.to_string().as_bytes())?;
         n += 1;
     }
@@ -211,6 +214,8 @@ pub fn open(s: &mut Session, dir: &Path) -> Result<Vec<usize>> {
         let Ok(mut d) = deckcraft_format::load(&bytes) else { continue };
         deckcraft_format::repair(&mut d);
         let path = meta.get("path").and_then(Value::as_str).map(str::to_string);
+        let file_fingerprint = meta.get("fileFingerprint").and_then(Value::as_u64);
+        let file_resolved_path = meta.get("fileResolvedPath").and_then(Value::as_str).map(str::to_string);
         let title = meta.get("title").and_then(Value::as_str).filter(|t| !t.is_empty()).unwrap_or("Presentation").to_string();
         // Take the entry over (so another instance starting now leaves it alone), keeping its
         // snapshot until this one writes a newer one.
@@ -221,7 +226,12 @@ pub fn open(s: &mut Session, dir: &Path) -> Result<Vec<usize>> {
         if let Err(e) = write_atomic(&meta_path, meta.to_string().as_bytes()) {
             log::warn!("recovery: {e}");
         }
-        let mut st = DocState::new(d, path, format!("{title} (Recovered)"));
+        // Old recovery entries have no baseline. Force Save As instead of trusting the file's
+        // current bytes, which may have changed before this recovery was opened.
+        let safe_path = path.filter(|_| file_fingerprint.is_some());
+        let mut st = DocState::new(d, safe_path, format!("{title} (Recovered)"));
+        st.file_fingerprint = file_fingerprint;
+        st.file_resolved_path = file_resolved_path;
         st.uid = uid;
         // Unsaved: the copy on disk (if any) is older than what was recovered.
         st.saved_doc = std::sync::Arc::new((*st.doc).clone());
@@ -299,6 +309,49 @@ mod tests {
         s3.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
         assert!(list(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recovered_file_keeps_its_original_save_baseline() {
+        let dir = temp("recovery-save-baseline");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("original.deckcraft");
+        let mut before = Session::new();
+        before.execute("file.new", &json!({})).unwrap();
+        before.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
+        before.execute("slide.new", &json!({})).unwrap();
+        save(&before, &dir).unwrap();
+        std::fs::write(&path, b"external edit after last save").unwrap();
+
+        let mut recovered = Session::new();
+        open(&mut recovered, &dir).unwrap();
+        let error = recovered.execute("file.save", &json!({})).unwrap_err().to_string();
+        assert!(error.contains("changed on disk"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"external edit after last save");
+        assert!(recovered.doc().unwrap().is_dirty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn old_recovery_entries_without_a_baseline_require_save_as() {
+        let dir = temp("recovery-old-baseline");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("original.deckcraft");
+        let mut before = Session::new();
+        before.execute("file.new", &json!({})).unwrap();
+        before.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
+        before.execute("slide.new", &json!({})).unwrap();
+        save(&before, &dir).unwrap();
+        let (_, meta_path) = files(&dir, before.doc().unwrap().uid);
+        let mut meta: Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        meta.as_object_mut().unwrap().remove("fileFingerprint");
+        std::fs::write(&meta_path, meta.to_string()).unwrap();
+
+        let mut recovered = Session::new();
+        open(&mut recovered, &dir).unwrap();
+        assert!(recovered.doc().unwrap().path.is_none());
+        assert_eq!(recovered.execute("file.save", &json!({})).unwrap()["needsPath"], true);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

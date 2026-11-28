@@ -2601,6 +2601,74 @@ fn file_info_reports_the_presentation() {
     assert!(empty.execute("file.info", &json!({})).is_err());
 }
 
+#[test]
+fn save_refuses_to_overwrite_an_externally_changed_open_file() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-conflict-{}-{}", std::process::id(), crate::recovery::instance_id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.deckcraft");
+    let copy = dir.join("my-copy.deckcraft");
+    let path_str = path.to_string_lossy().to_string();
+    let copy_str = copy.to_string_lossy().to_string();
+
+    let mut original = session();
+    original.execute("file.saveAs", &json!({"path": path_str})).unwrap();
+    let mut opened = Session::new();
+    opened.execute("file.open", &json!({"path": path_str})).unwrap();
+    opened.execute("slide.new", &json!({})).unwrap();
+    let external = b"changed outside DeckCraft";
+    std::fs::write(&path, external).unwrap();
+
+    let error = opened.execute("file.save", &json!({})).unwrap_err().to_string();
+    assert!(error.contains("changed on disk"), "{error}");
+    let alias = dir.join(".").join("deck.deckcraft");
+    let error = opened.execute("file.save", &json!({"path": alias.to_string_lossy()})).unwrap_err().to_string();
+    assert!(error.contains("changed on disk"), "{error}");
+    assert_eq!(std::fs::read(&path).unwrap(), external);
+    assert!(opened.doc().unwrap().is_dirty());
+    opened.execute("file.saveAs", &json!({"path": copy_str})).unwrap();
+    assert!(!opened.doc().unwrap().is_dirty());
+    assert!(copy.exists());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn export_to_the_open_file_refreshes_the_save_baseline_without_clearing_edits() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-export-baseline-{}-{}", std::process::id(), crate::recovery::instance_id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.deckcraft").to_string_lossy().to_string();
+    let mut s = session();
+    s.execute("file.saveAs", &json!({"path": path})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("file.export", &json!({"path": path})).unwrap();
+    assert!(s.doc().unwrap().is_dirty(), "Export must not mark the edit saved");
+    s.execute("file.save", &json!({})).unwrap();
+    assert!(!s.doc().unwrap().is_dirty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn removed_symlink_does_not_hide_a_conflicting_destination() {
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join(format!("deckcraft-removed-alias-{}-{}", std::process::id(), crate::recovery::instance_id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("deck.deckcraft");
+    let alias = dir.join("alias.deckcraft");
+    let mut original = session();
+    original.execute("file.saveAs", &json!({"path": target.to_string_lossy()})).unwrap();
+    symlink(&target, &alias).unwrap();
+    let mut opened = Session::new();
+    opened.execute("file.open", &json!({"path": alias.to_string_lossy()})).unwrap();
+    opened.execute("slide.new", &json!({})).unwrap();
+    std::fs::remove_file(&alias).unwrap();
+    std::fs::write(&target, b"external edit").unwrap();
+    let error = opened.execute("file.save", &json!({"path": target.to_string_lossy()})).unwrap_err().to_string();
+    assert!(error.contains("changed on disk"), "{error}");
+    assert_eq!(std::fs::read(&target).unwrap(), b"external edit");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// The Print page's Slides box (#76): PowerPoint-style ranges, 1-based.
 #[test]
 fn slide_ranges_parse_like_powerpoints_print_box() {
@@ -5909,8 +5977,14 @@ fn background_loads_are_adopted_through_a_command() {
     replay.execute(&id, &params).unwrap();
     assert_eq!(replay.doc().unwrap().doc.slides.len(), 2);
     // A token staged for another path is not taken for this one.
-    let other =
-        s.stage_loaded(cmd::file::LoadedFile { path: "/elsewhere.pptx".into(), doc: Default::default(), native: true, damaged: Default::default() });
+    let other = s.stage_loaded(cmd::file::LoadedFile {
+        path: "/elsewhere.pptx".into(),
+        doc: Default::default(),
+        file_fingerprint: 0,
+        file_resolved_path: None,
+        native: true,
+        damaged: Default::default(),
+    });
     s.execute("file.adopt", &json!({"path": path, "token": other})).unwrap();
     assert_eq!(s.doc().unwrap().doc.slides.len(), 2);
     assert!(s.execute("file.adopt", &json!({})).is_err());
