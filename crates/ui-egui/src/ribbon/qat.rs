@@ -39,9 +39,9 @@ impl QatItem {
     /// A legacy item translates only when its command, label, icon and parameters all match a
     /// built-in item. Otherwise the caption may be a caller's own text and stays as saved.
     pub(crate) fn shown_label(&self) -> String {
-        let literal = self.literal.unwrap_or_else(|| {
-            !common().iter().any(|c| c.id == self.id && c.label == self.label && c.icon == self.icon && c.params == self.params)
-        });
+        let literal = self
+            .literal
+            .unwrap_or_else(|| !common().iter().any(|c| c.id == self.id && c.label == self.label && c.icon == self.icon && c.params == self.params));
         if literal { self.label.clone() } else { crate::i18n::t_flat(&self.label) }
     }
     fn icon(&self) -> Icon {
