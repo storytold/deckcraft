@@ -181,7 +181,7 @@ impl SlideApp {
     /// from it. A logic-only callback leaves the previous pass's `InputState` (with another
     /// `raw.time`) and must not be mistaken for the live pass, so control/background work is
     /// still drained there and the next `raw_input_hook` retracts a batch that went stale.
-    pub(super) fn synthetic_batch_is_live(&self, ctx: &egui::Context) -> bool {
+    pub fn synthetic_batch_is_live(&self, ctx: &egui::Context) -> bool {
         if !self.synthetic_pending || self.synthetic_injected.is_empty() {
             return false;
         }
