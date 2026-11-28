@@ -180,7 +180,9 @@ fn time_ms(runs: usize, mut f: impl FnMut() -> Result<(), String>) -> Result<(f6
 /// Summarize one population of measurements; each maximum must come from that population.
 fn summarize_ms(mut ms: Vec<f64>) -> (f64, f64) {
     ms.sort_by(f64::total_cmp);
-    (ms.get(ms.len() / 2).copied().unwrap_or(0.0), ms.last().copied().unwrap_or(0.0))
+    let lower = ms.get(ms.len().saturating_sub(1) / 2).copied().unwrap_or(0.0);
+    let upper = ms.get(ms.len() / 2).copied().unwrap_or(0.0);
+    (lower.midpoint(upper), ms.last().copied().unwrap_or(0.0))
 }
 
 /// Peak resident memory of this process in MiB (Linux `VmHWM`); `None` elsewhere.
@@ -770,6 +772,7 @@ mod tests {
         assert_eq!(whole_deck, (17.0, 18.0));
         assert!(whole_deck.1 >= whole_deck.0);
         assert!(slide_medians.iter().sum::<f64>() > whole_deck.1, "fixture must expose summing independent slide medians");
+        assert_eq!(summarize_ms(vec![21.0, 4.0, 15.0, 7.0]), (11.0, 21.0));
         assert_eq!(summarize_ms(vec![]), (0.0, 0.0));
     }
 
