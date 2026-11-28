@@ -124,7 +124,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "all": boolean("All slides (images)"),
                     "scale": num("Pixels per point for images (default 2)"),
                     "layout": {"type": "string", "enum": ["slides", "notes", "handouts"], "description": "PDF page layout (default slides)"},
-                    "perPage": {"type": "integer", "enum": [1, 2, 3, 4, 6, 9], "description": "PDF handouts: slides per page (default 6)"},
+                    "perPage": {"type": "integer", "description": "PDF handouts: slides per page (1, 2, 3, 4, 6 or 9; default 6)"},
                     "dpi": num("PDF: raster resolution of slide artwork, 36-600 (default 200)"),
                     "slides": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "PDF and GIF: slide indices to export, in order (default all)"},
                     "includeHidden": boolean("PDF and GIF: include hidden slides (default false)"),
