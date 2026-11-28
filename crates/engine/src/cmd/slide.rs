@@ -699,16 +699,20 @@ fn section_remove_all(s: &mut Session, _p: &Value) -> Result<Value> {
 fn section_move(s: &mut Session, p: &Value) -> Result<Value> {
     let i = usize_param(p, "index").ok_or_else(|| bad("section.move", "missing `index`"))?;
     let to = usize_param(p, "to").ok_or_else(|| bad("section.move", "missing `to`"))?;
-    s.edit(|doc, _| {
+    s.edit(|doc, sel| {
         if i >= doc.sections.len() {
             return Err(bad("section.move", "no such section"));
         }
+        let active = doc.slides.get(sel.slide).map(|slide| slide.id);
         let sec = doc.sections.remove(i);
         let to = to.min(doc.sections.len());
         doc.sections.insert(to, sec);
         // Reorder slides to follow sections.
         let order: Vec<SlideId> = doc.sections.iter().flat_map(|x| x.slides.iter().copied()).collect();
         doc.slides.sort_by_key(|x| order.iter().position(|o| *o == x.id).unwrap_or(usize::MAX));
+        if let Some(index) = active.and_then(|id| doc.slide_index(id)) {
+            sel.slide = index;
+        }
         Ok(())
     })?;
     ok()
@@ -864,6 +868,27 @@ mod tests {
         assert_eq!(selected(&s), before);
         s.execute("edit.redo", &json!({})).expect("redo");
         assert_eq!(order(&s), after);
+    }
+
+    #[test]
+    fn moving_a_section_keeps_the_current_slide_selected() {
+        let (mut s, ids) = deck(4);
+        s.execute("section.add", &json!({"name": "A", "at": 0})).expect("A");
+        s.execute("section.add", &json!({"name": "B", "at": 2})).expect("B");
+        s.execute("slide.go", &json!({"index": 1})).expect("select slide");
+
+        s.execute("section.move", &json!({"index": 0, "to": 1})).expect("move section");
+        let moved = [ids[2], ids[3], ids[0], ids[1]];
+        assert_eq!(order(&s), moved);
+        assert_eq!(selected(&s), (3, vec![ids[1]]));
+
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(order(&s), ids);
+        assert_eq!(selected(&s), (1, vec![ids[1]]));
+
+        s.execute("edit.redo", &json!({})).expect("redo");
+        assert_eq!(order(&s), moved);
+        assert_eq!(selected(&s), (3, vec![ids[1]]));
     }
 
     #[test]
