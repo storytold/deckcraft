@@ -20,6 +20,7 @@ mod ime;
 mod input;
 mod keys;
 mod playback;
+mod provider_files;
 
 #[cfg(test)]
 pub(crate) use clipboard::{OBJECTS_MARKER, system_clipboard_text};
@@ -52,6 +53,7 @@ impl SlideApp {
             control_rx: None,
             squiggles: Default::default(),
             dialog: None,
+            provider_close: None,
             thesaurus_query: String::new(),
             show: None,
             anim_preview: None,
@@ -233,6 +235,7 @@ impl SlideApp {
         // (no live `InputState` here), so that pass still drains normally and the next
         // `raw_input_hook` retracts a batch that went stale.
         if !self.synthetic_batch_is_live(ctx) {
+            self.provider_tick();
             self.drain_control(ctx);
             self.poll_opening();
             #[cfg(not(target_arch = "wasm32"))]

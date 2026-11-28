@@ -455,6 +455,9 @@ impl SlideApp {
     }
 
     pub fn save_as_dialog(&mut self, format: &str) {
+        if self.choose_provider_save(true, format) {
+            return;
+        }
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
         let suggested = format!("{name}.{ext}");
@@ -481,21 +484,10 @@ impl SlideApp {
         }
     }
 
-    /// Save every presentation with unsaved changes (asking for a location where needed).
-    /// Returns false if one wasn't saved (cancelled or failed).
-    pub fn save_all(&mut self) -> bool {
-        let dirty: Vec<usize> = self.session.documents().iter().enumerate().filter(|(_, d)| d.is_dirty()).map(|(i, _)| i).collect();
-        for i in dirty {
-            self.session.set_active(i);
-            self.save();
-            if self.session.documents().get(i).is_some_and(|d| d.is_dirty()) {
-                return false;
-            }
-        }
-        true
-    }
-
     pub fn save(&mut self) {
+        if self.choose_provider_save(false, "deckcraft") {
+            return;
+        }
         if self.services.host_save.is_some() {
             let _ = self.save_to_host(None);
             return;

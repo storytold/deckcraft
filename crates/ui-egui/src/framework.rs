@@ -91,7 +91,13 @@ impl SlideApp {
     /// `quit_confirmed` set.
     pub fn close_path(&mut self, ctx: &egui::Context) {
         embed::logic(ctx, || {
-            if self.quit_confirmed || !self.session.documents().iter().any(|d| d.is_dirty()) {
+            if self.quit_confirmed {
+                return CloseDecision::Close;
+            }
+            if self.provider_quit_pending() {
+                return CloseDecision::Hold;
+            }
+            if !self.session.documents().iter().any(|d| d.is_dirty() || self.pending_provider_notes(d.uid)) {
                 return CloseDecision::Close;
             }
             self.show = None;

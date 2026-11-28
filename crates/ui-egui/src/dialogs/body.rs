@@ -308,9 +308,13 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if app.save_all() {
-                    app.quit_confirmed = true;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                match app.save_all() {
+                    crate::SaveAllOutcome::Saved => {
+                        app.quit_confirmed = true;
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    crate::SaveAllOutcome::Pending => app.set_status("Waiting for the file provider to finish Save All."),
+                    crate::SaveAllOutcome::Incomplete => {}
                 }
                 done = true;
             }
@@ -338,13 +342,7 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                app.save();
-                // In the browser a save is a download: the presentation stays "unsaved". A page
-                // that keeps the files saves it for real, so a failed save keeps it open.
-                let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
-                if web || app.session.active().is_some_and(|d| !d.is_dirty()) {
-                    run(app, "file.close", json!({}));
-                }
+                app.save_and_close_presentation();
                 done = true;
             }
             if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
