@@ -399,7 +399,8 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
     o.slides = match p.get("slides") {
         Some(Value::Array(a)) => Some(a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).filter(|i| *i < count).collect()),
         Some(Value::String(text)) if !text.trim().is_empty() => Some(parse_slide_range(text, count)?),
-        _ => None,
+        None | Some(Value::Null | Value::String(_)) => None,
+        Some(_) => return Err(bad("file.export", "`slides` must be a list of slide indices or a range")),
     };
     o.include_hidden = bool_or(p, "includeHidden", false);
     o.text_layer = bool_or(p, "textLayer", true);
@@ -828,6 +829,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn invalid_pdf_slide_selector_keeps_the_existing_destination() {
+        let dir = scratch("invalid-pdf-slides");
+        let dest = dir.join("existing.pdf");
+        std::fs::write(&dest, b"original").unwrap();
+        let mut session = crate::Session::with_new();
+        let result = session.execute("file.export", &serde_json::json!({"path": dest.to_str().unwrap(), "format": "pdf", "slides": 2, "dpi": 36}));
+        let bytes = std::fs::read(&dest);
+        std::fs::remove_dir_all(dir).unwrap();
+        let error = result.unwrap_err();
+        assert!(matches!(&error, crate::EngineError::BadParams { cmd, .. } if cmd == "file.export"), "{error}");
+        assert_eq!(bytes.unwrap(), b"original");
     }
 
     #[test]
