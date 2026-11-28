@@ -372,7 +372,8 @@ pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),
         "png" | "jpeg" | "jpg" => Err(EngineError::Other("saving a presentation as a single image isn't supported; use file.export".into())),
-        _ => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
+        "deckcraft" => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
+        _ => Err(EngineError::Other(format!("unknown save format `{format}`"))),
     }
 }
 
@@ -466,6 +467,27 @@ pub fn writable_format_for_path(path: &str) -> Option<&'static str> {
     WRITABLE_EXTENSIONS.contains(&ext.as_str()).then(|| format_for_path(path))
 }
 
+/// The format a save path names, or an error listing the file types DeckCraft writes.
+fn writable_format(path: &str) -> Result<&'static str> {
+    writable_format_for_path(path).ok_or_else(|| {
+        EngineError::Other(format!(
+            "{path}: DeckCraft cannot save this file type; save as .pptx, .potx, .ppsx, .deckcraft, .pdf, .png, .jpg/.jpeg, .gif, .txt, .md or .rtf"
+        ))
+    })
+}
+
+/// Whether an explicit save format names the same writer as the path. `txt`/`outline` are the
+/// same writer only for a `.txt` path, and `jpg`/`jpeg` are aliases; every other mismatch would
+/// write bytes that lie about the file type.
+fn same_save_format(path: &str, path_format: &str, format: &str) -> bool {
+    if format == path_format {
+        return true;
+    }
+    let lower = path.to_ascii_lowercase();
+    (lower.ends_with(".txt") && matches!((path_format, format), ("outline", "txt") | ("txt", "outline")))
+        || matches!((path_format, format), ("jpeg", "jpg") | ("jpg", "jpeg"))
+}
+
 /// Animated GIF bytes for `doc` with the options in `p` (see [`crate::gif_export::GifOptions::from_params`]).
 pub fn gif_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
     Ok(crate::gif_export::encode(doc, &crate::gif_export::GifOptions::from_params(p)?)?.bytes)
@@ -523,7 +545,13 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
         s.ui_requests.push(crate::UiRequest::PickFile { purpose: "saveAs".into() });
         return Ok(json!({"needsPath": true}));
     };
-    let format = str_param(p, "format").unwrap_or(format_for_path(&path));
+    let path_format = writable_format(&path)?;
+    let format = str_param(p, "format").unwrap_or(path_format);
+    if !same_save_format(&path, path_format, format) {
+        return Err(EngineError::Other(format!(
+            "{path}: format `{format}` does not match the file type; save as {path_format} or choose a matching extension"
+        )));
+    }
     let bytes = save_bytes(&s.doc()?.doc, format)?;
     write_file(&path, &bytes)?;
     mark_saved(s, Some(path.clone()))?;
@@ -610,7 +638,10 @@ fn color_at(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.export", "missing `path`"))?.to_string();
-    let format = str_param(p, "format").unwrap_or(format_for_path(&path)).to_string();
+    let format = match str_param(p, "format") {
+        Some(f) => f.to_string(),
+        None => writable_format(&path)?.to_string(),
+    };
     let st = s.doc()?;
     let scale = finite_scale(f64_or(p, "scale", 2.0));
     let transparent = bool_or(p, "transparentBackground", false);

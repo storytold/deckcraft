@@ -7452,6 +7452,153 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn unsupported_save_paths_are_refused_and_write_nothing() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-ext-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["a.pptm", "a.ppt", "a.pot", "a.potm", "a.pps", "a.ppsm", "a.odp", "a.xml", "a.svg", "a.bmp", "a"] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        let before = s.doc().unwrap().path.clone();
+        let err = s.execute("file.saveAs", &json!({"path": path})).unwrap_err();
+        assert!(err.to_string().contains("cannot save"), "{name}: {err}");
+        assert!(!std::path::Path::new(&path).exists(), "{name} must not be written");
+        assert_eq!(s.doc().unwrap().path, before, "{name}: the document keeps its path");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsupported_paths_are_refused_even_with_an_explicit_format() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-ext-fmt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptm").to_string_lossy().to_string();
+    let err = s.execute("file.saveAs", &json!({"path": path, "format": "pptx"})).unwrap_err();
+    assert!(err.to_string().contains("cannot save"), "{err}");
+    assert!(!std::path::Path::new(&path).exists(), "the path guard wins over the explicit format");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsupported_extensionless_save_is_refused_even_with_an_explicit_format() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-extless-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("no-extension").to_string_lossy().to_string();
+    let err = s.execute("file.saveAs", &json!({"path": path, "format": "pptx"})).unwrap_err();
+    assert!(err.to_string().contains("cannot save"), "{err}");
+    assert!(!std::path::Path::new(&path).exists(), "the path guard wins over the explicit format");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn save_bytes_rejects_an_unknown_format() {
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let err = s.execute("file.saveBytes", &json!({"format": "odp"})).unwrap_err();
+    assert!(err.to_string().contains("unknown save format"), "{err}");
+    assert!(s.execute("file.saveBytes", &json!({"format": "deckcraft"})).is_ok());
+}
+
+#[test]
+fn unsupported_export_paths_are_refused() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-export-ext-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptm").to_string_lossy().to_string();
+    assert!(s.execute("file.export", &json!({"path": path})).is_err());
+    assert!(!std::path::Path::new(&path).exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn extensionless_export_with_an_explicit_format_still_writes() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-export-fmt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("out").to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path, "format": "png", "slide": 0})).unwrap();
+    assert!(std::path::Path::new(&path).exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn supported_paths_still_save() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-ok-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, magic) in [("a.pptx", b"PK".as_slice()), ("a.deckcraft", b"PK".as_slice()), ("a.txt", b"")] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        s.execute("file.saveAs", &json!({"path": path})).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!bytes.is_empty(), "{name}");
+        if !magic.is_empty() {
+            assert!(bytes.starts_with(magic), "{name}: not a ZIP");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explicit_save_format_must_match_the_path() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-mismatch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptx").to_string_lossy().to_string();
+    std::fs::write(&path, b"sentinel").unwrap();
+    let before = s.doc().unwrap().path.clone();
+    let err = s.execute("file.saveAs", &json!({"path": path, "format": "deckcraft"})).unwrap_err();
+    assert!(err.to_string().contains("does not match"), "{err}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"sentinel", "the existing file is untouched");
+    assert_eq!(s.doc().unwrap().path, before, "the document keeps its path");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn existing_unsupported_destination_is_untouched() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-existing-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("a.pptm").to_string_lossy().to_string();
+    std::fs::write(&path, b"sentinel").unwrap();
+    let before = s.doc().unwrap().path.clone();
+    let err = s.execute("file.saveAs", &json!({"path": path})).unwrap_err();
+    assert!(err.to_string().contains("cannot save"), "{err}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"sentinel", "the existing file is untouched");
+    assert_eq!(s.doc().unwrap().path, before, "the document keeps its path");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explicit_txt_format_is_allowed_for_a_txt_path() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-txt-alias-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let path = dir.join("outline.txt").to_string_lossy().to_string();
+    s.execute("file.saveAs", &json!({"path": path, "format": "txt"})).unwrap();
+    assert!(!std::fs::read(&path).unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
