@@ -1,7 +1,7 @@
-use super::{Fill, SlideApp, Ui, Value, cref_param, json, run, scheme, theme, vec2, widgets};
+use super::{Fill, SlideApp, Ui, Value, cref_param, edited_scheme, json, run, theme, vec2, widgets};
 
 pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
-    let sc = scheme(app);
+    let sc = edited_scheme(app);
     let bg = app.session.active().and_then(|d| d.current_slide().and_then(|s| s.background.clone()));
     let fill = match &bg {
         Some(deckcraft_model::Background::Fill { fill }) => Some(fill.clone()),
@@ -53,7 +53,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
                 ui.label("Color");
                 let r = widgets::drop_button(ui, "Color", vec2(70.0, 20.0), true);
                 widgets::color_popup(&r).show(|ui| {
-                    if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
+                    if let Some(Some(c)) = widgets::color_grid(ui, &sc.shown, None) {
                         run(app, "design.background", json!({"color": cref_param(&c)}));
                     }
                 });
@@ -71,7 +71,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
         }
         Some(Fill::Pattern(pt)) => {
             current = Some(json!({"pattern": crate::fillui::pattern_json(pt)}));
-            if let Some(np) = crate::fillui::pattern_editor(ui, pt, &sc) {
+            if let Some(np) = crate::fillui::pattern_editor(ui, pt, &sc.shown) {
                 run(app, "design.background", json!({"pattern": crate::fillui::pattern_json(&np)}));
             }
         }

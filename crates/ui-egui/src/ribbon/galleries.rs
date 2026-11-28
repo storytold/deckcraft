@@ -1,5 +1,10 @@
 use super::{Align2, Color32, CornerRadius, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, json, pos2, run, scheme, theme, vec2, widgets};
 
+/// `#RRGGBB`, or `#RRGGBBAA` when the color is not opaque.
+fn hex_param(rgb: &deckcraft_color::Rgba) -> String {
+    if rgb.a < 255 { format!("#{}{:02X}", rgb.hex(), rgb.a) } else { format!("#{}", rgb.hex()) }
+}
+
 /// A ColorRef as a command colour parameter.
 pub fn cref_param(c: &deckcraft_model::ColorRef) -> Value {
     match &c.base {
@@ -13,10 +18,10 @@ pub fn cref_param(c: &deckcraft_model::ColorRef) -> Value {
             }
             Value::Object(o)
         }
-        deckcraft_model::ColorBase::Rgb { rgb } if c.mods.is_empty() => json!(format!("#{}", rgb.hex())),
+        deckcraft_model::ColorBase::Rgb { rgb } if c.mods.is_empty() => json!(hex_param(rgb)),
         deckcraft_model::ColorBase::Rgb { rgb } => {
             let mut o = serde_json::Map::new();
-            o.insert("rgb".into(), json!(format!("#{}", rgb.hex())));
+            o.insert("rgb".into(), json!(hex_param(rgb)));
             for m in &c.mods {
                 if let Some(v) = m.value() {
                     o.insert(m.xml_name().into(), json!(v));
@@ -37,7 +42,7 @@ pub fn cref_param(c: &deckcraft_model::ColorRef) -> Value {
         deckcraft_model::ColorBase::System { name, last } => {
             let mut o = serde_json::Map::new();
             o.insert("system".into(), json!(name));
-            o.insert("last".into(), json!(format!("#{}", last.hex())));
+            o.insert("last".into(), json!(hex_param(last)));
             for m in &c.mods {
                 if let Some(v) = m.value() {
                     o.insert(m.xml_name().into(), json!(v));

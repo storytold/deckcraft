@@ -44,24 +44,60 @@ pub fn gradient_json(g: &Gradient) -> Value {
     }
 }
 
-fn alpha_of(c: &ColorRef) -> f64 {
-    c.mods.iter().find_map(|m| if let ColorTransform::Alpha(a) = m { Some(*a as f64 / 100_000.0) } else { None }).unwrap_or(1.0)
-}
-
-fn with_alpha(mut c: ColorRef, a: f64) -> ColorRef {
-    c.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_)));
-    if a < 0.999 {
-        c.mods.push(ColorTransform::Alpha((a.clamp(0.0, 1.0) * 100_000.0).round() as i32));
+/// `c` with the opacity that `like` draws with in `sc`, replacing every alpha it had. A color
+/// that already draws with that opacity is returned unchanged.
+fn with_alpha_of(mut c: ColorRef, like: &ColorRef, sc: &EditedScheme) -> ColorRef {
+    let a = sc.resolve(like).a;
+    if sc.resolve(&c).a != a {
+        c.set_alpha(f64::from(a) / 255.0);
     }
     c
 }
 
-fn c32(c: &ColorRef, sc: &ColorScheme) -> Color32 {
-    theme::to_color32(c.resolve(sc, None))
+/// The transparency (0–100) that `c` draws with in `sc`.
+fn drawn_transparency(c: &ColorRef, sc: &EditedScheme) -> f32 {
+    ((1.0 - f64::from(sc.resolve(c).a) / 255.0) * 100.0) as f32
+}
+
+/// The colors of the page a gradient is edited on: its theme `raw`, the color map that routes
+/// `bg1`, `tx1`, `bg2` and `tx2` to theme slots, and `shown`, the theme with that map applied for
+/// the swatch grid. A direct `lt1`, `dk1`, `lt2` or `dk2` color resolves in `raw`, so the map
+/// changes only the four alias slots.
+pub struct EditedScheme {
+    pub shown: ColorScheme,
+    pub raw: ColorScheme,
+    pub map: Vec<(String, String)>,
+}
+
+impl EditedScheme {
+    /// A scheme with the default color map.
+    pub fn plain(scheme: ColorScheme) -> Self {
+        Self { shown: scheme.clone(), raw: scheme, map: Vec::new() }
+    }
+
+    fn resolve(&self, c: &ColorRef) -> deckcraft_color::Rgba {
+        let mut c = c.clone();
+        if let deckcraft_model::ColorBase::Scheme { slot } = &mut c.base
+            && matches!(slot, SchemeSlot::Bg1 | SchemeSlot::Tx1 | SchemeSlot::Bg2 | SchemeSlot::Tx2)
+        {
+            *slot = deckcraft_model::map_slot(&self.map, *slot);
+        }
+        c.resolve(&self.raw, None)
+    }
+}
+
+/// `c` with `transparency` (0–1), replacing every alpha it had.
+fn with_transparency(mut c: ColorRef, transparency: f64) -> ColorRef {
+    c.set_alpha(1.0 - transparency);
+    c
+}
+
+fn c32(c: &ColorRef, sc: &EditedScheme) -> Color32 {
+    theme::to_color32(sc.resolve(c))
 }
 
 /// Paint `g` left→right into `r` (the stop bar and preset swatches).
-fn paint_bar(ui: &Ui, r: Rect, g: &Gradient, sc: &ColorScheme) {
+fn paint_bar(ui: &Ui, r: Rect, g: &Gradient, sc: &EditedScheme) {
     // Checkerboard under transparent stops.
     let p = ui.painter();
     let n = (r.width() / 6.0).ceil() as i32;
@@ -108,7 +144,7 @@ const DIRECTIONS_PATH: [(&str, [f64; 4]); 5] = [
 ];
 
 /// The editor for `g`; returns the new gradient when the user changed something.
-pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) -> Option<Gradient> {
+pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &EditedScheme) -> Option<Gradient> {
     let t = Tokens::get(ui.ctx());
     let mut out: Option<Gradient> = None;
     let sel_id = ui.scope_id().with((id, "stop"));
@@ -149,7 +185,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
                 flip: None,
             },
             Gradient {
-                stops: vec![GradientStop { pos: 0.0, color: base.clone() }, GradientStop { pos: 1.0, color: with_alpha(base, 0.0) }],
+                stops: vec![GradientStop { pos: 0.0, color: base.clone() }, GradientStop { pos: 1.0, color: with_transparency(base, 1.0) }],
                 ..default_gradient(ColorRef::scheme(SchemeSlot::Accent1), 90.0)
             },
         ];
@@ -299,9 +335,9 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
                 popup = popup.open_memory(egui::SetOpenCommand::Bool(true));
             }
             popup.show(|ui| {
-                if let Some(Some(c)) = widgets::color_grid(ui, sc, None) {
+                if let Some(Some(c)) = widgets::color_grid(ui, &sc.shown, None) {
                     let mut ng = g.clone();
-                    ng.stops[sel].color = with_alpha(c, alpha_of(&s.color));
+                    ng.stops[sel].color = with_alpha_of(c, &s.color, sc);
                     out = Some(ng);
                 }
             });
@@ -325,14 +361,14 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
         ui.horizontal(|ui| {
             let label = ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Transparency"));
             let key = ui.scope_id().with((id, "tr", sel));
-            let mut tr: f32 = ui.data_mut(|d| d.get_temp(key).unwrap_or(((1.0 - alpha_of(&s.color)) * 100.0) as f32));
+            let mut tr: f32 = ui.data_mut(|d| d.get_temp(key).unwrap_or(drawn_transparency(&s.color, sc)));
             let r = ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).suffix("%")).labelled_by(label.id);
             if r.changed() {
                 ui.data_mut(|d| d.insert_temp(key, tr));
             }
             if r.drag_stopped() || (r.changed() && !r.dragged()) {
                 let mut ng = g.clone();
-                ng.stops[sel].color = with_alpha(s.color.clone(), 1.0 - tr as f64 / 100.0);
+                ng.stops[sel].color = with_transparency(s.color.clone(), tr as f64 / 100.0);
                 ui.data_mut(|d| d.remove::<f32>(key));
                 out = Some(ng);
             }
@@ -489,7 +525,8 @@ fn paint_pattern(p: &egui::Painter, r: Rect, name: &str, fg: Color32, bg: Color3
 pub fn pattern_editor(ui: &mut Ui, pt: &PatternFill, sc: &ColorScheme) -> Option<PatternFill> {
     let t = Tokens::get(ui.ctx());
     let mut out: Option<PatternFill> = None;
-    let (fg, bg) = (c32(&pt.fg, sc), c32(&pt.bg, sc));
+    let edited = EditedScheme::plain(sc.clone());
+    let (fg, bg) = (c32(&pt.fg, &edited), c32(&pt.bg, &edited));
     ui.label("Pattern");
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
@@ -511,7 +548,7 @@ pub fn pattern_editor(ui: &mut Ui, pt: &PatternFill, sc: &ColorScheme) -> Option
             ui.add_sized(vec2(80.0, 20.0), egui::Label::new(label));
             let cur = if foreground { &pt.fg } else { &pt.bg };
             let (sw, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-            ui.painter().rect(sw, CornerRadius::same(3), c32(cur, sc), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+            ui.painter().rect(sw, CornerRadius::same(3), c32(cur, &edited), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
             let r = widgets::drop_button(ui, "", vec2(24.0, 20.0), true);
             let name = format!("{label} color");
             r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
@@ -537,7 +574,7 @@ mod tests {
     /// picked there colours that stop.
     #[test]
     fn double_clicking_a_stop_opens_its_color_menu() {
-        let sc = deckcraft_model::Theme::default().colors;
+        let sc = EditedScheme::plain(deckcraft_model::Theme::default().colors);
         let start = Gradient {
             stops: vec![
                 GradientStop { pos: 0.0, color: ColorRef::scheme(SchemeSlot::Accent1) },
@@ -590,5 +627,107 @@ mod tests {
             tile: [0.0; 4],
         };
         assert_eq!(gradient_json(&gradient).get("flip"), Some(&json!("xy")));
+    }
+
+    /// A stop's Transparency replaces every alpha its color had, and the slider shows that alpha.
+    #[test]
+    fn stop_transparency_replaces_every_alpha_of_the_color() {
+        use deckcraft_color::Rgba;
+        let sc = ColorScheme::new("Test", [Rgba::BLACK; 12]);
+        let red = || ColorRef::rgb(Rgba::rgb(255, 0, 0));
+        let mut failures = vec![];
+        for c in
+            [ColorRef::rgb(Rgba::rgba(255, 0, 0, 128)), red().with(ColorTransform::AlphaMod(50000)), red().with(ColorTransform::AlphaOff(-50000))]
+        {
+            let shown = drawn_transparency(&c, &EditedScheme::plain(sc.clone()));
+            if (shown - (1.0 - 128.0 / 255.0) * 100.0).abs() > 1.0 {
+                failures.push(format!("{c:?}: the slider shows {shown}%"));
+            }
+            for (t, a) in [(0.0, 255), (0.25, 191)] {
+                let drawn = with_transparency(c.clone(), t).resolve(&sc, None).a;
+                if drawn != a {
+                    failures.push(format!("{c:?}: {t} draws alpha {drawn}, not {a}"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// An edit sends every stop of the gradient, so each stop's parameter keeps the alpha byte of
+    /// its RGB color.
+    #[test]
+    fn gradient_json_keeps_the_alpha_byte_of_every_stop() {
+        use deckcraft_color::Rgba;
+        let half = Rgba::rgba(255, 0, 0, 128);
+        let g = Gradient {
+            stops: vec![
+                GradientStop { pos: 0.0, color: ColorRef::rgb(half) },
+                GradientStop { pos: 1.0, color: ColorRef::rgb(half).with(ColorTransform::LumMod(60_000)) },
+            ],
+            ..default_gradient(ColorRef::scheme(SchemeSlot::Accent1), 90.0)
+        };
+        let stops = gradient_json(&g)["stops"].clone();
+        assert_eq!(stops, json!([[0.0, "#FF000080"], [1.0, {"rgb": "#FF000080", "lumMod": 60_000}]]));
+        assert_eq!(Rgba::from_hex("#FF000080"), Some(half));
+    }
+
+    /// A color picked for an opaque stop is stored as picked, with no added `alpha`.
+    #[test]
+    fn a_color_picked_for_an_opaque_stop_gets_no_alpha() {
+        let sc = EditedScheme::plain(deckcraft_model::Theme::default().colors);
+        let picked = with_alpha_of(ColorRef::scheme(SchemeSlot::Accent6), &ColorRef::scheme(SchemeSlot::Accent2), &sc);
+        assert_eq!(picked, ColorRef::scheme(SchemeSlot::Accent6));
+        let half_stop = ColorRef::scheme(SchemeSlot::Accent2).with(ColorTransform::Alpha(50_000));
+        let half = with_alpha_of(ColorRef::scheme(SchemeSlot::Accent6), &half_stop, &sc);
+        assert_eq!(sc.resolve(&half).a, sc.resolve(&half_stop).a);
+    }
+
+    /// A stop whose theme color has an alpha byte in the scheme: the Transparency slider starts at
+    /// the transparency the stop draws with, and a color picked for it draws with that opacity.
+    #[test]
+    fn a_stop_keeps_the_opacity_its_scheme_color_draws_with() {
+        use deckcraft_color::Rgba;
+        let mut colors = deckcraft_model::Theme::default().colors;
+        colors.set(SchemeSlot::Accent2, Rgba::rgba(0, 128, 255, 128));
+        let sc = EditedScheme::plain(colors);
+        let stop = ColorRef::scheme(SchemeSlot::Accent2);
+        assert!((drawn_transparency(&stop, &sc) - 49.8).abs() < 0.1, "the slider starts at {}", drawn_transparency(&stop, &sc));
+        let picked = with_alpha_of(ColorRef::scheme(SchemeSlot::Accent6), &stop, &sc);
+        assert_eq!(sc.resolve(&picked).a, 128, "the picked color draws with the stop's opacity");
+    }
+
+    /// A color map that sends `bg1` to a half-transparent accent changes what `bg1` draws, not
+    /// what a direct `lt1` draws: an opaque `lt1` stop stays opaque and a pick for it adds no alpha.
+    #[test]
+    fn a_color_map_alias_does_not_change_a_direct_theme_slot() {
+        use deckcraft_color::Rgba;
+        let mut raw = deckcraft_model::Theme::default().colors;
+        raw.set(SchemeSlot::Lt1, Rgba::rgb(255, 255, 255));
+        raw.set(SchemeSlot::Accent1, Rgba::rgba(255, 0, 0, 128));
+        let map = vec![("bg1".to_string(), "accent1".to_string())];
+        let mut shown = raw.clone();
+        shown.set(SchemeSlot::Lt1, Rgba::rgba(255, 0, 0, 128));
+        let sc = EditedScheme { shown, raw, map };
+        let direct = ColorRef::scheme(SchemeSlot::Lt1);
+        assert_eq!(drawn_transparency(&direct, &sc), 0.0);
+        let picked = with_alpha_of(ColorRef::scheme(SchemeSlot::Accent6), &direct, &sc);
+        assert_eq!(picked, ColorRef::scheme(SchemeSlot::Accent6));
+        let alias = ColorRef::scheme(SchemeSlot::Bg1);
+        assert!((drawn_transparency(&alias, &sc) - 49.8).abs() < 0.1);
+    }
+
+    /// The slider starts at the transparency the stop draws with, after each alpha step rounds to a
+    /// byte as the renderer does.
+    #[test]
+    fn the_stop_slider_reads_the_drawn_alpha() {
+        use deckcraft_color::Rgba;
+        let sc = EditedScheme::plain(deckcraft_model::Theme::default().colors);
+        let mut c = ColorRef::rgb(Rgba::rgb(255, 0, 0));
+        for _ in 0..10 {
+            c.mods.push(ColorTransform::AlphaOff(-1000));
+        }
+        let drawn = sc.resolve(&c).a;
+        let expected = ((1.0 - f64::from(drawn) / 255.0) * 100.0) as f32;
+        assert_eq!(drawn_transparency(&c, &sc), expected);
     }
 }

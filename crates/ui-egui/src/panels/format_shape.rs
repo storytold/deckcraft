@@ -1,5 +1,5 @@
 use super::effect_presets;
-use super::{Fill, Icon, ShapeKind, SlideApp, Tokens, Ui, color_button, cref_param, json, run, scheme, theme, vec2, widgets};
+use super::{Fill, Icon, ShapeKind, SlideApp, Tokens, Ui, color_button, cref_param, edited_scheme, json, run, scheme, theme, vec2, widgets};
 
 /// Percent transparency (0 = opaque) of a solid fill, the same number `shape.fill`'s
 /// `transparency` parameter writes as an alpha transform. Anything else (no fill, a
@@ -9,6 +9,17 @@ pub(super) fn solid_fill_transparency_percent(fill: Option<&Fill>) -> f32 {
         return 0.0;
     };
     ((1.0 - color.alpha()) * 100.0) as f32
+}
+
+/// Whether the Transparency slider shows. `shape.fill {transparency}` changes a solid fill (an
+/// automatic one through its effective color) and the shape's own picture fill. It leaves a
+/// picture that an automatic fill inherits as it is, so no slider shows for that.
+pub(super) fn fill_transparency_editable(own: Option<&Fill>, effective: Option<&Fill>) -> bool {
+    match own {
+        None => !matches!(effective, Some(Fill::Picture(_))),
+        Some(Fill::Solid { .. } | Fill::Picture(_)) => true,
+        Some(_) => false,
+    }
 }
 
 /// Fraction to pass to `shape.fill` when the slider moved. An unchanged value (a focus
@@ -262,6 +273,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         ui.label(egui::RichText::new("Select a shape to format it.").color(t.text_dim));
         return;
     };
+    let effective_fill = deckcraft_engine::cmd::shape::effective_fill(&st.doc, &st.selection, &sh);
     let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, &sh);
     // Scale and a centre origin work from the shown shape's size, so they need a single shape.
     let single = st.selected_shapes().len() == 1;
@@ -403,9 +415,8 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     None => ("shape.fill".into(), json!({"none": true})),
                 });
             }
-            // `shape.fill {transparency}` changes a solid fill (an automatic one through its
-            // effective color) and a picture fill; a gradient has a transparency per stop.
-            let transparency = !members_background && matches!(sh.fill, None | Some(Fill::Solid { .. } | Fill::Picture(_)));
+            // A gradient has a transparency per stop.
+            let transparency = !members_background && fill_transparency_editable(sh.fill.as_ref(), effective_fill.as_ref());
             ui.horizontal(|ui| {
                 if !transparency {
                     return;
@@ -415,7 +426,9 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 // already 40% transparent showed as opaque, and leaving the slider wrote 0.
                 let seed = match &sh.fill {
                     Some(Fill::Picture(pf)) => ((1.0 - pf.alpha.unwrap_or(1.0)) * 100.0) as f32,
-                    fill => solid_fill_transparency_percent(fill.as_ref()),
+                    Some(fill) => solid_fill_transparency_percent(Some(fill)),
+                    // An automatic fill shows the transparency of the fill it inherits.
+                    None => solid_fill_transparency_percent(effective_fill.as_ref()),
                 };
                 let id = ui.scope_id().with(("ftr", sh.id.0));
                 let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(seed));
@@ -436,7 +449,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 picture_fill_options(app, ui, sh.id.0, pf);
             }
             if let Some(Fill::Gradient(g)) = shown_fill {
-                let sc = scheme(app);
+                let sc = edited_scheme(app);
                 if let Some(ng) = crate::fillui::gradient_editor(ui, "shape-grad", g, &sc) {
                     run(app, "shape.fill", json!({"gradient": crate::fillui::gradient_json(&ng)}));
                 }

@@ -1,6 +1,6 @@
 use super::{
-    Arc, Caps, ColorRef, ColorTransform, Fill, Result, RunProps, SchemeSlot, Session, Shape, ShapeId, ShapeKind, Strike, Value, bad, bool_or,
-    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, format_run_levels, json, ok, on_param, resolve, str_param,
+    Arc, Caps, ColorRef, Fill, Result, RunProps, SchemeSlot, Session, Shape, ShapeId, ShapeKind, Strike, Value, bad, bool_or, bool_param,
+    color_param, current_run, ed, edit_shapes, f64_param, format_run, format_run_levels, json, ok, on_param, resolve, str_param,
 };
 
 pub(super) fn bold(s: &mut Session, p: &Value) -> Result<Value> {
@@ -159,12 +159,9 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
 }
 
-/// `a:alpha` for `transparency` (0–1) on `c`, replacing any alpha it had; fully opaque drops it.
+/// `a:alpha` for `transparency` (0–1) on `c`, replacing every alpha it had; an RGB color that ends up opaque gets none.
 fn with_transparency(c: &mut ColorRef, transparency: f64) {
-    c.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_)));
-    if transparency > 0.0 {
-        c.mods.push(ColorTransform::Alpha(((1.0 - transparency) * 100_000.0).round() as i32));
-    }
+    c.set_alpha(1.0 - transparency);
 }
 
 /// Text Fill › Transparency: the text keeps its colour and gets an alpha. A run without its own
@@ -448,18 +445,50 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
             o.insert(m.xml_name().to_string(), json!(v));
         }
     }
+    // One key per transform reads back in key order. When that would change the transforms (a
+    // repeated or valueless transform, or a different order), `mods` lists each one in order.
+    let keyed: Vec<_> =
+        o.iter().filter_map(|(k, v)| deckcraft_color::ColorTransform::from_xml(k, v.as_i64().and_then(|x| i32::try_from(x).ok()))).collect();
+    if keyed != c.mods {
+        o.clear();
+        o.insert("mods".into(), c.mods.iter().map(|m| json!([m.xml_name(), m.value()])).collect());
+    }
+    // `#RRGGBB`, or `#RRGGBBAA` when the color is not opaque.
+    let hex = |rgb: &deckcraft_color::Rgba| if rgb.a < 255 { format!("#{}{:02X}", rgb.hex(), rgb.a) } else { format!("#{}", rgb.hex()) };
     match &c.base {
-        ColorBase::Rgb { rgb } if o.is_empty() => json!(format!("#{}", rgb.hex())),
+        ColorBase::Rgb { rgb } if o.is_empty() => json!(hex(rgb)),
         ColorBase::Rgb { rgb } => {
-            o.insert("rgb".into(), json!(format!("#{}", rgb.hex())));
+            o.insert("rgb".into(), json!(hex(rgb)));
             Value::Object(o)
         }
         ColorBase::Scheme { slot } => {
             o.insert("scheme".into(), json!(slot.xml_name()));
             Value::Object(o)
         }
-        ColorBase::Preset { name } => json!(name),
-        ColorBase::System { last, .. } => json!(format!("#{}", last.hex())),
+        ColorBase::Preset { name } if deckcraft_color::is_preset_name(name) => {
+            o.insert("preset".into(), json!(name));
+            Value::Object(o)
+        }
+        // A preset name the color parser does not know goes as the RGB color it draws with, so OK still accepts it.
+        ColorBase::Preset { name } => {
+            let drawn = hex(&deckcraft_color::preset(name).unwrap_or(deckcraft_color::Rgba::BLACK));
+            if o.is_empty() {
+                return json!(drawn);
+            }
+            o.insert("rgb".into(), json!(drawn));
+            Value::Object(o)
+        }
+        ColorBase::System { name, last } if deckcraft_color::is_system_name(name) => {
+            o.insert("system".into(), json!(name));
+            o.insert("last".into(), json!(hex(last)));
+            Value::Object(o)
+        }
+        // A system name the color parser does not know goes as the RGB color it draws with, so OK still accepts it.
+        ColorBase::System { last, .. } if o.is_empty() => json!(hex(last)),
+        ColorBase::System { last, .. } => {
+            o.insert("rgb".into(), json!(hex(last)));
+            Value::Object(o)
+        }
     }
 }
 
