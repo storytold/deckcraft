@@ -106,12 +106,14 @@ fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "slide.new", json!({}));
         }
         if let Some(a) = arrow {
-            egui::Popup::menu(&a).width(420.0).show(|ui| new_slide_menu(app, ui));
+            egui::Popup::menu(&a).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(420.0).show(|ui| new_slide_menu(app, ui));
         }
         rows(ui, |ui| {
             let (main, arrow) = small_button_ex(ui, Icon::Layout, "Layout", enabled(app, "slide.layout"), false, true);
             if let Some(arrow) = arrow {
-                widgets::split_menu(&main, &arrow, |ui| layout_menu(app, ui, "slide.layout"));
+                widgets::split_popup(&main, &arrow)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| layout_menu(app, ui, "slide.layout"));
             }
             small(app, ui, Icon::ResetSlide, "Reset", "slide.reset", json!({}));
             let (main, arrow) = small_button_ex(ui, Icon::Section, "Section", enabled(app, "section.add"), false, true);
@@ -128,15 +130,18 @@ fn new_slide_menu(app: &mut SlideApp, ui: &mut Ui) {
     ui.separator();
     if ui.button("Duplicate Selected Slides").clicked() {
         run(app, "slide.duplicate", json!({}));
+        ui.close();
     }
     if ui.button("Slides from Outline…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("outline"));
+        ui.close();
     }
     let desktop = app.services.pick_open.is_some();
     for (label, keep) in [("Reuse Slides…", false), ("Reuse Slides (Keep Source Formatting)…", true)] {
         let r = ui.add_enabled(desktop, egui::Button::new(label));
         if r.clicked() {
             run(app, "app.reuseSlidesDialog", json!({"keepFormatting": keep}));
+            ui.close();
         }
         r.on_disabled_hover_text("Choosing a presentation to reuse needs the desktop app");
     }

@@ -108,8 +108,27 @@ fn the_last_of_many_layouts_is_reachable_by_scrolling() {
 fn a_short_layout_list_fits_without_scrolling() {
     let (mut h, last_name) = harness_with_layouts(11);
     click(&mut h, "Layout options");
-    let last = h.query_all_by_label(last_name.as_str()).next().expect("the last default layout must be in the tree");
-    assert!(last.rect().max.y < 560.0, "the default layouts fit under the viewport cap");
+    let last_rect = {
+        let last = h.query_all_by_label(last_name.as_str()).next().expect("the last default layout must be in the tree");
+        last.rect()
+    };
+    assert!(last_rect.max.y < 560.0, "the default layouts fit under the viewport cap");
+    assert_eq!(h.query_all_by_role(Role::ScrollBar).count(), 0, "a short layout list has no scrollbar");
+}
+
+#[test]
+fn a_scrollbar_click_keeps_the_layout_gallery_open() {
+    let (mut h, _) = harness_with_layouts(76);
+    click(&mut h, "Layout options");
+    let at = {
+        let bar = h.query_all_by_role(Role::ScrollBar).last().expect("the layout scrollbar");
+        bar.rect().center()
+    };
+    h.event(egui::Event::PointerMoved(at));
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(3);
+    assert!(h.query_by_label("Title Slide").is_some(), "the layout gallery stays open after a scrollbar click");
 }
 
 /// Keyboard entry must recognize either named half as the menu's origin. In particular, Up
