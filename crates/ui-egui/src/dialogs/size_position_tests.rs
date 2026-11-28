@@ -54,6 +54,40 @@ fn size_button_sets_width_in_one_undo() {
 }
 
 #[test]
+fn size_and_position_keeps_a_horizontal_line_straight() {
+    let mut h = harness();
+    let id =
+        h.state_mut().session.execute("shape.insert", &json!({"preset": "line", "rect": [40.0, 50.0, 200.0, 0.0]})).unwrap()["id"].as_u64().unwrap();
+    let before = box_of(h.state(), id);
+    assert_eq!(before, (40.0, 50.0, 200.0, 0.0, 0.0));
+
+    h.state_mut().run("shape.sizePosition", json!({})).unwrap();
+    h.run_steps(2);
+    h.state_mut().dialog.as_mut().unwrap().fields.insert("x".into(), "2".into());
+    h.run_steps(1);
+    h.get_by_label("OK").click_accesskit();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(box_of(h.state(), id), (144.0, 50.0, 200.0, 0.0, 0.0));
+
+    h.state_mut().run("shape.sizePosition", json!({})).unwrap();
+    h.run_steps(2);
+    let fields = &mut h.state_mut().dialog.as_mut().unwrap().fields;
+    fields.insert("lock".into(), "1".into());
+    fields.insert("w".into(), "4".into());
+    h.run_steps(1);
+    h.get_by_label("OK").click_accesskit();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(box_of(h.state(), id), (144.0, 50.0, 288.0, 0.0, 0.0));
+
+    h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(box_of(h.state(), id), (144.0, 50.0, 200.0, 0.0, 0.0));
+    h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(box_of(h.state(), id), before);
+}
+
+#[test]
 fn lock_aspect_from_the_dialog_scales_height() {
     let mut h = harness();
     let id = h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [40.0, 50.0, 200.0, 100.0]})).unwrap()["id"]

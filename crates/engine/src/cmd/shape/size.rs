@@ -90,7 +90,8 @@ fn norm_deg(r: f64) -> f64 {
 
 /// Width wins when both sides are set with the aspect locked, matching `shape.resize`.
 fn apply_size(x: &mut deckcraft_geom::Xfrm, spec: SizeSpec) {
-    let ar = if x.h > 0.0 { x.w / x.h } else { 1.0 };
+    let (width_set, height_set) = (spec.width_set(), spec.height_set());
+    let resize_aspect = spec.lock && x.w > 0.0 && x.h > 0.0 && (width_set || height_set);
     let mut nw = x.w;
     let mut nh = x.h;
     if let Some(p) = spec.scale_w {
@@ -105,15 +106,21 @@ fn apply_size(x: &mut deckcraft_geom::Xfrm, spec: SizeSpec) {
     if let Some(h) = spec.h {
         nh = h;
     }
-    if spec.lock && (spec.width_set() || spec.height_set()) {
-        if spec.width_set() {
+    if resize_aspect {
+        let ar = x.w / x.h;
+        if width_set {
             nh = if ar > 0.0 { nw / ar } else { nh };
         } else {
             nw = nh * ar;
         }
     }
-    x.w = nw.clamp(MIN_PT, MAX_PT);
-    x.h = nh.clamp(MIN_PT, MAX_PT);
+    // An axis-aligned line can have a zero side. Translating or scaling it keeps that side zero.
+    if (width_set || resize_aspect) && (nw != 0.0 || x.w != 0.0) {
+        x.w = nw.clamp(MIN_PT, MAX_PT);
+    }
+    if (height_set || resize_aspect) && (nh != 0.0 || x.h != 0.0) {
+        x.h = nh.clamp(MIN_PT, MAX_PT);
+    }
     if let Some(px) = spec.x {
         x.x = px;
     }

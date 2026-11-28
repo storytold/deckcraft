@@ -58,11 +58,11 @@ fn current_points(d: &Dialog, key: &str) -> Option<f64> {
 
 /// Keep scale tied to size, and the other side tied when aspect is locked.
 fn reconcile_size_fields(d: &mut Dialog) {
-    let lock = field_of(d, "lock") == "1";
     let was_locked = field_of(d, "prevlock") == "1";
     let base_w = parse_shown(&field_of(d, "baseW")).unwrap_or(1.0);
     let base_h = parse_shown(&field_of(d, "baseH")).unwrap_or(1.0);
-    let ar = if base_h > 0.0 { base_w / base_h } else { 1.0 };
+    let lock = field_of(d, "lock") == "1" && base_w > 0.0 && base_h > 0.0;
+    let ar = if lock { base_w / base_h } else { 1.0 };
     let (w_s, h_s, sw_s, sh_s) = (field_of(d, "w"), field_of(d, "h"), field_of(d, "scaleW"), field_of(d, "scaleH"));
     let (prev_w, prev_h, prev_sw, prev_sh) = (field_of(d, "prevw"), field_of(d, "prevh"), field_of(d, "prevscaleW"), field_of(d, "prevscaleH"));
     if w_s != prev_w {
@@ -166,8 +166,9 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
     } else {
         shown_points(d, "h", "Height")?
     };
-    if field_of(d, "lock") == "1" {
-        let ar = if base_h > 0.0 { base_w / base_h } else { 1.0 };
+    let lock = field_of(d, "lock") == "1" && base_w > 0.0 && base_h > 0.0;
+    if lock {
+        let ar = base_w / base_h;
         let width_drives = edited(d, "w") || edited(d, "scaleW") || (!edited(d, "h") && !edited(d, "scaleH"));
         if width_drives {
             h = if ar > 0.0 { w / ar } else { h };
@@ -175,7 +176,10 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
             w = h * ar;
         }
     }
-    Ok(json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "lockAspect": field_of(d, "lock") == "1"}))
+    // Omit unchanged zero sides. An explicit new size must still pass the command's bounds.
+    let w = (w != 0.0 || base_w != 0.0).then_some(w);
+    let h = (h != 0.0 || base_h != 0.0).then_some(h);
+    Ok(json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "lockAspect": lock}))
 }
 
 pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
