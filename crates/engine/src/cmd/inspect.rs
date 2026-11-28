@@ -12,6 +12,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "document.inspect", "Inspect Presentation", [], None, "{} → slides with titles, layouts, shape counts; selection; size; theme", has_doc, document),
         cmd!(query "slide.inspect", "Inspect Slide", [], None, "{index?} → the slide's shapes with ids, kinds, boxes, text, fills, animations, transition, notes (text, and notesBody with its formatting)", has_doc, slide),
+        cmd!(query "slide.overflow", "Find Text Overflow", [], None, "{index?: slide, else every slide} → {slides: [{index, slideId, shapes: [{id, name, path, box, side, needed, available, over, autofit, fontScale?}]}]}: text boxes whose text is taller than their text area, or wider for text that doesn't wrap (side: height|width; in points). autofit none: the text runs over; shrink: it is drawn smaller (fontScale) and runs over only where over stays > 0 at that scale; resize: PowerPoint grows the box when the text is next edited. Groups are searched; tables and notes are not", has_doc, overflow),
         cmd!(query "slide.actions", "Inspect Slide Actions", [], None, "{index?} → {index, slideId, actions: [{owner, event, type, target, hyperlink}]}; lists shape click/hover actions and text-run links/hover actions (including table cells) without executing them", has_doc, actions),
         cmd!(query "shape.inspect", "Inspect Shape", [], None, "{id} → full shape JSON plus its effective box", has_doc, shape),
         cmd!(query "commands.list", "List Commands", [], None, "{filter?: substring} → [{id, label, params, enabled}]", always, commands),
@@ -135,6 +136,102 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
         "comments": sl.comments.len(),
         "hidden": sl.hidden,
     }))
+}
+
+fn overflow(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let d = &st.doc;
+    let only = opt_usize_param(p, "index", "slide.overflow")?;
+    if let Some(i) = only
+        && i >= d.slides.len()
+    {
+        return Err(bad("slide.overflow", format!("no slide {i}")));
+    }
+    let mut slides = Vec::new();
+    for (i, sl) in d.slides.iter().enumerate() {
+        if only.is_some_and(|o| o != i) {
+            continue;
+        }
+        let Some(ctx) = Ctx::for_slide(d, sl) else { continue };
+        let mut found = Vec::new();
+        for sh in &sl.shapes {
+            overflowing(&ctx, sh, &mut Vec::new(), &mut found);
+        }
+        if !found.is_empty() || only.is_some() {
+            slides.push(json!({"index": i, "slideId": sl.id, "shapes": found}));
+        }
+    }
+    Ok(json!({"slides": slides}))
+}
+
+/// The shape (and, in a group, its members) if its text is taller than its text area.
+fn overflowing(ctx: &Ctx, sh: &Shape, path: &mut Vec<Value>, found: &mut Vec<Value>) {
+    use deckcraft_model::text::AutoFit;
+    if let ShapeKind::Group { children, .. } = &sh.kind {
+        path.push(json!({"id": sh.id, "name": sh.name}));
+        for c in children {
+            overflowing(ctx, c, path, found);
+        }
+        path.pop();
+        return;
+    }
+    let Some(body) = sh.text.as_ref().filter(|t| !t.is_empty()) else { return };
+    let x = resolve::xfrm(ctx, sh);
+    let rect = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
+    let fields = deckcraft_text::NoFields;
+    let bp = resolve::body(ctx, sh);
+    // a text that doesn't wrap runs over the side instead: compare widths
+    if bp.wrap == Some(false) {
+        let needed = deckcraft_text::fit_width(ctx, sh, body, rect, &fields);
+        let available = rect.width();
+        if needed > available + 0.5 {
+            found.push(json!({
+                "id": sh.id,
+                "name": sh.name,
+                "path": path,
+                "box": [round(x.x), round(x.y), round(x.w), round(x.h)],
+                "side": "width",
+                "needed": round(needed),
+                "available": round(available),
+                "over": round(needed - available),
+                // a box that resizes to its text grows sideways only when PowerPoint next edits it
+                "autofit": if bp.autofit == Some(AutoFit::Shape) { "resize" } else { "none" },
+                "text": body.text().chars().take(80).collect::<String>(),
+            }));
+        }
+        return;
+    }
+    let needed = deckcraft_text::fit_height(ctx, sh, body, rect, &fields);
+    let available = rect.height();
+    if needed <= available + 0.5 {
+        return;
+    }
+    let (mode, scale, over) = match bp.autofit {
+        Some(AutoFit::Shape) => ("resize", None, needed - available),
+        Some(AutoFit::Shrink { .. }) => {
+            // as drawn: the layout shrinks the text to fit; what still sticks out at that scale
+            let l = deckcraft_text::layout(ctx, sh, body, &deckcraft_text::Opts { rect, fields: &fields, prompt_color: None, no_shrink: false });
+            let drawn = l.content_height + bp.inset_t.unwrap_or(3.6) + bp.inset_b.unwrap_or(3.6);
+            ("shrink", Some(l.font_scale), (drawn - available).max(0.0))
+        }
+        _ => ("none", None, needed - available),
+    };
+    let mut v = json!({
+        "id": sh.id,
+        "name": sh.name,
+        "path": path,
+        "box": [round(x.x), round(x.y), round(x.w), round(x.h)],
+        "side": "height",
+        "needed": round(needed),
+        "available": round(available),
+        "over": round(over),
+        "autofit": mode,
+        "text": body.text().chars().take(80).collect::<String>(),
+    });
+    if let (Some(o), Some(f)) = (v.as_object_mut(), scale) {
+        o.insert("fontScale".into(), json!(round(f)));
+    }
+    found.push(v);
 }
 
 fn actions(s: &mut Session, p: &Value) -> Result<Value> {
