@@ -11,13 +11,14 @@ use deckcraft_engine::Session;
 
 /// Build the standard 1280×800 UI harness around a supplied session and run three frames.
 fn harness(session: Session) -> egui_kittest::Harness<'static, SlideApp> {
-    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 800.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        SlideApp::new(session, Services::default()),
-    );
+    let mut h =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1280.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, Services::default()),
+        );
     crate::install_ime_pass_hooks(&h.ctx);
     // The app keeps requesting repaints, so step frames instead of run().
     h.run_steps(3);
@@ -191,19 +192,20 @@ fn a_discarded_pass_keeps_the_tombstone_until_a_settled_pass_publishes_the_inter
     use std::sync::{Arc, Mutex};
     let traces = Arc::new(Mutex::new(Vec::new()));
     let seen = traces.clone();
-    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 800.0)).build_ui_state(
-        move |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-            seen.lock().unwrap().push((
-                app.ime_cancelled.is_some(),
-                app.ime_interrupt_pending,
-                app.ime_composition.is_none(),
-                ui.ctx().will_discard(),
-            ));
-        },
-        SlideApp::new(Session::with_new(), Services::default()),
-    );
+    let mut h =
+        egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1280.0, 800.0)).build_ui_state(
+            move |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+                seen.lock().unwrap().push((
+                    app.ime_cancelled.is_some(),
+                    app.ime_interrupt_pending,
+                    app.ime_composition.is_none(),
+                    ui.ctx().will_discard(),
+                ));
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
     h.run_steps(3);
     let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
     h.state_mut().run("text.edit", json!({"id": title})).unwrap();

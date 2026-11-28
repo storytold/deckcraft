@@ -30,7 +30,7 @@ fn theme_font_choices(app: &SlideApp, selected: &str) -> Vec<String> {
 /// Draw an accessible font combo box and update the selected family; the caller supplies the
 /// visible label.
 fn font_combo(ui: &mut Ui, label: &str, choices: &[String], selected: &mut String) {
-    let resp = craft_ui::ComboBox::from_id_salt(label).selected_text(selected.as_str()).width(240.0).show_ui(ui, |ui| {
+    let resp = egui::ComboBox::from_id_salt(label).selected_text(selected.as_str()).width(240.0).show_ui(ui, |ui| {
         for face in choices {
             if ui.selectable_label(selected == face, face).clicked() {
                 *selected = face.clone();

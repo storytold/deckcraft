@@ -46,10 +46,12 @@ The summary between `<!-- SUMMARY -->
 
 Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data, Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows, #1414, re-test after the 2026-11-01 OS-clipboard fix), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
 
+**Headless ([RFC-0052](https://github.com/storytold/craft-contrib/blob/main/rfcs/0052-headless-reach.md)): 0 yes, 0 no (window 0, os 0, engine-gap 0), 0 partial, 191 unknown.** The rows name no command ids yet, so none can be `yes`. A row may add a fifth `Headless` cell, `no (<reach>)` or `partial (<reach>)` with a reach of `window`, `os` or `engine-gap`; a row without one is `unknown`.
+
 ## Rows
 
-| Area | Feature | Priority | Status |
-|---|---|---|---|
+| Area | Feature | Priority | Status | Headless |
+|---|---|---|---|---|
 | Application shell | Start screen (new, templates/themes, recent) | P0 | D |
 | Application shell | Ribbon with Home/Insert/Draw/Design/Transitions/Animations/Slide Show/Review/View tabs | P0 | D |
 | Application shell | Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design) | P0 | P |

@@ -42,13 +42,17 @@ fn drag_indents_add_move_and_remove_tabs_on_the_ruler() {
     s.execute("text.insert", &json!({"text": "Name\tRole\tTeam"})).unwrap();
     let mut app = SlideApp::new(s, Services::default());
     app.ui.ruler = true;
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     let (slide, k) = (h.state().slide_rect.unwrap(), h.state().canvas_scale);
     let x0 = ruler(&mut h)["x"].as_f64().unwrap() as f32;
@@ -93,13 +97,17 @@ fn editing_harness() -> Harness<'static, SlideApp> {
     s.execute("text.insert", &json!({"text": "Item\t9.50"})).unwrap();
     let mut app = SlideApp::new(s, Services::default());
     app.ui.ruler = true;
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(crate::framework::install_headless)
+        .with_size(egui::vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     h
 }
