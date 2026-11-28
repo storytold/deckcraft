@@ -778,3 +778,6 @@ fn to_path(bp: &kurbo::BezPath) -> Option<krilla::geom::Path> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_line_breaks;
