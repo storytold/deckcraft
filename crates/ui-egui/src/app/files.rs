@@ -341,11 +341,15 @@ impl SlideApp {
     /// A presentation was opened from `path`: first in the recent list, shown in Normal view.
     pub(crate) fn note_recent(&mut self, path: &str) {
         self.status = None; // an older error (a missing file just before this one) must not linger
+        self.remember_recent_path(path);
+        self.ui.view = ViewMode::Normal;
+    }
+
+    fn remember_recent_path(&mut self, path: &str) {
         self.recent_checked.remove(path);
         self.ui.recent.retain(|p| p != path);
         self.ui.recent.insert(0, path.to_string());
         self.ui.recent.truncate(RECENT_MAX);
-        self.ui.view = ViewMode::Normal;
     }
 
     /// Transitions › Sound › Other Sound…: pick an audio file for the selected slides.
@@ -463,8 +467,7 @@ impl SlideApp {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
                         self.set_status(format!("Saved {path}"));
-                        self.ui.recent.retain(|p| *p != path);
-                        self.ui.recent.insert(0, path);
+                        self.remember_recent_path(&path);
                     }
                     Err(e) => self.set_status(e.to_string()),
                 }
@@ -870,5 +873,38 @@ mod print_preview_tests {
 
         assert!(!dir.exists());
         std::fs::remove_dir(base).unwrap();
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod recent_tests {
+    use super::{RECENT_MAX, SlideApp, ViewMode};
+
+    #[test]
+    fn save_as_updates_recent_paths() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("deckcraft-save-as-recent-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("saved.deckcraft");
+        let path = file.to_string_lossy().into_owned();
+        let picked = path.clone();
+        let services = crate::Services { pick_save: Some(Box::new(move |_: &str| Some(picked.clone()))), ..Default::default() };
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), services);
+        app.ui.view = ViewMode::Sorter;
+        app.ui.recent = (0..RECENT_MAX).map(|i| format!("old-{i}.deckcraft")).collect();
+        let existed_before = app.recent_exists(&path);
+        app.save_as_dialog("deckcraft");
+        let exists_after = app.recent_exists(&path);
+        let saved = file.is_file();
+        if saved {
+            std::fs::remove_file(&file).unwrap();
+        }
+        std::fs::remove_dir(&dir).unwrap();
+
+        assert!(!existed_before && saved);
+        assert!(exists_after, "the saved file must no longer be marked missing");
+        assert_eq!(app.ui.recent.first(), Some(&path));
+        assert_eq!(app.ui.recent.len(), RECENT_MAX);
+        assert!(matches!(app.ui.view, ViewMode::Sorter));
     }
 }
