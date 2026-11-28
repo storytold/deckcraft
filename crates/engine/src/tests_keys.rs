@@ -581,3 +581,40 @@ fn format_painter_ignores_a_shift_press_that_leaves_the_selection() {
     assert!(s.painter.is_some(), "the painter stays armed");
     assert!(!bold_at(&mut s, (1, 0)));
 }
+
+/// Delete on selected shapes is one undo step: the key must reach the command the same way
+/// `execute` does, not run it directly (#2370).
+#[test]
+fn delete_of_shapes_from_the_keyboard_is_undoable() {
+    let mut s = Session::new();
+    crate::sample::open_sample(&mut s).unwrap();
+    let shapes = s.doc().unwrap().current_slide().unwrap().shapes.len();
+    let id = s.doc().unwrap().current_slide().unwrap().shapes[0].id;
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    s.key("Delete", NONE).unwrap();
+    assert_eq!(s.doc().unwrap().current_slide().unwrap().shapes.len(), shapes - 1, "the shape is gone");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().current_slide().unwrap().shapes.len(), shapes, "one Undo brings it back");
+}
+
+/// Backspace and Delete act on what the selection names: text first, then shapes. They never
+/// touch the slide list from the keyboard — that is the UI's call, since only it knows whether
+/// the thumbnail pane has the keyboard (#2370).
+#[test]
+fn backspace_and_delete_never_delete_a_slide_from_the_keyboard() {
+    let mut s = Session::new();
+    crate::sample::open_sample(&mut s).unwrap();
+    let before = s.doc().unwrap().doc.slides.len();
+    // With no insertion point and no shape, Delete is handled and deletes nothing: before this
+    // change its command, edit.delete, turned into text.delete and took the slide. Backspace
+    // is met by the registry's text.delete, which declines without an insertion point.
+    let r = s.key("Delete", NONE).unwrap();
+    assert_eq!(r["handled"], true);
+    assert_eq!(s.doc().unwrap().doc.slides.len(), before, "the slide list is untouched");
+    // With a shape selected, Delete still deletes the shape.
+    let shapes = s.doc().unwrap().current_slide().unwrap().shapes.len();
+    let id = s.doc().unwrap().current_slide().unwrap().shapes[0].id;
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    s.key("Delete", NONE).unwrap();
+    assert_eq!(s.doc().unwrap().current_slide().unwrap().shapes.len(), shapes - 1, "the shape is gone");
+}

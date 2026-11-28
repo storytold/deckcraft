@@ -39,7 +39,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("edit.pasteText", "Paste and Match Formatting", ["Edit"], Some("Cmd+Shift+V"), "{text?}", has_doc, paste_text),
         cmd!("edit.duplicate", "Duplicate", ["Edit"], Some("Cmd+D"), "{ids?}", has_selection, duplicate),
-        cmd!("edit.delete", "Delete", ["Edit"], Some("Delete"), "{ids?, scope?: slides}", has_doc, delete),
+        cmd!(
+            "edit.delete",
+            "Delete",
+            ["Edit"],
+            Some("Delete"),
+            "{ids?, scope?: slides, intent?: slideList} — `intent` lets the keys name the slide list without a scope the selection would imply",
+            has_doc,
+            delete
+        ),
         cmd!(noundo "edit.selectAll", "Select All", ["Edit"], Some("Cmd+A"), "{scope?: slides}", has_slide, select_all),
         cmd!(noundo "edit.deselect", "Deselect", [], Some("Escape"), "{}", has_doc, deselect),
         cmd!(noundo "edit.select", "Select Objects", [], None, "{ids: [id], add?: bool, toggle?: bool}", has_slide, select),
@@ -70,9 +78,11 @@ fn redo(s: &mut Session, _p: &Value) -> Result<Value> {
     restore(s, true)
 }
 
-fn slides_scope(s: &Session, p: &Value) -> bool {
-    str_param(p, "scope") == Some("slides")
-        || s.active().is_some_and(|d| d.selection.shapes.is_empty() && d.selection.text.is_none() && !d.selection.slides.is_empty())
+/// Is the slide list the scope? Only when the caller names it: the UI passes `scope: slides` for
+/// the pane with the keyboard, the keys pass `intent: slideList`. The selection alone used to
+/// count too, and a bare Delete on the canvas then took the slide (#2370).
+fn slides_scope(p: &Value) -> bool {
+    str_param(p, "scope") == Some("slides") || str_param(p, "intent") == Some("slideList")
 }
 
 fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
@@ -89,7 +99,7 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         }
         return Ok(String::new());
     }
-    if slides_scope(s, p) {
+    if slides_scope(p) {
         let ids: Vec<SlideId> =
             if st.selection.slides.is_empty() { st.current_slide().map(|x| vec![x.id]).unwrap_or_default() } else { st.selection.slides.clone() };
         let slides: Vec<Slide> = ids.iter().filter_map(|id| st.doc.slide(*id).cloned()).collect();
@@ -697,7 +707,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     if s.doc()?.selection.text.is_some() && ids_param(p, "ids").is_none() {
         return super::text::delete_dir(s, "forward");
     }
-    if slides_scope(s, p) && ids_param(p, "ids").is_none() {
+    if slides_scope(p) && ids_param(p, "ids").is_none() {
         return s.execute("slide.delete", &json!({}));
     }
     // With table cells selected, Delete clears their text and keeps the table, as in PowerPoint.

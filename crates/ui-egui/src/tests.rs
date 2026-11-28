@@ -1003,6 +1003,54 @@ fn select_all_follows_the_focused_pane() {
     assert!(!st.selection.shapes.is_empty(), "canvas select all picks the shapes");
 }
 
+/// ⌘D and Delete in the slide list act on the slides, as in PowerPoint: ⌘D duplicates the
+/// selected slides and Delete removes them; with the canvas focused the keys keep their shape
+/// meaning.
+#[test]
+fn duplicate_and_delete_follow_the_focused_pane() {
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), Services::default()),
+    );
+    harness.run_steps(2);
+    let click = |h: &mut egui_kittest::Harness<'_, SlideApp>, pos: egui::Pos2| {
+        h.event(egui::Event::PointerMoved(pos));
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.run_steps(2);
+    };
+    let count = |h: &egui_kittest::Harness<'_, SlideApp>| h.state().session.active().unwrap().doc.slides.len();
+    let w = harness.state().ui.thumbs_width;
+    click(&mut harness, egui::pos2(w / 2.0, 300.0));
+    assert!(harness.state().slides_focused);
+    let slides = count(&harness);
+
+    // ⌘D adds a copy of the slide; Delete removes the selected one.
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::D);
+    harness.run_steps(2);
+    assert_eq!(count(&harness), slides + 1, "Cmd+D duplicates the slide in the list");
+    harness.key_press(egui::Key::Backspace);
+    harness.run_steps(2);
+    assert_eq!(count(&harness), slides, "Backspace deletes the slide in the list");
+
+    // On the canvas the same keys keep their shape meaning: ⌘D duplicates the shape, and
+    // Delete with no shape selected leaves the slide alone.
+    click(&mut harness, egui::pos2(700.0, 400.0));
+    assert!(!harness.state().slides_focused);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::D);
+    harness.run_steps(2);
+    assert_eq!(count(&harness), slides, "Cmd+D on the canvas duplicates a shape, not the slide");
+    let shapes = harness.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+    harness.key_press(egui::Key::Backspace);
+    harness.run_steps(2);
+    assert_eq!(count(&harness), slides, "Backspace on the canvas does not touch the slide list");
+    assert!(harness.state().session.active().unwrap().current_slide().unwrap().shapes.len() <= shapes);
+}
+
 fn harness() -> egui_kittest::Harness<'static, SlideApp> {
     egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
         |ui, app: &mut SlideApp| {

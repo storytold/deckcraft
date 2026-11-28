@@ -66,6 +66,12 @@ impl Session {
             self.tool.edit_segment = None;
             return Ok(json!({"handled": true, "command": "shape.editPoints"}));
         }
+        // The registry cannot pair these keys: it binds text.delete to Backspace alone and
+        // answers Delete with edit.delete, whatever is selected.
+        if editing && matches!(k, "backspace" | "delete") && !mods.cmd && !mods.alt {
+            crate::cmd::text::key_delete(self, k)?;
+            return Ok(json!({"handled": true, "command": "text.delete"}));
+        }
         if editing && let Some((id, params)) = self.text_key(k, mods) {
             let r = self.execute(id, &params)?;
             return Ok(json!({"handled": true, "command": id, "result": r}));
@@ -123,7 +129,7 @@ impl Session {
             }
             match k {
                 "backspace" | "delete" => {
-                    self.execute("edit.delete", &json!({}))?;
+                    crate::cmd::text::key_delete_selection(self, mods.shift)?;
                     return Ok(json!({"handled": true}));
                 }
                 "enter" | "return" | "f2" => {
@@ -369,14 +375,12 @@ mod tests {
         s.type_text("Hi").unwrap();
         s.key("Enter", Mods::default()).unwrap();
         s.type_text("there").unwrap();
+        // Backspace while editing drops a character and leaves the slide alone.
         s.key("Backspace", Mods::default()).unwrap();
         s.key("Escape", Mods::default()).unwrap();
         let t = s.execute("text.get", &json!({"id": title})).unwrap();
         assert_eq!(t["text"], "Hi\nther");
         let r = s.key("b", Mods { cmd: true, ..Default::default() }).unwrap();
         assert_eq!(r["command"], "format.bold");
-        s.key("Right", Mods::default()).unwrap();
-        s.key("Delete", Mods::default()).unwrap();
-        assert_eq!(s.doc().unwrap().current_slide().unwrap().shapes.len(), 1);
     }
 }

@@ -48,6 +48,28 @@ impl SlideApp {
         }
     }
 
+    /// ⌘D duplicates the slides and Backspace or Delete removes them when the slide list has the
+    /// keyboard, as in PowerPoint (#188 selects them there). The engine cannot see the pane
+    /// focus, so the UI says so; a text selection in the pane keeps its keys.
+    fn slide_list_key(&mut self, key: egui::Key, mods: Mods) -> bool {
+        let list = self.session.active().is_some_and(|d| d.selection.text.is_none() && self.slides_list_focused());
+        let acts = matches!(
+            (key, mods.cmd, mods.shift, mods.alt),
+            (egui::Key::D, true, false, false) | (egui::Key::Backspace | egui::Key::Delete, false, false, false)
+        );
+        if !(list && acts) {
+            return false;
+        }
+        // ⌘D names the slide command itself, since edit.duplicate only takes shapes. Delete has
+        // no slide command of its own (a second key registration would shadow text.delete), so
+        // edit.delete gets the scope instead.
+        let (id, q) = match key {
+            egui::Key::D => ("slide.duplicate", json!({})),
+            _ => ("edit.delete", json!({"scope": "slides"})),
+        };
+        self.run(id, q).is_ok()
+    }
+
     /// Keyboard and clipboard for the slide (with nothing or the document window focused).
     pub(super) fn keyboard(&mut self, ctx: &egui::Context) {
         let mut events = ctx.input(|i| i.events.clone());
@@ -170,6 +192,10 @@ impl SlideApp {
                     }
                 }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                    let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
+                    if self.slide_list_key(key, mods) {
+                        continue;
+                    }
                     if key == egui::Key::Escape && self.anim_preview.is_some() && !modifiers.command && !modifiers.ctrl && !modifiers.alt {
                         self.anim_preview = None;
                         continue;

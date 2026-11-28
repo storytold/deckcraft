@@ -202,7 +202,8 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("-", ""),
                 ("Select All", "edit.selectAll"),
                 ("Duplicate", "edit.duplicate"),
-                ("Delete Slide", "slide.delete"),
+                ("Duplicate Slides", "slide.duplicate"),
+                ("Delete Slides", "slide.delete"),
                 ("-", ""),
                 ("Find…", "app.find"),
                 ("Replace…", "app.replace"),
@@ -239,7 +240,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
             "Insert",
             vec![
                 ("New Slide", "slide.new"),
-                ("Duplicate Slide", "slide.duplicate"),
+                ("Duplicate Slides", "slide.duplicate"),
                 ("-", ""),
                 ("Section", "section.add"),
                 ("Text Box", "insert.textBox"),

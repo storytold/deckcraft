@@ -170,6 +170,21 @@ pub(super) fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     delete_dir(s, str_param(p, "dir").unwrap_or("backward"))
 }
 
+/// Backspace and Delete while editing text, by key name. The deletion goes through `execute`, so
+/// it keeps the "Delete Text" undo step (`Session::key` sends the keys here because the registry
+/// would answer Delete with `edit.delete`).
+pub(crate) fn key_delete(s: &mut Session, k: &str) -> Result<Value> {
+    let dir = if k == "delete" { "forward" } else { "backward" };
+    s.execute("text.delete", &json!({"dir": dir}))
+}
+
+/// Delete outside text editing: what the selection names (a cell range, shapes). It runs through
+/// `execute` like any command, so the deletion keeps its undo step; only the slide list is never
+/// implied, the UI names it with `scope: slides` when its pane has the keyboard (#2370).
+pub(crate) fn key_delete_selection(s: &mut Session, shift: bool) -> Result<Value> {
+    s.execute("edit.delete", &json!({"shift": shift}))
+}
+
 /// Is paragraph `para` right-to-left (its lines run from the right)?
 fn para_rtl(layout: Option<&deckcraft_text::TextLayout>, body: &TextBody, para: usize) -> bool {
     match layout.and_then(|l| l.lines.iter().find(|x| x.para == para)) {
