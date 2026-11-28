@@ -990,13 +990,15 @@ fn xfrm(a: &draw::Anchor, m: Map, rot: f64, flip_h: bool, flip_v: bool) -> Xfrm 
     let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
     let (l, t, r, b) = (finite(a.left * m.sx + m.ox), finite(a.top * m.sy + m.oy), finite(a.right * m.sx + m.ox), finite(a.bottom * m.sy + m.oy));
     let (mut x, mut y, mut w, mut h) = (l.min(r), t.min(b), (r - l).abs(), (b - t).abs());
-    let rot = if rot.is_finite() { rot.rem_euclid(360.0) } else { 0.0 };
-    if (45.0..135.0).contains(&rot) || (225.0..315.0).contains(&rot) {
+    let stored_rot = if rot.is_finite() { rot.rem_euclid(360.0) } else { 0.0 };
+    if (45.0..135.0).contains(&stored_rot) || (225.0..315.0).contains(&stored_rot) {
         let (cx, cy) = (x + w / 2.0, y + h / 2.0);
         std::mem::swap(&mut w, &mut h);
         x = cx - w / 2.0;
         y = cy - h / 2.0;
     }
+    // A shape flipped in exactly one direction stores its angle mirrored; undo it.
+    let rot = if flip_h ^ flip_v { (360.0 - stored_rot).rem_euclid(360.0) } else { stored_rot };
     Xfrm { x, y, w, h, rot, flip_h, flip_v }
 }
 
@@ -1071,5 +1073,36 @@ mod tests {
         for (a, dm) in [(0.0, 90.0), (-90.0, 0.0), (-180.0, 90.0), (-270.0, 180.0), (-315.0, 225.0), (-45.0, 315.0)] {
             assert_eq!(linear_angle(a), dm, "{a}");
         }
+    }
+
+    /// [MS-ODRAW] stores the angle of a shape flipped in exactly one direction as 360° - θ.
+    /// The importer must undo that before writing `a:xfrm rot` (#2407).
+    #[test]
+    fn a_single_flip_mirrors_the_stored_legacy_rotation_back() {
+        let a = draw::Anchor { left: 0.0, top: 0.0, right: 100.0, bottom: 50.0 };
+        let m = Map { sx: 1.0, sy: 1.0, ox: 0.0, oy: 0.0 };
+
+        // A 30° visual shape is stored as 330° with one flip.
+        let h = xfrm(&a, m, 330.0, true, false);
+        assert_eq!((h.rot, h.flip_h, h.flip_v), (30.0, true, false));
+        let v = xfrm(&a, m, 330.0, false, true);
+        assert_eq!((v.rot, v.flip_h, v.flip_v), (30.0, false, true));
+        assert_eq!(xfrm(&a, m, 30.0, true, false).rot, 330.0);
+
+        // Both flips and no flip keep the stored angle.
+        assert_eq!(xfrm(&a, m, 330.0, true, true).rot, 330.0);
+        assert_eq!(xfrm(&a, m, 330.0, false, false).rot, 330.0);
+
+        // A 90° visual shape is stored as 270°; the box swap still follows the stored angle.
+        let q = xfrm(&a, m, 270.0, true, false);
+        assert_eq!((q.rot, q.w, q.h), (90.0, 50.0, 100.0));
+
+        // The wrap is applied before the mirror.
+        assert_eq!(xfrm(&a, m, 360.0, true, false).rot, 0.0);
+        assert_eq!(xfrm(&a, m, -30.0, true, false).rot, 30.0);
+
+        // A group's child map still applies before the flip correction.
+        let g = xfrm(&a, Map { sx: 2.0, sy: 3.0, ox: 10.0, oy: 20.0 }, 330.0, true, false);
+        assert_eq!((g.rot, g.x, g.y, g.w, g.h), (30.0, 10.0, 20.0, 200.0, 150.0));
     }
 }
