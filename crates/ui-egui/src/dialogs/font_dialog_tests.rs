@@ -67,3 +67,73 @@ fn command_t_opens_the_font_dialog_and_cancel_keeps_the_text() {
     assert!(h.state().dialog.is_none());
     assert_eq!(bold_of(&h), None);
 }
+
+#[test]
+fn preset_and_system_colors_show_in_the_dialog_and_ok_keeps_them() {
+    for (color, shown) in [
+        (json!({"preset": "red", "lumMod": 50000}), "red"),
+        (json!({"system": "windowText", "last": "#123456", "alpha": 60000}), "#123456"),
+        (json!({"preset": "red", "mods": [{"op": "inv"}, {"op": "inv"}]}), "red"),
+        (json!({"scheme": "accent2", "mods": [{"op": "lumOff", "val": 20000}, {"op": "lumMod", "val": 50000}]}), "accent2"),
+    ] {
+        let mut h = harness();
+        h.state_mut().session.execute("format.fontDialog", &json!({ "color": color })).unwrap();
+        let before = fill_of(&h);
+        assert!(before.is_some());
+        h.get_by_label("Font…").click();
+        h.run_steps(2);
+        let d = h.state().dialog.as_ref().expect("font dialog");
+        assert_eq!(d.fields.get("color").map(String::as_str), Some(shown));
+        h.get_by_label("OK").click_accesskit();
+        h.run_steps(1);
+        assert!(h.state().dialog.is_none(), "status {:?}", h.state().status);
+        assert_eq!(fill_of(&h), before, "{shown}");
+    }
+}
+
+#[test]
+fn ok_with_color_untouched_keeps_a_color_the_dialog_cannot_send_back() {
+    use deckcraft_color::{ColorTransform, Rgba};
+    use deckcraft_model::{ColorBase, ColorRef, Fill};
+    // Names that `color_value` does not know, as an opened file can hold, and more transforms than a
+    // command's `mods` list may carry.
+    let unknown_preset = ColorRef { base: ColorBase::Preset { name: "notAColor".into() }, mods: vec![ColorTransform::Inv; 257] };
+    let unknown_system = ColorRef { base: ColorBase::System { name: "notAColor".into(), last: Rgba::rgb(0x12, 0x34, 0x56) }, mods: vec![] };
+    for color in [unknown_preset, unknown_system] {
+        let mut h = harness();
+        set_fill(&mut h, Fill::Solid { color });
+        let before = fill_of(&h);
+        h.get_by_label("Font…").click();
+        h.run_steps(2);
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("font"));
+        h.get_by_label("Bold").click_accesskit();
+        h.run_steps(1);
+        h.get_by_label("OK").click_accesskit();
+        h.run_steps(1);
+        assert!(h.state().dialog.is_none(), "status {:?}", h.state().status);
+        assert_eq!(bold_of(&h), Some(true), "status {:?}", h.state().status);
+        assert_eq!(fill_of(&h), before);
+    }
+}
+
+/// Sets the first run's fill directly, so the test can hold a color that a command would reject.
+fn set_fill(h: &mut Harness<'_, SlideApp>, fill: deckcraft_model::Fill) {
+    let st = h.state_mut().session.active_mut().unwrap();
+    let id = st.selection.shapes[0];
+    let slide = st.selection.slide;
+    let doc = std::sync::Arc::make_mut(&mut st.doc);
+    let slide = std::sync::Arc::make_mut(&mut doc.slides[slide]);
+    let shape = slide.shapes.iter_mut().find(|sh| sh.id == id).unwrap();
+    let run = shape.text.as_mut().and_then(|t| t.paragraphs.first_mut()).and_then(|p| p.runs.first_mut()).unwrap();
+    run.props.fill = Some(fill);
+}
+
+fn fill_of(h: &Harness<'_, SlideApp>) -> Option<deckcraft_model::Fill> {
+    let st = h.state().session.active().unwrap();
+    st.selected_shapes()
+        .first()
+        .and_then(|sh| sh.text.as_ref())
+        .and_then(|t| t.paragraphs.first())
+        .and_then(|p| p.runs.first())
+        .and_then(|r| r.props.fill.clone())
+}

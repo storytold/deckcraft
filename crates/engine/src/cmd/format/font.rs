@@ -439,30 +439,6 @@ fn font_edits(p: &Value) -> Result<FontEdits> {
     Ok(FontEdits { family, size, bold: font_bool(p, "bold")?, italic: font_bool(p, "italic")?, underline, color, strike, baseline, caps, spacing })
 }
 
-/// A colour as a `format.fontDialog` / `format.color` parameter, including transforms.
-fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
-    use deckcraft_model::ColorBase;
-    let mut o = serde_json::Map::new();
-    for m in &c.mods {
-        if let Some(v) = m.value() {
-            o.insert(m.xml_name().to_string(), json!(v));
-        }
-    }
-    match &c.base {
-        ColorBase::Rgb { rgb } if o.is_empty() => json!(format!("#{}", rgb.hex())),
-        ColorBase::Rgb { rgb } => {
-            o.insert("rgb".into(), json!(format!("#{}", rgb.hex())));
-            Value::Object(o)
-        }
-        ColorBase::Scheme { slot } => {
-            o.insert("scheme".into(), json!(slot.xml_name()));
-            Value::Object(o)
-        }
-        ColorBase::Preset { name } => json!(name),
-        ColorBase::System { last, .. } => json!(format!("#{}", last.hex())),
-    }
-}
-
 fn font_dialog_params(s: &Session) -> Value {
     let r = current_run(s);
     let family =
@@ -488,7 +464,7 @@ fn font_dialog_params(s: &Session) -> Value {
         "spacing": r.spacing.unwrap_or(0.0),
     });
     if let Some(Fill::Solid { color }) = &r.fill {
-        v["color"] = color_command_value(color);
+        v["color"] = crate::cmd::color_command_value(color);
     }
     v
 }

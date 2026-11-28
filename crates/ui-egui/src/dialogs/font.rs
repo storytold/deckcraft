@@ -147,13 +147,9 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
             "caps": d.get("caps", "none"),
             "spacing": spacing,
         });
+        // An untouched Color field sends no `color`, so the text keeps its color reference as stored.
         let color = d.get("color", "");
-        let seed = d.get("colorSeed", "");
-        if color == seed {
-            if let Some(c) = d.params.get("color").filter(|v| !v.is_null()) {
-                params["color"] = c.clone();
-            }
-        } else if !color.trim().is_empty() {
+        if color != d.get("colorSeed", "") && !color.trim().is_empty() {
             params["color"] = json!(color.trim());
         }
         let _ = app.run("format.fontDialog", params);
