@@ -363,6 +363,10 @@ struct CatalogEntry {
     family: String,
     style: String,
     path: std::path::PathBuf,
+    /// The Windows (GDI) family name of a face whose typographic family is another name ("Segoe
+    /// UI Semibold" for "Segoe UI" Semibold). Kept so documents that use it find the file, but not
+    /// offered as a family of its own: a font menu would list every weight as a separate font.
+    alias: bool,
 }
 
 /// Process-wide font database.
@@ -520,7 +524,7 @@ const OUTLINE_TABLES: [&[u8; 4]; 4] = [b"glyf", b"CFF ", b"CFF2", b"VARC"];
 /// variable font is cataloged under its default style; its named instances appear once it loads.
 /// Faces with none of the [`OUTLINE_TABLES`] are left out.
 #[cfg(not(target_arch = "wasm32"))]
-fn file_face_names(path: &std::path::Path) -> Vec<(String, String)> {
+fn file_face_names(path: &std::path::Path) -> Vec<(String, String, bool)> {
     use std::io::{Read, Seek, SeekFrom};
     /// Caps on what a (possibly damaged) file can make the scan read.
     const MAX_FACES: u32 = 256;
@@ -569,7 +573,7 @@ fn file_face_names(path: &std::path::Path) -> Vec<(String, String)> {
             let (family, style) = face_names(&f)?;
             // Cataloged under its Windows family too, so "Segoe UI Semibold" finds the file.
             let legacy = legacy_names(&f, &family);
-            Some(std::iter::once((family, style)).chain(legacy))
+            Some(std::iter::once((family, style, false)).chain(legacy.map(|(f, s)| (f, s, true))))
         })
         .flatten()
         .collect()
@@ -905,6 +909,125 @@ pub fn base_style(style: &str) -> &str {
     style.split('{').next().unwrap_or(style).trim()
 }
 
+/// Is `word` a size, width, weight or style of a design rather than part of a family's name:
+/// "72pt", "Condensed", "Cond", "Light", "Soft"…
+fn is_design_word(word: &str) -> bool {
+    let w = word.to_ascii_lowercase();
+    w.strip_suffix("pt").is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        || matches!(
+            w.as_str(),
+            "cond"
+                | "condensed"
+                | "semicondensed"
+                | "semi-condensed"
+                | "extracondensed"
+                | "extra-condensed"
+                | "ultracondensed"
+                | "ultra-condensed"
+                | "narrow"
+                | "expanded"
+                | "semiexpanded"
+                | "semi-expanded"
+                | "extraexpanded"
+                | "extra-expanded"
+                | "extended"
+                | "thin"
+                | "hairline"
+                | "extralight"
+                | "extra-light"
+                | "ultralight"
+                | "ultra-light"
+                | "light"
+                | "semilight"
+                | "medium"
+                | "demi"
+                | "demibold"
+                | "semibold"
+                | "semi-bold"
+                | "bold"
+                | "extrabold"
+                | "extra-bold"
+                | "ultrabold"
+                | "ultra-bold"
+                | "heavy"
+                | "black"
+                | "italic"
+                | "oblique"
+                | "soft"
+                | "supersoft"
+                | "extra"
+                | "semi"
+                | "ultra"
+        )
+}
+
+/// A font menu entry: a name and, when several installed families are designs of it, those
+/// families ("Bricolage Grotesque 24pt", "Fraunces 72pt Soft", "Franklin Gothic Medium Cond").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FamilyGroup {
+    /// The entry's name: the family itself, or the name its designs share ("Fraunces").
+    pub name: String,
+    /// A family called exactly `name` is installed (so the entry can be picked as it is).
+    pub selectable: bool,
+    /// `(family name, what sets it apart: "72pt Soft")`, in the order given. Empty for a family
+    /// that is no group.
+    pub designs: Vec<(String, String)>,
+}
+
+/// `families` as a menu: families that share their name up to the first size, width or weight
+/// word become one entry with the others under it, instead of one flat entry each. "Fraunces
+/// 72pt", "Fraunces 72pt Soft" and "Fraunces 72pt SuperSoft" are three designs of "Fraunces", and
+/// "Bricolage Grotesque 24pt Condensed" one of "Bricolage Grotesque" (an installed family too).
+/// A name with no other design, or that starts with such a word ("Black Ops One"), stays a plain
+/// entry in its place; nothing is dropped or listed twice.
+pub fn family_groups(families: &[String]) -> Vec<FamilyGroup> {
+    use std::collections::{HashMap, HashSet};
+    // (shared name, what sets the family apart) for a name with a design word after its first word.
+    let split = |f: &str| -> Option<(String, String)> {
+        let words: Vec<&str> = f.split_whitespace().collect();
+        let i = words.iter().position(|w| is_design_word(w))?;
+        (i > 0).then(|| (words[..i].join(" "), words[i..].join(" ")))
+    };
+    let installed: HashSet<String> = families.iter().map(|f| f.to_lowercase()).collect();
+    let mut members: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for f in families {
+        if let Some((root, label)) = split(f) {
+            let list = members.entry(root.to_lowercase()).or_default();
+            if !list.iter().any(|(n, _)| n.eq_ignore_ascii_case(f)) {
+                list.push((f.clone(), label));
+            }
+        }
+    }
+    // Sizes in numeric order (9pt before 14pt), designs with no size first, then by name.
+    for list in members.values_mut() {
+        list.sort_by_cached_key(|(_, label)| {
+            let size = label.split_whitespace().find_map(|w| w.strip_suffix("pt").and_then(|n| n.parse::<u32>().ok()));
+            (size.unwrap_or(0), label.to_lowercase())
+        });
+    }
+    // A group is a name that several families share (the family itself counting as one).
+    let is_group = |root: &str| members.get(root).is_some_and(|m| m.len() + usize::from(installed.contains(root)) >= 2);
+    let mut out: Vec<FamilyGroup> = Vec::new();
+    let mut emitted: HashSet<String> = HashSet::new();
+    for f in families {
+        let root = match split(f) {
+            Some((root, _)) if is_group(&root.to_lowercase()) => root,
+            _ if is_group(&f.to_lowercase()) => f.clone(), // the family a group is named after
+            _ => {
+                if emitted.insert(f.to_lowercase()) {
+                    out.push(FamilyGroup { name: f.clone(), selectable: true, designs: Vec::new() });
+                }
+                continue;
+            }
+        };
+        if emitted.insert(root.to_lowercase()) {
+            let designs = members.get(&root.to_lowercase()).cloned().unwrap_or_default();
+            out.push(FamilyGroup { selectable: installed.contains(&root.to_lowercase()), name: root, designs });
+        }
+    }
+    out
+}
+
 fn norm(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
@@ -1006,11 +1129,17 @@ impl FontDb {
         self.catalog.read().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Family names available (loaded plus cataloged system fonts), sorted and deduplicated.
+    /// Family names available (loaded plus cataloged system fonts), sorted and deduplicated. Each
+    /// is a typographic family with its weights as styles; the Windows names that fold a weight into
+    /// the family ("Bricolage Grotesque 72pt SemiCondensed Light") still resolve in lookups but
+    /// are not listed.
     pub fn families(&self) -> Vec<String> {
         let mut v: Vec<String> = self.read_faces().iter().map(|f| f.family.clone()).collect();
         #[cfg(not(target_arch = "wasm32"))]
-        v.extend(self.read_catalog().iter().map(|c| c.family.clone()));
+        v.extend(self.read_catalog().iter().filter(|c| !c.alias).map(|c| c.family.clone()));
+        // Names starting with a dot are the system's private interface fonts (macOS's ".SF NS",
+        // ".Al Bayan PUA"…): they still resolve by name, but are not for a person to pick.
+        v.retain(|f| !f.starts_with('.'));
         v.sort_by_key(|a| a.to_lowercase());
         v.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         v
@@ -1142,8 +1271,8 @@ impl FontDb {
                 if !font_file_ok(&meta) {
                     continue;
                 }
-                for (family, style) in file_face_names(&p) {
-                    found.push(CatalogEntry { family, style, path: p.clone() });
+                for (family, style, alias) in file_face_names(&p) {
+                    found.push(CatalogEntry { family, style, path: p.clone(), alias });
                 }
             }
         }
@@ -1648,6 +1777,24 @@ mod font_dir_tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
+
+    /// The family list leaves out Windows alias names ("Segoe UI Semibold", a weight folded into
+    /// the family) and the system's dot-named interface fonts (".SF NS"), but both still resolve.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn aliases_and_dot_names_are_not_listed_but_still_resolve() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        // The first read scans the (empty) font folders; the entries go in after it.
+        db.families();
+        let entry =
+            |family: &str, alias: bool| CatalogEntry { family: family.into(), style: "Regular".into(), path: PathBuf::from("/none.ttf"), alias };
+        *db.catalog.write().unwrap() = vec![entry("Segoe UI", false), entry("Segoe UI Semibold", true), entry(".SF NS", false)];
+        let families = db.families();
+        assert!(families.iter().any(|f| f == "Segoe UI"), "{families:?}");
+        assert!(!families.iter().any(|f| f == "Segoe UI Semibold"), "an alias is not a family of its own");
+        assert!(!families.iter().any(|f| f.starts_with('.')), "no private interface fonts");
+        assert!(db.has_family("Segoe UI Semibold") && db.has_family(".SF NS"), "both still resolve by name");
+    }
 
     #[test]
     fn duplicate_collection_offsets_do_not_consume_face_cap() {
