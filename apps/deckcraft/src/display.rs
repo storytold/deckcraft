@@ -1,6 +1,9 @@
 //! Which windowing system to start on, on Linux and the BSDs.
 //!
-//! DeckCraft prefers X11 when `DISPLAY` is set (see `main`). A stale `DISPLAY` (left over from
+//! DeckCraft prefers X11 when `DISPLAY` is set (see `main`), except in a Wayland session
+//! (`XDG_SESSION_TYPE=wayland`), where it starts on Wayland: full-screen presenting through
+//! Xwayland can show each slide change seconds late. `DECKCRAFT_X11` keeps X11 there, and
+//! `DECKCRAFT_WAYLAND` asks for Wayland from any session. A stale `DISPLAY` (left over from
 //! an ended `ssh -X` session or a desktop with Xwayland turned off) used to make start-up fail
 //! with winit's "failed to open display" even though a Wayland compositor was running. When a
 //! local `DISPLAY` names an X server whose socket isn't there and Wayland is available, start on
@@ -44,11 +47,23 @@ pub fn choose(display: Option<&str>, wayland: Option<&str>, force_wayland: bool,
     }
 }
 
+/// Whether to start on Wayland although `DISPLAY` is set: asked for with `DECKCRAFT_WAYLAND`, or
+/// the session is a Wayland one and `DECKCRAFT_X11` doesn't say otherwise.
+fn prefers_wayland(force: bool, session_type: Option<&str>, force_x11: bool) -> bool {
+    force || (!force_x11 && session_type == Some("wayland"))
+}
+
 /// [`choose`] for this process.
 pub fn choose_from_env() -> Choice {
     let display = std::env::var("DISPLAY").ok();
     let wayland = std::env::var("WAYLAND_DISPLAY").ok();
-    choose(display.as_deref(), wayland.as_deref(), std::env::var_os("DECKCRAFT_WAYLAND").is_some(), |p| p.exists())
+    let session = std::env::var("XDG_SESSION_TYPE").ok();
+    let prefer = prefers_wayland(
+        std::env::var_os("DECKCRAFT_WAYLAND").is_some(),
+        session.as_deref(),
+        std::env::var_os("DECKCRAFT_X11").is_some(),
+    );
+    choose(display.as_deref(), wayland.as_deref(), prefer, |p| p.exists())
 }
 
 #[cfg(test)]
@@ -81,5 +96,15 @@ mod tests {
         assert_eq!(choose(Some(":0"), None, true, all), Choice::X11);
         assert_eq!(choose(None, None, false, all), Choice::None);
         assert_eq!(choose(Some(""), Some(""), false, all), Choice::None);
+    }
+
+    #[test]
+    fn a_wayland_session_starts_on_wayland_unless_x11_is_asked_for() {
+        assert!(prefers_wayland(false, Some("wayland"), false));
+        assert!(!prefers_wayland(false, Some("wayland"), true));
+        assert!(!prefers_wayland(false, Some("x11"), false));
+        assert!(!prefers_wayland(false, None, false));
+        assert!(prefers_wayland(true, Some("x11"), false));
+        assert!(prefers_wayland(true, Some("wayland"), true));
     }
 }
