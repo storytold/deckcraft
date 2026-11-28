@@ -605,7 +605,10 @@ fn setup(s: &mut Session, p: &Value) -> Result<Value> {
             sh.show_media_controls = v;
         }
         match (p.get("from").and_then(Value::as_u64), p.get("to").and_then(Value::as_u64)) {
-            (Some(a), Some(b)) => sh.range = Some((a.min(u32::MAX as u64) as u32, b.min(u32::MAX as u64) as u32)),
+            (Some(a), Some(b)) => {
+                sh.range = Some((a.min(u32::MAX as u64) as u32, b.min(u32::MAX as u64) as u32));
+                sh.custom_show = None;
+            }
             (None, None) if p.get("all").is_some() => sh.range = None,
             _ => {}
         }
@@ -933,6 +936,26 @@ mod tests {
         assert!(s.active().unwrap().doc.show.range.is_none());
         s.execute("show.setup", &json!({"custom": ""})).unwrap();
         assert!(s.active().unwrap().doc.show.custom_show.is_none());
+    }
+
+    #[test]
+    fn setting_a_show_range_replaces_an_active_custom_show() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("show.customShow", &json!({"name": "Short", "slides": [0, 1]})).unwrap();
+        let order = |s: &Session| deckcraft_anim::show_order(&s.doc().unwrap().doc);
+
+        s.execute("show.setup", &json!({"from": 2, "to": 3, "custom": "Short"})).unwrap();
+        assert_eq!(order(&s), [0, 1], "a custom show in the same request takes precedence");
+        for params in [json!({"from": 2}), json!({"to": 3})] {
+            s.execute("show.setup", &params).unwrap();
+            assert_eq!(order(&s), [0, 1], "either endpoint alone keeps the custom show");
+        }
+
+        s.execute("show.setup", &json!({"from": 2, "to": 3})).unwrap();
+        assert_eq!(order(&s), [1, 2]);
+        assert!(s.doc().unwrap().doc.show.custom_show.is_none());
     }
 
     #[test]
