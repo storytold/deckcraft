@@ -11,6 +11,8 @@ pub struct ShapeState {
     pub rotate: f64,
     /// Reveal clip in shape-local unit space (0..1): l, t, r, b.
     pub clip: Option<[f64; 4]>,
+    /// Soft edged reveal over the shape's visual bounds (Box, Circle, Diamond, Plus, Wipe, Split).
+    pub reveal: Option<deckcraft_anim::Reveal>,
     /// Colour override for emphasis effects (fill).
     pub tint: Option<Rgba>,
     /// Per-paragraph states of by-paragraph text builds (paragraph index, state).
@@ -19,7 +21,17 @@ pub struct ShapeState {
 
 impl Default for ShapeState {
     fn default() -> Self {
-        ShapeState { visible: true, opacity: 1.0, offset: Vec2::ZERO, scale: (1.0, 1.0), rotate: 0.0, clip: None, tint: None, paras: vec![] }
+        ShapeState {
+            visible: true,
+            opacity: 1.0,
+            offset: Vec2::ZERO,
+            scale: (1.0, 1.0),
+            rotate: 0.0,
+            clip: None,
+            reveal: None,
+            tint: None,
+            paras: vec![],
+        }
     }
 }
 
@@ -30,11 +42,20 @@ pub struct ParaState {
     pub opacity: f64,
     /// Translation in shape-local points.
     pub offset: Vec2,
+    /// Soft edged reveal over the paragraph's own text (Box, Circle, Diamond, Plus, Wipe, Split).
+    pub reveal: Option<deckcraft_anim::Reveal>,
+}
+
+impl ParaState {
+    /// The state of one paragraph of a by-paragraph build from its animation state.
+    pub fn from_anim(a: &deckcraft_anim::AnimState) -> ParaState {
+        ParaState { visible: a.visible, opacity: a.opacity, offset: Vec2::new(a.offset_x, a.offset_y), reveal: a.reveal }
+    }
 }
 
 impl Default for ParaState {
     fn default() -> Self {
-        ParaState { visible: true, opacity: 1.0, offset: Vec2::ZERO }
+        ParaState { visible: true, opacity: 1.0, offset: Vec2::ZERO, reveal: None }
     }
 }
 
