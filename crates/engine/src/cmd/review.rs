@@ -261,7 +261,7 @@ fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
                     | deckcraft_model::ShapeKind::Media(_)
                     | deckcraft_model::ShapeKind::Group { .. }
             );
-            if needs_alt && sh.descr.trim().is_empty() && !sh.decorative {
+            if sh.descr.trim().is_empty() && !sh.decorative && (needs_alt || crate::icons::is_inserted_icon(sh)) {
                 out.push(json!({"slide": i, "shape": sh.id, "name": sh.name, "issue": "Missing alternative text"}));
             }
         });
