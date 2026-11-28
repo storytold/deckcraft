@@ -747,7 +747,7 @@ mod tests {
                 kind: ShapeKind::Picture {
                     fill: PictureFill {
                         media: id(0),
-                        artistic: Some(Artistic { effect: "artisticBlur".into(), original: id(1) }),
+                        artistic: Some(Artistic { effect: "artisticBlur".into(), original: id(1), svg_media: None }),
                         ..Default::default()
                     },
                 },
@@ -764,6 +764,7 @@ mod tests {
                     action: Action::NextSlide,
                     tooltip: String::new(),
                     highlight_click: false,
+                    use_text_color: false,
                     sound: Some(id(5)),
                     stop_sound: false,
                     zoom_return: None,
@@ -797,6 +798,7 @@ mod tests {
             action: Action::Slide { slide },
             tooltip: String::new(),
             highlight_click: false,
+            use_text_color: false,
             sound: None,
             stop_sound: false,
             zoom_return: None,

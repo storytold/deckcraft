@@ -332,10 +332,208 @@ fn has_media_shapes(shapes: &[Shape]) -> bool {
     })
 }
 
+fn hyperlink_has_any(shapes: &[Shape]) -> bool {
+    shapes.iter().any(|s| {
+        if s.click.is_some() || s.hover.is_some() {
+            return true;
+        }
+        if let Some(tb) = &s.text
+            && text_body_has_links(tb)
+        {
+            return true;
+        }
+        match &s.kind {
+            ShapeKind::Group { children, .. } => hyperlink_has_any(children),
+            ShapeKind::Table(t) => t.rows.iter().flat_map(|r| &r.cells).any(|c| text_body_has_links(&c.text)),
+            _ => false,
+        }
+    })
+}
+
+fn text_body_has_links(tb: &deckcraft_model::text::TextBody) -> bool {
+    tb.paragraphs.iter().any(|p| {
+        p.def_props.link.is_some()
+            || p.def_props.hover.is_some()
+            || p.end_props.link.is_some()
+            || p.end_props.hover.is_some()
+            || p.runs.iter().any(|r| r.props.link.is_some() || r.props.hover.is_some())
+    })
+}
+
+fn el_has_hlink_clr_tx(h: &craft_xml::El) -> bool {
+    h.child(craft_xml::Local("extLst"))
+        .and_then(|ext| ext.find(craft_xml::Local("hlinkClr")))
+        .and_then(|clr| clr.attr_local("val"))
+        .is_some_and(|v| v == "tx")
+}
+
+fn apply_rpr_hlink_clr(rpr: &craft_xml::El, props: &mut deckcraft_model::text::RunProps) {
+    if let Some(hc) = rpr.child(craft_xml::Local("hlinkClick"))
+        && el_has_hlink_clr_tx(hc)
+        && let Some(link) = &mut props.link
+    {
+        link.use_text_color = true;
+    }
+    if let Some(hm) = rpr.child(craft_xml::Local("hlinkMouseOver"))
+        && el_has_hlink_clr_tx(hm)
+        && let Some(hover) = &mut props.hover
+    {
+        hover.use_text_color = true;
+    }
+}
+
+fn apply_tx_body_hlink_clr(tx_el: &craft_xml::El, tb: &mut deckcraft_model::text::TextBody) {
+    for (p_el, para) in tx_el.children(craft_xml::Local("p")).zip(tb.paragraphs.iter_mut()) {
+        let mut run_idx = 0usize;
+        for e in p_el.elements() {
+            match e.local() {
+                "pPr" => {
+                    if let Some(def_rpr) = e.child(craft_xml::Local("defRPr")) {
+                        apply_rpr_hlink_clr(def_rpr, &mut para.def_props);
+                    }
+                }
+                "r" => {
+                    let text = e.child(craft_xml::Local("t")).map(|t| t.deep_text()).unwrap_or_default();
+                    let count: usize =
+                        text.split(['\u{b}', '\n']).enumerate().map(|(i, piece)| usize::from(i > 0) + usize::from(!piece.is_empty())).sum();
+                    if let Some(rpr) = e.child(craft_xml::Local("rPr")) {
+                        for r in para.runs.iter_mut().skip(run_idx).take(count) {
+                            apply_rpr_hlink_clr(rpr, &mut r.props);
+                        }
+                    }
+                    run_idx += count;
+                }
+                "br" | "fld" => {
+                    if let Some(rpr) = e.child(craft_xml::Local("rPr"))
+                        && let Some(r) = para.runs.get_mut(run_idx)
+                    {
+                        apply_rpr_hlink_clr(rpr, &mut r.props);
+                    }
+                    run_idx += 1;
+                }
+                "m" => {
+                    run_idx += 1;
+                }
+                "endParaRPr" => {
+                    apply_rpr_hlink_clr(e, &mut para.end_props);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn apply_slide_hlink_clr(e: &craft_xml::El, shapes: &mut [Shape], depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    let nv_name = match e.local() {
+        "sp" => Some("nvSpPr"),
+        "cxnSp" => Some("nvCxnSpPr"),
+        "pic" => Some("nvPicPr"),
+        "graphicFrame" => Some("nvGraphicFramePr"),
+        _ => None,
+    };
+    if let Some(nv) = nv_name
+        && let Some(cnv) = e.path(&[craft_xml::Local(nv), craft_xml::Local("cNvPr")])
+        && let Some(spid) = cnv.attr_local("id").and_then(craft_xml::value::to_u32_lossy)
+        && let Some(sh) = deckcraft_model::find_shape_mut(shapes, deckcraft_model::ShapeId(spid))
+    {
+        if let Some(hc) = cnv.child(craft_xml::Local("hlinkClick"))
+            && el_has_hlink_clr_tx(hc)
+            && let Some(click) = &mut sh.click
+        {
+            click.use_text_color = true;
+        }
+        if let Some(hh) = cnv.child(craft_xml::Local("hlinkHover"))
+            && el_has_hlink_clr_tx(hh)
+            && let Some(hover) = &mut sh.hover
+        {
+            hover.use_text_color = true;
+        }
+        if let Some(tx_el) = e.child(craft_xml::Local("txBody"))
+            && let Some(tb) = &mut sh.text
+        {
+            apply_tx_body_hlink_clr(tx_el, tb);
+        }
+    }
+    for c in e.elements() {
+        apply_slide_hlink_clr(c, shapes, depth + 1);
+    }
+}
+
+fn rewrite_svg_only_blip_xml(xml: &str) -> Option<String> {
+    if !xml.contains("<a:blip>") || !xml.contains("svgBlip") {
+        return None;
+    }
+    let mut out = String::with_capacity(xml.len() + 64);
+    let mut rest = xml;
+    let mut changed = false;
+    while let Some(pos) = rest.find("<a:blip>") {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + "<a:blip>".len()..];
+        if let Some(end_pos) = after.find("</a:blip>") {
+            let inner = &after[..end_pos];
+            let attr = inner.find("svgBlip").and_then(|svg_pos| {
+                let svg_tail = &inner[svg_pos..];
+                let tag_end = svg_tail.find('>')?;
+                let svg_tag = &svg_tail[..tag_end];
+                for key in ["r:embed=\"", "r:link=\""] {
+                    if let Some(kpos) = svg_tag.find(key) {
+                        let val_start = kpos + key.len();
+                        let val_end = svg_tag[val_start..].find('"')?;
+                        return Some(&svg_tag[kpos..val_start + val_end + 1]);
+                    }
+                }
+                None
+            });
+            if let Some(attr) = attr {
+                out.push_str("<a:blip ");
+                out.push_str(attr);
+                out.push('>');
+                changed = true;
+            } else {
+                out.push_str("<a:blip>");
+            }
+        } else {
+            out.push_str("<a:blip>");
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    changed.then_some(out)
+}
+
+fn normalize_svg_only_blips(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let Ok(pkg) = craft_opc::Package::open(bytes, &craft_pptx::LIMITS) else {
+        return std::borrow::Cow::Borrowed(bytes);
+    };
+    let mut any_changed = false;
+    let entries: Vec<(String, Vec<u8>)> = pkg
+        .names()
+        .filter_map(|name| {
+            let data = pkg.get(name)?;
+            if name.ends_with(".xml")
+                && let Ok(s) = std::str::from_utf8(data)
+                && let Some(rewritten) = rewrite_svg_only_blip_xml(s)
+            {
+                any_changed = true;
+                return Some((name.to_string(), rewritten.into_bytes()));
+            }
+            Some((name.to_string(), data.to_vec()))
+        })
+        .collect();
+    if !any_changed {
+        return std::borrow::Cow::Borrowed(bytes);
+    }
+    craft_opc::zip_entries(&entries).map(std::borrow::Cow::Owned).unwrap_or(std::borrow::Cow::Borrowed(bytes))
+}
+
 fn post_import_timing(bytes: &[u8], pres: &mut Presentation) {
     let need_builds = has_unfolded_paragraph_builds(pres);
     let need_media = pres.slides.iter().any(|s| has_media_shapes(&s.shapes));
-    if !need_builds && !need_media {
+    let need_hlink = pres.slides.iter().any(|s| hyperlink_has_any(&s.shapes));
+    if !need_builds && !need_media && !need_hlink {
         return;
     }
     let Ok(mut pkg) = craft_opc::LazyPackage::open(bytes, &craft_pptx::LIMITS) else {
@@ -358,6 +556,9 @@ fn post_import_timing(bytes: &[u8], pres: &mut Presentation) {
         let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid)) else { continue };
         let Ok(Some(sb)) = pkg.read_limited(target, craft_pptx::MAX_XML_PART as u64) else { continue };
         let Ok(se) = craft_drawingml::xmlx::parse(&sb) else { continue };
+        if need_hlink && hyperlink_has_any(&slide_arc.shapes) && se.find(craft_xml::Local("hlinkClr")).is_some() {
+            apply_slide_hlink_clr(&se, &mut std::sync::Arc::make_mut(slide_arc).shapes, 0);
+        }
         let Some(timing) = se.child(craft_xml::Local("timing")) else { continue };
         if need_media && has_media_shapes(&slide_arc.shapes) {
             apply_media_timing(timing, &mut std::sync::Arc::make_mut(slide_arc).shapes);
@@ -468,9 +669,10 @@ fn fold_slide_paragraph_builds(slide: &mut deckcraft_model::Slide, info: &SlideT
 
 /// Read a `.pptx` / `.potx` / `.ppsx` package.
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
-    preflight_slides(bytes)?;
-    let mut pres = craft_pptx::import(bytes, &DeckDefaults).map(convert::pres_from_craft)?;
-    post_import_timing(bytes, &mut pres);
+    let bytes = normalize_svg_only_blips(bytes);
+    preflight_slides(&bytes)?;
+    let mut pres = craft_pptx::import(&bytes, &DeckDefaults).map(convert::pres_from_craft)?;
+    post_import_timing(&bytes, &mut pres);
     Ok(pres)
 }
 
@@ -485,11 +687,12 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
 /// [`import_checked`], plus warnings for content cut to fit a limit (a table past the cell cap
 /// keeps its leading rows); the file still opens.
 pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<String>), PptxError> {
-    let mut missing = preflight_slides(bytes)?;
-    let (p, lost, warnings) = craft_pptx::import_report(bytes, &DeckDefaults)?;
+    let bytes = normalize_svg_only_blips(bytes);
+    let mut missing = preflight_slides(&bytes)?;
+    let (p, lost, warnings) = craft_pptx::import_report(&bytes, &DeckDefaults)?;
     missing.extend(lost);
     let mut pres = convert::pres_from_craft(p);
-    post_import_timing(bytes, &mut pres);
+    post_import_timing(&bytes, &mut pres);
     Ok((pres, missing, warnings))
 }
 
@@ -497,9 +700,10 @@ pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<Str
 /// path without a multi-million-point chart.
 #[doc(hidden)]
 pub fn import_with_chart_budget(bytes: &[u8], points: usize) -> Result<Presentation, PptxError> {
-    preflight_slides(bytes)?;
-    let mut pres = craft_pptx::import_with_chart_budget(bytes, &DeckDefaults, points).map(convert::pres_from_craft)?;
-    post_import_timing(bytes, &mut pres);
+    let bytes = normalize_svg_only_blips(bytes);
+    preflight_slides(&bytes)?;
+    let mut pres = craft_pptx::import_with_chart_budget(&bytes, &DeckDefaults, points).map(convert::pres_from_craft)?;
+    post_import_timing(&bytes, &mut pres);
     Ok(pres)
 }
 
@@ -794,11 +998,160 @@ fn patch_large_geom_adjs(xml_bytes: &[u8], adjs: &[(u32, &[f64])]) -> Vec<u8> {
     xml.into_bytes()
 }
 
+fn hyperlink_exports(p: &Presentation, h: &deckcraft_model::text::Hyperlink) -> bool {
+    match &h.action {
+        deckcraft_model::text::Action::Url { url } => !url.is_empty(),
+        deckcraft_model::text::Action::Program { path } => !path.is_empty(),
+        deckcraft_model::text::Action::Slide { slide } => p.slides.iter().any(|s| s.id == *slide),
+        _ => true,
+    }
+}
+
+fn push_rpr_hlink_flags(p: &Presentation, props: &deckcraft_model::text::RunProps, out: &mut Vec<bool>) {
+    if let Some(h) = &props.link
+        && hyperlink_exports(p, h)
+    {
+        out.push(h.use_text_color);
+    }
+    if let Some(h) = &props.hover
+        && hyperlink_exports(p, h)
+    {
+        out.push(h.use_text_color);
+    }
+}
+
+fn push_text_body_hlink_flags(p: &Presentation, tb: &deckcraft_model::text::TextBody, out: &mut Vec<bool>) {
+    for para in &tb.paragraphs {
+        push_rpr_hlink_flags(p, &para.def_props, out);
+        for run in &para.runs {
+            if matches!(&run.kind, deckcraft_model::text::RunKind::Text) && run.text.is_empty() {
+                continue;
+            }
+            push_rpr_hlink_flags(p, &run.props, out);
+        }
+        push_rpr_hlink_flags(p, &para.end_props, out);
+    }
+}
+
+fn collect_shape_hlink_clr(p: &Presentation, shapes: &[Shape]) -> Vec<(u32, Vec<bool>)> {
+    let mut out = Vec::new();
+    assign_spids(shapes, |spid, s| {
+        let mut flags = Vec::new();
+        if let Some(h) = &s.click
+            && hyperlink_exports(p, h)
+        {
+            flags.push(h.use_text_color);
+        }
+        if let Some(h) = &s.hover
+            && hyperlink_exports(p, h)
+        {
+            flags.push(h.use_text_color);
+        }
+        if let Some(tb) = &s.text {
+            push_text_body_hlink_flags(p, tb, &mut flags);
+        }
+        if flags.iter().copied().any(std::convert::identity) {
+            out.push((spid, flags));
+        }
+    });
+    out
+}
+
+const HLINK_CLR_EXT_XML: &str = r#"<a:extLst><a:ext uri="{A12FA001-AC4F-418D-AE19-62706E023703}"><ahyp:hlinkClr xmlns:ahyp="http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor" val="tx"/></a:ext></a:extLst>"#;
+
+fn patch_shape_hlinks_in_span(xml: &mut String, start_pos: usize, mut shape_end: usize, flags: &[bool]) {
+    let mut cursor = start_pos;
+    let mut idx = 0usize;
+    while idx < flags.len() && cursor < shape_end {
+        let slice = &xml[cursor..shape_end];
+        let next_tag = ["<a:hlinkClick", "<a:hlinkHover", "<a:hlinkMouseOver"]
+            .into_iter()
+            .filter_map(|t| slice.find(t).map(|rel| (rel, t)))
+            .min_by_key(|(rel, _)| *rel);
+        let Some((rel, tag)) = next_tag else { break };
+        let tag_start = cursor + rel;
+        let Some(gt_rel) = xml[tag_start..shape_end].find('>') else { break };
+        let gt_pos = tag_start + gt_rel;
+        let use_tx = flags[idx];
+        idx += 1;
+        if xml.as_bytes().get(gt_pos.saturating_sub(1)) == Some(&b'/') {
+            if use_tx {
+                let close_name = &tag[1..];
+                let replacement = format!(">{HLINK_CLR_EXT_XML}</{close_name}>");
+                xml.replace_range(gt_pos - 1..=gt_pos, &replacement);
+                let delta = replacement.len() - 2;
+                shape_end += delta;
+                cursor = gt_pos - 1 + replacement.len();
+            } else {
+                cursor = gt_pos + 1;
+            }
+        } else {
+            let close_tag = format!("</{}>", &tag[1..]);
+            let Some(close_rel) = xml[gt_pos + 1..shape_end].find(&close_tag) else {
+                cursor = gt_pos + 1;
+                continue;
+            };
+            let close_pos = gt_pos + 1 + close_rel;
+            if use_tx && !xml[gt_pos + 1..close_pos].contains("hlinkClr") {
+                xml.insert_str(close_pos, HLINK_CLR_EXT_XML);
+                shape_end += HLINK_CLR_EXT_XML.len();
+                cursor = close_pos + HLINK_CLR_EXT_XML.len() + close_tag.len();
+            } else {
+                cursor = close_pos + close_tag.len();
+            }
+        }
+    }
+}
+
+fn patch_slide_hlink_clr(xml_bytes: &[u8], hlinks: &[(u32, Vec<bool>)]) -> Vec<u8> {
+    let Ok(mut xml) = String::from_utf8(xml_bytes.to_vec()) else {
+        return xml_bytes.to_vec();
+    };
+    for (spid, flags) in hlinks {
+        let needle = format!(r#"<p:cNvPr id="{spid}""#);
+        let mut search_from = 0;
+        while let Some(rel) = xml[search_from..].find(&needle) {
+            let start = search_from + rel;
+            let after = start + needle.len();
+            if xml.as_bytes().get(after).is_some_and(|b| matches!(b, b' ' | b'/' | b'>'))
+                && let Some((_, shape_end)) = owning_shape_end(&xml, start, after)
+            {
+                patch_shape_hlinks_in_span(&mut xml, after, shape_end, flags);
+                break;
+            }
+            search_from = after;
+        }
+    }
+    xml.into_bytes()
+}
+
+fn patch_slide_linked_svg(xml_bytes: &[u8], rels: &craft_opc::Rels) -> Vec<u8> {
+    let Ok(mut xml) = String::from_utf8(xml_bytes.to_vec()) else {
+        return xml_bytes.to_vec();
+    };
+    let mut changed = false;
+    for r in rels.all("image").filter(|r| r.external) {
+        let from = format!(r#"<asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="{}"/>"#, r.id);
+        if xml.contains(&from) {
+            let to = format!(r#"<asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:link="{}"/>"#, r.id);
+            xml = xml.replace(&from, &to);
+            changed = true;
+        }
+    }
+    if changed { xml.into_bytes() } else { xml_bytes.to_vec() }
+}
+
 fn patch_exported_slides(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, PptxError> {
     let slide_media: Vec<Vec<(u32, &deckcraft_model::MediaClip)>> = p.slides.iter().map(|s| collect_export_media(&s.shapes)).collect();
     let slide_grp_pics: Vec<std::collections::HashSet<u32>> = p.slides.iter().map(|s| collect_grp_fill_pic_spids(&s.shapes)).collect();
     let slide_adjs: Vec<Vec<(u32, &[f64])>> = p.slides.iter().map(|s| collect_large_geom_adjs(&s.shapes)).collect();
-    if slide_media.iter().all(Vec::is_empty) && slide_grp_pics.iter().all(std::collections::HashSet::is_empty) && slide_adjs.iter().all(Vec::is_empty)
+    let slide_hlinks: Vec<Vec<(u32, Vec<bool>)>> = p.slides.iter().map(|s| collect_shape_hlink_clr(p, &s.shapes)).collect();
+    let has_linked_svg = p.media.iter().any(|m| m.data.is_empty() && m.link.is_some());
+    if slide_media.iter().all(Vec::is_empty)
+        && slide_grp_pics.iter().all(std::collections::HashSet::is_empty)
+        && slide_adjs.iter().all(Vec::is_empty)
+        && slide_hlinks.iter().all(Vec::is_empty)
+        && !has_linked_svg
     {
         return Ok(bytes);
     }
@@ -815,8 +1168,9 @@ fn patch_exported_slides(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, Pp
             let media = slide_media.get(i).map(Vec::as_slice).unwrap_or(&[]);
             let grp_pics = slide_grp_pics.get(i);
             let adjs = slide_adjs.get(i).map(Vec::as_slice).unwrap_or(&[]);
+            let hlinks = slide_hlinks.get(i).map(Vec::as_slice).unwrap_or(&[]);
             let need_grp = grp_pics.is_some_and(|g| !g.is_empty());
-            if media.is_empty() && !need_grp && adjs.is_empty() {
+            if media.is_empty() && !need_grp && adjs.is_empty() && hlinks.is_empty() && !has_linked_svg {
                 continue;
             }
             if let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid))
@@ -830,6 +1184,13 @@ fn patch_exported_slides(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, Pp
                 }
                 if !adjs.is_empty() {
                     patched = patch_large_geom_adjs(&patched, adjs);
+                }
+                if !hlinks.is_empty() {
+                    patched = patch_slide_hlink_clr(&patched, hlinks);
+                }
+                if has_linked_svg {
+                    let slide_rels = pkg.rels(target);
+                    patched = patch_slide_linked_svg(&patched, &slide_rels);
                 }
                 patches.insert(target.to_string(), patched);
             }
