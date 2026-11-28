@@ -2001,6 +2001,7 @@ name = "deckcraft-ui-egui"
 version = "0.19.0"
 dependencies = [
  "craft-host",
+ "craft-i18n",
  "craft-keymap",
  "craft-theme",
  "craft-ui",
@@ -2022,6 +2023,7 @@ dependencies = [
  "serde",
  "serde_json",
  "skrifa 0.47.0",
+ "sys-locale",
  "toml",
  "web-time",
 ]
