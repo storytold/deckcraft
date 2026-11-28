@@ -1,3 +1,6 @@
+use deckcraft_model::resolve;
+use deckcraft_model::text::Bullet;
+
 use super::autocorrect::undo_auto_list;
 use super::editing::{inherited_aligns, insert_text, promote_rtl_if_needed};
 use super::ime::{composition_range, model_pos, walk_backward, walk_forward};
@@ -45,6 +48,7 @@ pub(crate) fn delete_dir(s: &mut Session, dir: &str) -> Result<Value> {
     if dir == "backward" && undo_auto_list(s)? {
         return ok();
     }
+    let unbullet = dir == "backward" && backspace_removes_bullet(s);
     let dir = dir.to_string();
     edit_text(s, move |body, t| {
         let (a, b) = t.ordered();
@@ -68,6 +72,16 @@ pub(crate) fn delete_dir(s: &mut Session, dir: &str) -> Result<Value> {
                         t.caret = a;
                         return;
                     }
+                    // Then it takes a first-level paragraph's bullet or number away, lining the
+                    // text up as Bullets off does; the next Backspace joins the paragraphs.
+                    if unbullet && let Some(para) = body.paragraphs.get_mut(a.0) {
+                        para.props.bullet = Some(Bullet::None);
+                        para.props.indent = Some(0.0);
+                        para.props.margin_left = Some(0.0);
+                        t.anchor = a;
+                        t.caret = a;
+                        return;
+                    }
                     ed::char_move(body, a, false)
                 }
             };
@@ -77,6 +91,32 @@ pub(crate) fn delete_dir(s: &mut Session, dir: &str) -> Result<Value> {
         t.caret = at;
     })?;
     ok()
+}
+
+/// Whether Backspace takes away the bullet or number of the paragraph at the caret instead of
+/// joining it to the one before (#2022): nothing is selected, the caret is at the start of a
+/// first-level paragraph, and that paragraph shows a bullet, its own or its placeholder's.
+fn backspace_removes_bullet(s: &Session) -> bool {
+    let Ok(st) = s.doc() else { return false };
+    let Some(t) = &st.selection.text else { return false };
+    let (a, b) = t.ordered();
+    if a != b || a.1 != 0 {
+        return false;
+    }
+    let Some(para) = body_of(st, t).and_then(|body| body.paragraphs.get(a.0)) else { return false };
+    if para.level > 0 {
+        return false;
+    }
+    // Notes and table cells are not placeholders on the slide: only their own bullet counts.
+    let bullet = if t.notes || t.cell.is_some() {
+        para.props.bullet.clone()
+    } else {
+        match (ctx_for(&st.doc, &st.selection), st.shape(t.shape)) {
+            (Some(ctx), Some(sh)) => resolve::para(&ctx, sh, para).bullet,
+            _ => para.props.bullet.clone(),
+        }
+    };
+    bullet.is_some_and(|b| b != Bullet::None)
 }
 
 /// A `before`/`after` count from a control or input-method request.

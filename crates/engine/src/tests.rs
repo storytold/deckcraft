@@ -5391,6 +5391,104 @@ fn autoformat_starts_bulleted_and_numbered_lists_as_you_type() {
     assert_eq!(typed(&mut s, "teh "), ("The ".to_string(), Some(Bullet::None)));
 }
 
+/// Backspace at the start of a first-level list paragraph takes its number or bullet away and
+/// keeps the text, however long ago the list began (#2022). Before, only the Backspace right
+/// after AutoFormat started the list removed it; later the number could not be deleted.
+#[test]
+fn backspace_at_start_of_list_paragraph_removes_its_bullet() {
+    use deckcraft_model::text::Bullet;
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "One\nTwo"})).unwrap();
+    let body_id = |s: &Session| {
+        let st = s.doc().unwrap();
+        st.current_slide().unwrap().shapes.iter().find(|x| x.ph_type().is_some_and(|k| !k.is_title())).unwrap().id.0
+    };
+    let paras = |s: &Session, id: u32| {
+        let st = s.doc().unwrap();
+        let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id.0 == id).unwrap();
+        sh.text.as_ref().unwrap().paragraphs.iter().map(|p| (p.text(), p.props.bullet.clone())).collect::<Vec<_>>()
+    };
+    let body = body_id(&s);
+
+    // A number the user turned on, long after AutoFormat: Backspace at its start removes it.
+    s.execute("text.edit", &json!({"id": body})).unwrap();
+    s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 0]})).unwrap();
+    s.execute("format.numbering", &json!({"on": true})).unwrap();
+    s.execute("text.move", &json!({"to": "paraEnd"})).unwrap();
+    s.execute("text.move", &json!({"to": "paraStart"})).unwrap();
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    assert_eq!(paras(&s, body).get(1).cloned(), Some(("Two".to_string(), Some(Bullet::None))), "the number goes, the text stays");
+    // It lines up as a paragraph without a bullet, as Bullets off leaves it.
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id.0 == body).unwrap();
+    let p1 = &sh.text.as_ref().unwrap().paragraphs[1].props;
+    assert_eq!((p1.indent, p1.margin_left), (Some(0.0), Some(0.0)));
+    // A second Backspace joins it to the paragraph before, as with any paragraph.
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    assert_eq!(paras(&s, body).iter().map(|p| p.0.clone()).collect::<Vec<_>>(), ["OneTwo"]);
+
+    // A bullet inherited from the placeholder's list style goes the same way.
+    assert_eq!(paras(&s, body)[0].1, None, "the bullet is the placeholder's, not the paragraph's own");
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 0]})).unwrap();
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    assert_eq!(paras(&s, body)[0], ("OneTwo".to_string(), Some(Bullet::None)));
+
+    // A paragraph with no bullet still joins the one before on the first Backspace.
+    let title = s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap().id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("text.insert", &json!({"text": "A\nB"})).unwrap();
+    s.execute("text.move", &json!({"to": "paraStart"})).unwrap();
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    assert_eq!(s.execute("text.get", &json!({"id": title})).unwrap()["text"], "AB");
+
+    // A second-level item outdents first, and keeps its bullet.
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "One\n\tTwo"})).unwrap();
+    let body = body_id(&s);
+    s.execute("text.edit", &json!({"id": body})).unwrap();
+    s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 0]})).unwrap();
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id.0 == body).unwrap();
+    let p = &sh.text.as_ref().unwrap().paragraphs[1];
+    assert_eq!((p.text(), p.level, p.props.bullet.clone()), ("Two".to_string(), 0, None));
+
+    // Undo brings the number back.
+    s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 0]})).unwrap();
+    s.execute("format.numbering", &json!({"on": true})).unwrap();
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    assert_eq!(paras(&s, body)[1].1, Some(Bullet::None));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(matches!(paras(&s, body)[1].1, Some(Bullet::AutoNum { .. })), "undo restores the number");
+}
+
+/// The case reported in #2022: after typing `1. ` and deleting all the text, the number stays on
+/// the empty paragraph and comes back with the next character. Backspace now takes it away.
+#[test]
+fn backspace_removes_the_number_left_on_an_emptied_box() {
+    use deckcraft_model::text::Bullet;
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    let first = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.current_slide().unwrap().shapes.iter().find(|sh| sh.id.0 == title).unwrap();
+        let p = sh.text.as_ref().unwrap().paragraphs[0].clone();
+        (p.text(), p.props.bullet)
+    };
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    for c in "1. Point".chars() {
+        s.execute("text.insert", &json!({"text": c.to_string()})).unwrap();
+    }
+    assert!(matches!(first(&s).1, Some(Bullet::AutoNum { .. })), "AutoFormat numbered the paragraph");
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    assert!(matches!(first(&s), (t, Some(Bullet::AutoNum { .. })) if t.is_empty()), "deleting the text leaves the number");
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    assert_eq!(first(&s), (String::new(), Some(Bullet::None)), "Backspace takes the number away");
+    s.execute("text.insert", &json!({"text": "x"})).unwrap();
+    assert_eq!(first(&s), ("x".to_string(), Some(Bullet::None)), "and it does not come back");
+}
+
 #[test]
 fn theme_variants_apply_and_report_the_current_one() {
     let mut s = session();
