@@ -245,6 +245,86 @@ fn combo_chart_draws_columns_and_a_line_on_its_own_axis() {
     assert!(col[0] < 250 || col[1] < 250 || col[2] < 250, "no column: {col:?}");
 }
 
+/// Original generated range chart: invisible offsets, visible spans and a separate 0–1
+/// scatter axis. Guards the empty-chart failure without embedding a financial presentation.
+#[test]
+fn horizontal_range_chart_draws_bars_and_a_scatter_reference_line() {
+    use deckcraft_model::style::{Fill, Line};
+    let red = ColorRef::rgb(Rgba::rgb(220, 0, 0));
+    let cyan = ColorRef::rgb(Rgba::rgb(0, 180, 220));
+    let mut c = Chart::sample(ChartType::Combo);
+    c.title = None;
+    c.legend = None;
+    c.categories = vec!["A".into(), "B".into()];
+    c.cat_reversed = true;
+    c.y_min = Some(100.0);
+    c.y_max = Some(700.0);
+    c.y2_min = Some(0.0);
+    c.y2_max = Some(1.0);
+    c.y2_hidden = true;
+    c.x_min = Some(100.0);
+    c.x_max = Some(700.0);
+    c.series = vec![
+        deckcraft_model::chart::Series {
+            kind: Some(ChartType::StackedBar),
+            values: vec![Some(200.0), Some(300.0)],
+            fill: Some(Fill::None),
+            ..Default::default()
+        },
+        deckcraft_model::chart::Series {
+            kind: Some(ChartType::StackedBar),
+            values: vec![Some(200.0), Some(250.0)],
+            fill: Some(Fill::Solid { color: red }),
+            ..Default::default()
+        },
+        deckcraft_model::chart::Series {
+            kind: Some(ChartType::Scatter),
+            x_values: vec![Some(350.0), Some(350.0)],
+            values: vec![Some(0.0), Some(1.0)],
+            secondary_axis: true,
+            scatter_lines: true,
+            marker: Some("none".into()),
+            line: Some(Line::solid(cyan, 2.0)),
+            ..Default::default()
+        },
+    ];
+    let draw = |c: Chart| {
+        let sh = Shape { xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts::default())
+    };
+    let bounds = |img: &Image| {
+        let mut xs = vec![];
+        let mut ys = vec![];
+        for y in 0..img.height {
+            for x in 0..img.width {
+                let p = img.pixel(x, y);
+                if p[0] < 30 && p[1] > 150 && p[2] > 190 {
+                    xs.push(x);
+                    ys.push(y);
+                }
+            }
+        }
+        xs.first().map(|_| (*xs.iter().min().unwrap(), *xs.iter().max().unwrap(), *ys.iter().min().unwrap(), *ys.iter().max().unwrap()))
+    };
+    let img = draw(c.clone());
+    let (left, right, top, bottom) = bounds(&img).expect("scatter reference line is visible");
+    assert!(bottom - top > img.height / 2, "reference spans the separate 0–1 axis");
+    assert!(right - left < img.width / 20, "reference is vertical");
+    let red_pixels = (0..img.height)
+        .flat_map(|y| (0..img.width).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let p = img.pixel(x, y);
+            p[0] > 180 && p[1] < 30 && p[2] < 30
+        })
+        .count();
+    assert!(red_pixels > 1000, "visible ranges retain their own scale");
+    c.x_max = Some(1000.0);
+    let shifted = bounds(&draw(c.clone())).expect("shifted reference");
+    assert!(shifted.0 < left, "reference uses its horizontal axis bounds");
+    c.series[2].scatter_lines = false;
+    assert!(bounds(&draw(c)).is_none(), "marker-only scatter with no markers draws no line");
+}
+
 fn trend_chart(title: &str, kind: ChartType, ys: &[f64], trend: Trendline, y_max: f64) -> Chart {
     let mut c = Chart::sample(kind);
     c.title = Some(title.into());

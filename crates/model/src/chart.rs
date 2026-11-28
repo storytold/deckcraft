@@ -232,6 +232,8 @@ pub struct Series {
     pub data_labels: Option<bool>,
     pub smooth: bool,
     pub marker: Option<String>,
+    /// Connect scatter points with a line (`c:scatterStyle`).
+    pub scatter_lines: bool,
     /// Combo charts: this series' own type.
     pub kind: Option<ChartType>,
     pub secondary_axis: bool,
@@ -350,6 +352,9 @@ pub struct Chart {
     pub gap_width: f64,
     pub overlap: f64,
     pub vary_colors: bool,
+    /// Explicit bounds of the scatter/bubble horizontal value axis.
+    pub x_min: Option<f64>,
+    pub x_max: Option<f64>,
     pub y_min: Option<f64>,
     pub y_max: Option<f64>,
     /// The value axis' major unit, when the chart fixes it.
@@ -488,6 +493,8 @@ impl Default for Chart {
             gap_width: 2.19,
             overlap: -0.27,
             vary_colors: false,
+            x_min: None,
+            x_max: None,
             y_min: None,
             y_max: None,
             y_major: None,
