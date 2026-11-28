@@ -347,6 +347,9 @@ fn render(args: &[String]) -> Result<(), String> {
 /// `--all` still names files from 1 (`slide-01.png`), which is PowerPoint's slide number.
 fn slide_indices(n: usize, all: bool, slide: Option<usize>) -> Result<Vec<usize>, String> {
     if all {
+        if slide.is_some() {
+            return Err("--all and --slide cannot be used together".into());
+        }
         return Ok((0..n).collect());
     }
     let i = slide.unwrap_or(0);
@@ -855,6 +858,11 @@ mod tests {
 #[cfg(test)]
 mod slide_index_tests {
     use super::{missing_slide, slide_indices};
+
+    #[test]
+    fn render_rejects_all_with_an_explicit_slide() {
+        assert_eq!(slide_indices(8, true, Some(2)), Err("--all and --slide cannot be used together".into()));
+    }
 
     #[test]
     fn slide_numbers_start_at_zero_and_files_at_one() {
