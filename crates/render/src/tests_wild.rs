@@ -374,9 +374,36 @@ fn a_corner_radial_centres_on_the_corner_through_its_tile() {
 }
 
 #[test]
-fn a_linear_gradient_spans_its_tile_rect() {
+fn a_circle_gradient_repeats_its_tile_rect() {
+    // Tile rect the left half of the box, focus in the middle of it: the right half shows the same
+    // circle again, light in its middle and dark at the seam.
+    let mut sh = radial([0.25, 0.5, 0.75, 0.5]);
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.tile = [0.0, 0.0, 0.5, 0.0];
+    }
+    let img = render(vec![sh]);
+    let (first, second, seam) = (img.pixel(200, 200)[0], img.pixel(400, 200)[0], img.pixel(298, 200)[0]);
+    assert!(second > 230 && i32::from(first) - i32::from(second) < 12, "first {first}, second {second}");
+    assert!(i32::from(second) > i32::from(seam) + 80, "second {second}, seam {seam}");
+}
+
+#[test]
+fn a_tiled_circle_gradient_with_a_focus_that_is_not_a_number_centers_in_its_tile() {
+    // As the untiled gradient does: the circle is centered in the tile, light there and dark at the seam.
+    let mut sh = radial([f64::NAN, 0.5, 0.75, 0.5]);
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.tile = [0.0, 0.0, 0.5, 0.0];
+    }
+    let img = render(vec![sh]);
+    let (middle, seam) = (img.pixel(200, 200)[0], img.pixel(298, 200)[0]);
+    assert!(middle > 230 && i32::from(middle) > i32::from(seam) + 80, "middle {middle}, seam {seam}");
+}
+
+#[test]
+fn a_tile_wider_than_its_raster_keeps_a_hard_seam() {
     use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
-    // Tile rect the left half of the box: the ramp ends half way and stays black after.
+    // A 1000 pt tile at 2.5x spans 2500 output pixels, more than the tile raster holds: the seam at
+    // x = 500 pt (1250 px) stays one pixel wide.
     let stops = vec![GradientStop { pos: 0.0, color: ColorRef::rgb(WHITE) }, GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::BLACK) }];
     let g = Gradient {
         stops,
@@ -385,16 +412,92 @@ fn a_linear_gradient_spans_its_tile_rect() {
         tile: [0.0, 0.0, 0.5, 0.0],
         flip: None,
     };
-    let sh = Shape {
+    let mut sh = Shape {
+        id: ShapeId(22),
+        xfrm: Some(Xfrm::new(-500.0, 100.0, 2000.0, 100.0)),
+        fill: Some(Fill::Gradient(g)),
+        line: no_line(),
+        ..Default::default()
+    };
+    let img = render_slide(&deck_with(vec![sh.clone()]), 0, &RenderOpts { scale: 2.5, ..Default::default() });
+    let (before, after) = (img.pixel(1249, 375), img.pixel(1250, 375));
+    assert!(before[0] < 25 && after[0] > 240, "a hard seam {before:?} {after:?}");
+
+    // Half-transparent stops: the redrawn seam keeps the opacity of the rest of the fill.
+    let half = |c: Rgba| ColorRef::rgb(c).with(deckcraft_color::ColorTransform::Alpha(50_000));
+    let stops = vec![GradientStop { pos: 0.0, color: half(Rgba::BLACK) }, GradientStop { pos: 1.0, color: half(Rgba::rgb(0, 0, 40)) }];
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.stops = stops;
+    }
+    let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 2.5, ..Default::default() });
+    let (inside, seam) = (img.pixel(1000, 375)[0], img.pixel(1250, 375)[0]);
+    assert!((110..=145).contains(&inside) && inside.abs_diff(seam) <= 3, "inside {inside}, seam {seam}");
+}
+
+#[test]
+fn a_linear_gradient_spans_its_tile_rect() {
+    use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
+    // Tile rect the left half of the box: the ramp ends half way, and the tile repeats over the
+    // right half (ECMA-376 `a:tileRect`), mirrored there with `flip="x"`.
+    let stops = vec![GradientStop { pos: 0.0, color: ColorRef::rgb(WHITE) }, GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::BLACK) }];
+    let g = Gradient {
+        stops,
+        shape: GradientShape::Linear { angle: 0.0, scaled: false },
+        rotate_with_shape: true,
+        tile: [0.0, 0.0, 0.5, 0.0],
+        flip: None,
+    };
+    let mut sh = Shape {
         id: ShapeId(20),
         xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 100.0)),
         fill: Some(Fill::Gradient(g)),
         line: no_line(),
         ..Default::default()
     };
-    let img = render(vec![sh]);
+    let img = render(vec![sh.clone()]);
     assert!(img.pixel(102, 150)[0] > 240);
-    assert!(img.pixel(305, 150)[0] < 15 && img.pixel(495, 150)[0] < 15, "{:?}", img.pixel(305, 150));
+    assert!(img.pixel(295, 150)[0] < 25, "end of the first tile {:?}", img.pixel(295, 150));
+    assert!(img.pixel(305, 150)[0] > 230, "the second tile starts over {:?}", img.pixel(305, 150));
+    assert!(img.pixel(299, 150)[0] < 25 && img.pixel(300, 150)[0] > 240, "a hard seam {:?} {:?}", img.pixel(299, 150), img.pixel(300, 150));
+    assert!(img.pixel(495, 150)[0] < 25, "end of the second tile {:?}", img.pixel(495, 150));
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.flip = Some(deckcraft_model::style::GradientFlip::X);
+    }
+    let img = render(vec![sh]);
+    assert!(img.pixel(305, 150)[0] < 25, "mirrored: dark next to the seam {:?}", img.pixel(305, 150));
+    assert!(img.pixel(495, 150)[0] > 230, "mirrored: light at the far end {:?}", img.pixel(495, 150));
+}
+
+#[test]
+fn a_tiled_gradient_mixes_transparent_stops_as_the_untiled_one_does() {
+    use deckcraft_color::ColorTransform;
+    use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
+    // Transparent red to opaque blue (three stops, so the ramp is not expanded). The tile is the
+    // left half, so its pixel at x = 190 has the color position of the full-width ramp's x = 280.
+    let blue = Rgba::rgb(0, 0, 255);
+    let stops = vec![
+        GradientStop { pos: 0.0, color: ColorRef::rgb(RED).with(ColorTransform::Alpha(0)) },
+        GradientStop { pos: 0.9, color: ColorRef::rgb(blue) },
+        GradientStop { pos: 1.0, color: ColorRef::rgb(blue) },
+    ];
+    let shape = |tile: [f64; 4]| Shape {
+        id: ShapeId(21),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 100.0)),
+        fill: Some(Fill::Gradient(Gradient {
+            stops: stops.clone(),
+            shape: GradientShape::Linear { angle: 0.0, scaled: false },
+            rotate_with_shape: true,
+            tile,
+            flip: None,
+        })),
+        line: no_line(),
+        ..Default::default()
+    };
+    let untiled = render(vec![shape([0.0; 4])]).pixel(280, 150);
+    let tiled = render(vec![shape([0.0, 0.0, 0.5, 0.0])]).pixel(190, 150);
+    // No red from the transparent stop: half-transparent blue over white.
+    assert!(untiled[0] < 150, "untiled {untiled:?}");
+    assert!((0..3).all(|i| (i32::from(tiled[i]) - i32::from(untiled[i])).abs() <= 10), "tiled {tiled:?}, untiled {untiled:?}");
 }
 
 #[test]
