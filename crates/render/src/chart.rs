@@ -91,6 +91,41 @@ fn fill_with(ctx: &mut RenderContext, p: &Paint, r: Rect, m: Affine) {
     }
 }
 
+/// Fill path (in the space `m` maps to the output) with `p`.
+fn fill_path_with(ctx: &mut RenderContext, p: &Paint, path: &BezPath, m: Affine, alpha: f64) {
+    match p {
+        Paint::Color(c) => {
+            ctx.set_transform(m);
+            ctx.set_paint(color(*c, alpha));
+            ctx.fill_path(path);
+        }
+        Paint::Pattern(name, fg, bg) => crate::pattern::fill(ctx, name, *fg, *bg, alpha, path, m),
+        Paint::Nothing => {}
+        Paint::Line(..) => {}
+    }
+}
+
+/// A bubble series' outline: colour and width. Defaults to 0.75 pt in series colour,
+/// or respects `s.line` (suppressed by `a:noFill` or width <= 0).
+fn bubble_outline(ctx: &Ctx, s: &deckcraft_model::chart::Series, fallback_col: Rgba) -> Option<(Rgba, f64)> {
+    if let Some(l) = &s.line {
+        if matches!(l.fill, Some(Fill::None)) {
+            return None;
+        }
+        let w = l.width.unwrap_or(0.75);
+        if !w.is_finite() || w <= 0.0 {
+            return None;
+        }
+        let col = match &l.fill {
+            Some(Fill::Solid { color: cc }) => ctx.color(cc, None),
+            _ => fallback_col,
+        };
+        Some((col, w.clamp(0.1, 20.0)))
+    } else {
+        Some((fallback_col, 0.75))
+    }
+}
+
 /// A bar series' outline (`c:spPr/a:ln`) where the file gives it a solid colour: colour and width.
 fn bar_outline(ctx: &Ctx, s: &deckcraft_model::chart::Series) -> Option<(Rgba, f64)> {
     let l = s.line.as_ref()?;
@@ -643,7 +678,7 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
             .enumerate()
             .map(|(i, s)| {
                 let k = c.series_kind(s);
-                let line = !k.is_bar_like() && !matches!(k, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
+                let line = !k.is_bar_like() && !matches!(k, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar | ChartType::Bubble);
                 if matches!(k, ChartType::Line | ChartType::LineMarkers | ChartType::StackedLine | ChartType::Radar) {
                     let lw = s.line.as_ref().and_then(|l| l.width).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(2.25).clamp(0.25, 20.0);
                     (
@@ -653,7 +688,7 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
                     )
                 } else if line {
                     (s.name.clone(), Paint::Color(series_line(rctx, c, i, s)), None)
-                } else if k.is_bar_like() {
+                } else if k.is_bar_like() || k == ChartType::Bubble {
                     let paint = if c.vary_colors && c.series.len() == 1 && s.fill.is_none() {
                         Paint::Color(series_color(rctx, c, i))
                     } else {
@@ -921,6 +956,51 @@ struct LineDrawing<'a, 'ctx> {
     error_marks: &'a mut Vec<(f64, f64, f64, f64, bool)>,
 }
 
+struct BubbleDrawing<'a, 'ctx> {
+    rctx: &'a Ctx<'ctx>,
+    chart: &'a Chart,
+    transform: Affine,
+    max_bubble_sz: f64,
+    max_bubble_r: f64,
+    size_by_width: bool,
+}
+
+fn draw_bubbles(
+    ctx: &mut RenderContext,
+    b: &BubbleDrawing<'_, '_>,
+    si: usize,
+    s: &deckcraft_model::chart::Series,
+    bubble_pts: &[(usize, Point, f64)],
+) {
+    let BubbleDrawing { rctx, chart: c, transform: m, max_bubble_sz, max_bubble_r, size_by_width } = *b;
+    for &(pi, q, sz) in bubble_pts {
+        let r = if max_bubble_sz > 0.0 {
+            if size_by_width { max_bubble_r * (sz / max_bubble_sz) } else { max_bubble_r * (sz / max_bubble_sz).sqrt() }
+        } else {
+            0.0
+        };
+        if r <= 0.0 {
+            continue;
+        }
+        let base_col = if c.vary_colors && c.series.len() == 1 { series_color(rctx, c, pi) } else { series_color(rctx, c, si) };
+        let (paint, alpha) = if let Some(pf) = s.point_fills.iter().find(|(k, _)| *k == pi).map(|(_, f)| f) {
+            (paint_of(rctx, Some(pf), base_col), 1.0)
+        } else if let Some(f) = &s.fill {
+            (paint_of(rctx, Some(f), base_col), 1.0)
+        } else {
+            (Paint::Color(base_col), 0.7)
+        };
+        let circle_path = kurbo::Circle::new(q, r).to_path(0.1);
+        fill_path_with(ctx, &paint, &circle_path, m, alpha);
+        if let Some((oc, ow)) = bubble_outline(rctx, s, base_col) {
+            ctx.set_transform(m);
+            ctx.set_paint(color(oc, 1.0));
+            ctx.set_stroke(kurbo::Stroke::new(ow));
+            ctx.stroke_path(&circle_path);
+        }
+    }
+}
+
 fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
     let c = draw.chart;
     let rctx = draw.rctx;
@@ -935,6 +1015,20 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
     let base = draw.base;
     let err_marks = &mut draw.error_marks;
     let mut acc = vec![0.0; ncat];
+    let max_bubble_sz = if c.series.iter().any(|s| c.series_kind(s) == ChartType::Bubble) {
+        c.series
+            .iter()
+            .filter(|s| c.series_kind(s) == ChartType::Bubble)
+            .flat_map(|s| s.sizes.iter().flatten().copied())
+            .filter(|sz| sz.is_finite() && *sz > 0.0)
+            .fold(0.0_f64, f64::max)
+    } else {
+        0.0
+    };
+    let bubble_plot_dim = plot.width().min(plot.height());
+    let bubble_scale = c.bubble_scale.unwrap_or(100.0).clamp(0.0, 300.0);
+    let max_bubble_r = (bubble_plot_dim * 0.10 * (bubble_scale / 100.0)).max(0.0);
+    let size_by_width = c.size_represents.as_deref() == Some("w");
     for (si, s) in c.series.iter().enumerate() {
         let kind = c.series_kind(s);
         if kind.is_bar_like() || kind == ChartType::Stock {
@@ -946,12 +1040,33 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
         let series_stats = s.error_bars.as_ref().map(|_| deckcraft_model::chart::SeriesStats::of(&s.values));
         let mut pts = vec![];
+        let mut bubble_pts = vec![];
         // Each point's own value (not the stacked total), for its data label.
         let mut values = vec![];
         // Whether the series has any x value, found once rather than per point.
         let any_x = s.x_values.iter().flatten().next().is_some();
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
+            if kind == ChartType::Bubble {
+                let Some(sz) = s.sizes.get(i).copied().flatten().filter(|sz| sz.is_finite() && *sz > 0.0) else {
+                    continue;
+                };
+                let own = v;
+                let x = match (s.x_values.get(i).copied().flatten().and_then(to_x), any_x) {
+                    (Some(x), _) => x,
+                    // No x values at all: the points are numbered 1, 2, 3...
+                    (None, false) => to_x(i as f64 + 1.0).unwrap_or(plot.x0 + band * (slot(i) + 0.5)),
+                    (None, true) => continue,
+                };
+                if let Some((lo, hi)) = s.error_bars.as_ref().and_then(|e| series_stats.as_ref().and_then(|st| e.range_in(st, i, v))) {
+                    err_marks.push((x, to_axis(sec, lo), to_axis(sec, hi), base * 0.4, s.error_bars.as_ref().is_some_and(|e| e.end_cap)));
+                }
+                let pt = Point::new(x, to_axis(sec, v));
+                pts.push(pt);
+                bubble_pts.push((i, pt, sz));
+                values.push(own);
+                continue;
+            }
             let own = v;
             let v = if stacked {
                 let base_v = acc.get(i).copied().unwrap_or(0.0);
@@ -963,7 +1078,7 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
                 v
             };
             let x = match kind {
-                ChartType::Scatter | ChartType::Bubble => {
+                ChartType::Scatter => {
                     match (s.x_values.get(i).copied().flatten().and_then(to_x), any_x) {
                         (Some(x), _) => x,
                         // No x values at all: the points are numbered 1, 2, 3...
@@ -993,17 +1108,19 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
             }
             ctx.set_paint(color(col, 0.85));
             ctx.fill_path(&a);
-        } else if kind != ChartType::Scatter {
+        } else if !matches!(kind, ChartType::Scatter | ChartType::Bubble) {
             let lw = s.line.as_ref().and_then(|l| l.width).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(2.25).clamp(0.25, 20.0);
             ctx.set_paint(color(col, 1.0));
             ctx.set_stroke(kurbo::Stroke::new(lw).with_join(kurbo::Join::Round).with_caps(kurbo::Cap::Round));
             ctx.stroke_path(&p);
         }
-        if matches!(kind, ChartType::LineMarkers | ChartType::Scatter | ChartType::Bubble) {
+        if matches!(kind, ChartType::LineMarkers | ChartType::Scatter) {
             ctx.set_paint(color(col, 1.0));
             for q in &pts {
                 ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
             }
+        } else if kind == ChartType::Bubble {
+            draw_bubbles(ctx, &BubbleDrawing { rctx, chart: c, transform: m, max_bubble_sz, max_bubble_r, size_by_width }, si, s, &bubble_pts);
         }
         // A line series that asks for value labels (`c:dLbls/c:showVal`) shows each point's value
         // just above it, as bars do theirs (#2066). Area series keep none (theirs sit inside the
