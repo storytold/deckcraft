@@ -323,6 +323,282 @@ pub(crate) fn apply_leading_tabs(para: &mut deckcraft_model::text::Paragraph) ->
     true
 }
 
+/// The Outline editor sends all paragraphs, with tabs recording their levels. Use identifiable
+/// section headings to preserve child formatting when sections change.
+fn replace_outline(body: &mut TextBody, mut next: TextBody, mut adjust: impl FnMut(&mut deckcraft_model::text::Paragraph)) {
+    let old_text: Vec<_> = body.paragraphs.iter().map(|para| para.text()).collect();
+    let new_text: Vec<_> = next
+        .paragraphs
+        .iter_mut()
+        .map(|para| {
+            apply_leading_tabs(para);
+            para.text()
+        })
+        .collect();
+    let mut used = vec![false; old_text.len()];
+    let mut originals = vec![None; new_text.len()];
+    let bodies = [&*body, &next];
+    let texts: [&[String]; 2] = [&old_text, &new_text];
+    let old: Vec<_> = (0..old_text.len()).collect();
+    let new: Vec<_> = (0..new_text.len()).collect();
+    let all: [&[usize]; 2] = [&old, &new];
+    let [old_headings, new_headings] = outline_headings(bodies, texts);
+    for (target, &source) in new_headings.iter().enumerate() {
+        if let Some(source) = source {
+            originals[target] = Some(source);
+            used[source] = true;
+        }
+    }
+    let sections = [outline_sections(&body.paragraphs, &old_headings), outline_sections(&next.paragraphs, &new_headings)];
+    let groups: Vec<_> = group_outline_sections(&sections, all).collect();
+    for [old, new] in &groups {
+        match_outline_exact(bodies, texts, [old, new], &mut used, &mut originals);
+    }
+    // When headings stay in order, reserve global exact moves before inferring edits.
+    // Reordered sections can also carry a child whose text changed within that section.
+    if !new_headings.iter().flatten().is_sorted() {
+        match_outline_moves(bodies, texts, all, &sections, &mut used, &mut originals);
+        for [old, new] in &groups {
+            match_outline_edits(texts, [old, new], &mut used, &mut originals, false);
+        }
+    }
+    // Unchanged lines can move between sections. Reserve them before matching replacements
+    // that share no text with the previous line in their section.
+    match_outline_exact(bodies, texts, all, &mut used, &mut originals);
+    for [old, new] in &groups {
+        match_outline_edits(texts, [old, new], &mut used, &mut originals, true);
+    }
+    match_outline_edits(texts, all, &mut used, &mut originals, true);
+    let mut following = originals.iter().flatten().copied().peekable();
+    let mut preceding = None;
+    for ((para, text), source) in next.paragraphs.iter_mut().zip(&new_text).zip(originals.iter().copied()) {
+        if source.is_some() {
+            preceding = following.next();
+        }
+        let base = source.or(preceding).or_else(|| following.peek().copied()).and_then(|i| body.paragraphs.get(i));
+        if let Some(base) = base {
+            let level = para.level;
+            if source.is_some_and(|i| old_text[i] == *text) {
+                *para = base.clone();
+            } else {
+                preserve_outline_run_style(para, base, text);
+                adjust(para);
+            }
+            para.level = level;
+        } else {
+            adjust(para);
+        }
+    }
+    body.paragraphs = next.paragraphs;
+}
+
+/// Reserve exact matches between sections that both gain and lose unchanged children.
+/// A one-way match may be an edit within one section, which gets first chance below.
+fn match_outline_moves(
+    bodies: [&TextBody; 2],
+    texts: [&[String]; 2],
+    all: [&[usize]; 2],
+    [old_sections, new_sections]: &[Vec<Option<usize>>; 2],
+    used: &mut [bool],
+    originals: &mut [Option<usize>],
+) {
+    let mut possible = originals.to_vec();
+    match_outline_exact(bodies, texts, all, &mut used.to_vec(), &mut possible);
+    let moves: Vec<_> = possible
+        .into_iter()
+        .zip(originals.iter())
+        .enumerate()
+        .filter_map(|(target, (source, original))| {
+            let source = source.filter(|_| original.is_none())?;
+            let (from, to) = (old_sections[source]?, new_sections[target]?);
+            (from != to).then_some((source, target, from, to))
+        })
+        .collect();
+    let senders: std::collections::HashSet<_> = moves.iter().map(|&(_, _, from, _)| from).collect();
+    let receivers: std::collections::HashSet<_> = moves.iter().map(|&(_, _, _, to)| to).collect();
+    for (source, target, from, to) in moves {
+        if senders.contains(&to) && receivers.contains(&from) {
+            originals[target] = Some(source);
+            used[source] = true;
+        }
+    }
+}
+
+/// Match section headings by text and level. A section can gain or lose all of its children
+/// when its label on the side with no children identifies a single line.
+fn outline_headings(bodies: [&TextBody; 2], texts: [&[String]; 2]) -> [Vec<Option<usize>>; 2] {
+    let mut by_heading = std::collections::HashMap::<(&str, u8), [Vec<usize>; 2]>::new();
+    for (side, body) in bodies.into_iter().enumerate() {
+        for (i, paragraph) in body.paragraphs.iter().enumerate() {
+            let text = &texts[side][i];
+            if !text.is_empty() {
+                by_heading.entry((text, paragraph.level)).or_default()[side].push(i);
+            }
+        }
+    }
+    let [mut old, mut new] = bodies.map(|body| vec![None; body.paragraphs.len()]);
+    for [sources, targets] in by_heading.into_values() {
+        if let (Some((source, source_has_children)), Some((target, target_has_children))) =
+            (outline_heading_candidate(&bodies[0].paragraphs, &sources), outline_heading_candidate(&bodies[1].paragraphs, &targets))
+            && (source_has_children || target_has_children)
+        {
+            old[source] = Some(source);
+            new[target] = Some(source);
+        }
+    }
+    [old, new]
+}
+
+fn outline_heading_candidate(paragraphs: &[deckcraft_model::text::Paragraph], lines: &[usize]) -> Option<(usize, bool)> {
+    let mut headings = lines.iter().copied().filter(|&i| paragraphs.get(i + 1).is_some_and(|next| next.level > paragraphs[i].level));
+    match (headings.next(), headings.next(), lines) {
+        (Some(heading), None, _) => Some((heading, true)),
+        (None, None, [only]) => Some((*only, false)),
+        _ => None,
+    }
+}
+
+/// The closest identifiable heading above each paragraph, named by its original position.
+fn outline_sections(paragraphs: &[deckcraft_model::text::Paragraph], headings: &[Option<usize>]) -> Vec<Option<usize>> {
+    let mut ancestors = Vec::<(u8, usize)>::new();
+    paragraphs
+        .iter()
+        .zip(headings)
+        .map(|(paragraph, heading)| {
+            while ancestors.last().is_some_and(|&(level, _)| level >= paragraph.level) {
+                ancestors.pop();
+            }
+            let section = ancestors.last().map(|&(_, source)| source);
+            if let Some(source) = heading {
+                ancestors.push((paragraph.level, *source));
+            }
+            section
+        })
+        .collect()
+}
+
+fn group_outline_sections(sections: &[Vec<Option<usize>>; 2], indices: [&[usize]; 2]) -> impl Iterator<Item = [Vec<usize>; 2]> {
+    let mut groups = std::collections::HashMap::<usize, [Vec<usize>; 2]>::new();
+    for (side, indices) in indices.into_iter().enumerate() {
+        for &i in indices {
+            if let Some(section) = sections[side][i] {
+                groups.entry(section).or_default()[side].push(i);
+            }
+        }
+    }
+    groups.into_values()
+}
+
+/// Match identical text among the remaining lines in the supplied group.
+fn match_outline_exact(
+    bodies: [&TextBody; 2],
+    [old_text, new_text]: [&[String]; 2],
+    [old, new]: [&[usize]; 2],
+    used: &mut [bool],
+    originals: &mut [Option<usize>],
+) {
+    let mut by_text = std::collections::HashMap::<&str, [Vec<usize>; 2]>::new();
+    for &i in old.iter().filter(|&&i| !used[i]) {
+        by_text.entry(&old_text[i]).or_default()[0].push(i);
+    }
+    for &i in new.iter().filter(|&&i| originals[i].is_none()) {
+        by_text.entry(&new_text[i]).or_default()[1].push(i);
+    }
+    for group in by_text.into_values() {
+        match_identical_outline_lines(bodies, group, used, originals);
+    }
+}
+
+/// Match identical lines by level. Equal-sized groups with a level mismatch keep their order
+/// when reindenting the lines.
+fn match_identical_outline_lines([body, next]: [&TextBody; 2], [old, new]: [Vec<usize>; 2], used: &mut [bool], originals: &mut [Option<usize>]) {
+    use std::collections::{HashMap, VecDeque};
+    let mut levels = HashMap::<u8, VecDeque<usize>>::new();
+    for &i in &old {
+        levels.entry(body.paragraphs[i].level).or_default().push_back(i);
+    }
+    for &i in &new {
+        originals[i] = levels.get_mut(&next.paragraphs[i].level).and_then(VecDeque::pop_front);
+    }
+    if old.len() == new.len() && new.iter().any(|&i| originals[i].is_none()) {
+        for (&target, source) in new.iter().zip(old) {
+            originals[target] = Some(source);
+        }
+    } else {
+        for source in new.iter().filter_map(|&i| originals[i]) {
+            used[source] = true;
+        }
+        let mut unused = old.into_iter().filter(|&i| !used[i]);
+        for &i in &new {
+            if originals[i].is_none() {
+                originals[i] = unused.next();
+            }
+        }
+    }
+    for source in new.iter().filter_map(|&i| originals[i]) {
+        used[source] = true;
+    }
+}
+
+/// Match edited lines in their original order. When there are excess lines, a shared edge
+/// distinguishes an edit from a nearby insertion or deletion.
+fn match_outline_edits(
+    [old, new]: [&[String]; 2],
+    [sources, targets]: [&[usize]; 2],
+    used: &mut [bool],
+    originals: &mut [Option<usize>],
+    allow_replacements: bool,
+) {
+    let candidates: Vec<_> = sources.iter().copied().filter(|&i| !used[i]).collect();
+    let unmatched: Vec<_> = targets.iter().copied().filter(|&i| originals[i].is_none()).collect();
+    let (mut old_at, mut new_at) = (0, 0);
+    while old_at < candidates.len() && new_at < unmatched.len() {
+        let (source, target) = (candidates[old_at], unmatched[new_at]);
+        let (old_left, new_left) = (candidates.len() - old_at, unmatched.len() - new_at);
+        let score = outline_overlap(&old[source], &new[target]);
+        if new_left > old_left && outline_overlap(&old[source], &new[unmatched[new_at + 1]]) > score {
+            new_at += 1;
+        } else if old_left > new_left && outline_overlap(&old[candidates[old_at + 1]], &new[target]) > score {
+            old_at += 1;
+        } else {
+            if allow_replacements || score > 0 {
+                originals[target] = Some(source);
+                used[source] = true;
+            }
+            old_at += 1;
+            new_at += 1;
+        }
+    }
+}
+
+fn outline_overlap(old: &str, new: &str) -> usize {
+    let prefix = old.chars().zip(new.chars()).take_while(|(a, b)| a == b).count();
+    let suffix = old.chars().rev().zip(new.chars().rev()).take_while(|(a, b)| a == b).count();
+    prefix.max(suffix)
+}
+
+/// Reuse the ordinary text edit for a changed line that still shares a prefix or suffix. A new
+/// line without shared characters starts with its surrounding paragraph's first run style.
+fn preserve_outline_run_style(para: &mut deckcraft_model::text::Paragraph, base: &deckcraft_model::text::Paragraph, text: &str) {
+    let old = base.text();
+    let shares_text = !text.is_empty() && (old.chars().next() == text.chars().next() || old.chars().next_back() == text.chars().next_back());
+    if shares_text {
+        let mut body = TextBody { paragraphs: vec![base.clone()], ..Default::default() };
+        ed::replace_text(&mut body, text);
+        if let Some(updated) = body.paragraphs.pop() {
+            para.runs = updated.runs;
+        }
+    } else {
+        let props = base.runs.first().map_or(&base.end_props, |run| &run.props);
+        for run in &mut para.runs {
+            run.props.clone_from(props);
+        }
+    }
+    para.props.clone_from(&base.props);
+    para.def_props.clone_from(&base.def_props);
+    para.end_props.clone_from(&base.end_props);
+}
+
 pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let text = str_param(p, "text").ok_or_else(|| bad("text.set", "missing `text`"))?.to_string();
     let id = match id_param(p, "id", "text.set")? {
@@ -331,6 +607,7 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let cell = p.get("cell").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)));
     let inherited = inherited_aligns(s, id);
+    let outline = bool_or(p, "outline", false);
     edit_shapes(s, &json!({"id": id}), "text.set", |sh| {
         let target = match (&mut sh.kind, cell) {
             (ShapeKind::Table(t), Some((r, c))) => t.cell_mut(r, c).map(|x| &mut x.text),
@@ -338,9 +615,13 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
             _ => Some(sh.text.get_or_insert_with(TextBody::default)),
         };
         let Some(body) = target else { return Err(bad("text.set", "no text here (tables need `cell`)")) };
+        let mut nb = TextBody::from_text(&text);
+        if outline {
+            replace_outline(body, nb, |para| promote_rtl_if_needed(para, &inherited));
+            return Ok(());
+        }
         let keep = body.paragraphs.first().and_then(|p| p.runs.first()).map(|r| r.props.clone()).unwrap_or_default();
         let levels: Vec<(u8, deckcraft_model::text::ParaProps)> = body.paragraphs.iter().map(|p| (p.level, p.props.clone())).collect();
-        let mut nb = TextBody::from_text(&text);
         for (i, para) in nb.paragraphs.iter_mut().enumerate() {
             // Leading tabs set the outline level.
             if !apply_leading_tabs(para)
@@ -392,5 +673,260 @@ mod select_paragraph_tests {
         let t = s.doc().unwrap().selection.text.clone().unwrap();
         // Clamped to the last (only) paragraph, never past the end of the body.
         assert_eq!((t.anchor, t.caret), ((0, 0), (0, 5)));
+    }
+}
+
+#[cfg(test)]
+mod outline_tests {
+    use super::{Session, edit_shapes};
+    use serde_json::json;
+
+    #[test]
+    fn editing_outline_keeps_the_runs_and_levels_of_the_remaining_paragraphs() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": "One\nTwo\nThree\nFour"})).unwrap();
+        let id = s.doc().unwrap().selection.shapes[0];
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
+            paragraphs[0].runs[0].props.bold = Some(true);
+            paragraphs[1].level = 1;
+            let mut italic = paragraphs[1].runs[0].clone();
+            italic.text = "wo".into();
+            italic.props.italic = Some(true);
+            paragraphs[1].runs[0].text = "T".into();
+            paragraphs[1].runs.push(italic);
+            paragraphs[2].props.margin_left = Some(4.5);
+            Ok(())
+        })
+        .unwrap();
+        let before = s.doc().unwrap().shape(id).unwrap().text.clone().unwrap().paragraphs;
+
+        s.execute("text.set", &json!({"id": id, "text": "\tTwo\nThree\nFour", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &before[1..]);
+    }
+
+    #[test]
+    fn editing_outline_matches_identically_named_lines_at_their_own_levels() {
+        let (mut s, id) = outline_with_two_styles("Task\nTask", 1);
+        let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs[1].clone();
+
+        s.execute("text.set", &json!({"id": id, "text": "\tTask", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &[before]);
+    }
+
+    fn outline_with_two_styles(text: &str, second_level: u8) -> (Session, deckcraft_model::ShapeId) {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": text})).unwrap();
+        let id = s.doc().unwrap().selection.shapes[0];
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
+            paragraphs[0].runs[0].props.bold = Some(true);
+            paragraphs[1].level = second_level;
+            paragraphs[1].runs[0].props.italic = Some(true);
+            Ok(())
+        })
+        .unwrap();
+        (s, id)
+    }
+
+    #[test]
+    fn an_inserted_outline_line_does_not_consume_the_edited_paragraph() {
+        let (mut s, id) = outline_with_two_styles("First\nSecond", 0);
+        s.execute("text.set", &json!({"id": id, "text": "New\nFirst!\nSecond", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after[1].text(), "First!");
+        assert!(after[1].runs.iter().all(|run| run.props.bold == Some(true) && run.props.italic.is_none()));
+        assert_eq!(after[2].text(), "Second");
+        assert_eq!(after[2].runs[0].props.italic, Some(true));
+    }
+
+    #[test]
+    fn reindenting_one_duplicate_outline_line_does_not_swap_its_style() {
+        let (mut s, id) = outline_with_two_styles("Task\nTask", 1);
+        let mut expected = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+        expected[0].level = 1;
+        s.execute("text.set", &json!({"id": id, "text": "\tTask\n\tTask", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &expected);
+    }
+
+    #[test]
+    fn moving_an_outline_section_keeps_duplicate_styles_at_their_levels() {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": "A\nTask\nB\nSection\nTask"})).unwrap();
+        let id = s.doc().unwrap().selection.shapes[0];
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
+            paragraphs[1].level = 1;
+            paragraphs[1].runs[0].props.bold = Some(true);
+            paragraphs[3].level = 1;
+            paragraphs[4].level = 2;
+            paragraphs[4].runs[0].props.italic = Some(true);
+            Ok(())
+        })
+        .unwrap();
+        let mut expected = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+        expected.rotate_left(2);
+
+        s.execute("text.set", &json!({"id": id, "text": "B\n\tSection\n\t\tTask\nA\n\tTask", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &expected);
+    }
+
+    fn outline_with_styled_children(text: &str, [first, second]: [usize; 2]) -> (Session, deckcraft_model::ShapeId) {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 100], "text": text})).unwrap();
+        let id = s.doc().unwrap().selection.shapes[0];
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            let paragraphs = &mut shape.text.as_mut().unwrap().paragraphs;
+            paragraphs[first].level = 1;
+            paragraphs[first].runs[0].props.bold = Some(true);
+            paragraphs[first].props.margin_left = Some(4.5);
+            paragraphs[second].level = 1;
+            paragraphs[second].runs[0].props.italic = Some(true);
+            paragraphs[second].props.margin_left = Some(8.0);
+            Ok(())
+        })
+        .unwrap();
+        (s, id)
+    }
+
+    #[test]
+    fn moving_an_outline_section_keeps_identical_children_with_their_headings() {
+        let (mut s, id) = outline_with_styled_children("A\nTask\nB\nTask", [1, 3]);
+        let mut expected = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+        expected.rotate_left(2);
+
+        s.execute("text.set", &json!({"id": id, "text": "B\n\tTask\nA\n\tTask", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &expected);
+    }
+
+    #[test]
+    fn moving_an_outline_section_keeps_its_child_when_the_other_section_becomes_empty() {
+        let (mut s, id) = outline_with_styled_children("A\nTask\nB\nTask", [1, 3]);
+        let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+
+        s.execute("text.set", &json!({"id": id, "text": "B\n\tTask\nA", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &[before[2].clone(), before[3].clone(), before[0].clone()]);
+
+        s.execute("text.set", &json!({"id": id, "text": "A\n\tTask\nB\n\tTask", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after[3], before[3], "B still owns its child when A gains one");
+    }
+
+    #[test]
+    fn moving_an_outline_section_keeps_unchanged_children_that_swap_sections() {
+        let (mut s, id) = outline_with_styled_children("A\nApple\nB\nZebra", [1, 3]);
+        let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+
+        s.execute("text.set", &json!({"id": id, "text": "B\n\tApple\nA\n\tZebra", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &[before[2].clone(), before[1].clone(), before[0].clone(), before[3].clone()]);
+    }
+
+    #[test]
+    fn editing_outline_children_keeps_their_styles_with_headings_in_place() {
+        let (mut s, id) = outline_with_styled_children("A\nTask\nB\nTask", [1, 3]);
+        let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+        s.execute("text.set", &json!({"id": id, "text": "A\nB\n\tTask", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &[before[0].clone(), before[2].clone(), before[3].clone()]);
+
+        for (edited, indices) in [("A\n\tApricot\nB\n\tApple", [0, 3, 2, 1]), ("B\n\tApple\nA\n\tApricot", [2, 1, 0, 3])] {
+            let (mut s, id) = outline_with_styled_children("A\nApple\nB\nApricot", [1, 3]);
+            let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+            s.execute("text.set", &json!({"id": id, "text": edited, "outline": true})).unwrap();
+            let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+            assert_eq!(after, &indices.map(|index| before[index].clone()), "{edited:?}");
+        }
+    }
+
+    #[test]
+    fn unchanged_children_keep_their_styles_in_a_three_section_exchange() {
+        let (mut s, id) = outline_with_styled_children("A\nApple\nB\nApricot\nC\nAvocado", [1, 3]);
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            let last = &mut shape.text.as_mut().unwrap().paragraphs[5];
+            last.level = 1;
+            last.props.margin_left = Some(12.0);
+            Ok(())
+        })
+        .unwrap();
+        let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+        s.execute("text.set", &json!({"id": id, "text": "B\n\tAvocado\nC\n\tApple\nA\n\tApricot", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &[2, 5, 4, 1, 0, 3].map(|index| before[index].clone()));
+    }
+
+    #[test]
+    fn successive_moves_between_outline_sections_keep_the_original_styles() {
+        let (mut s, id) = outline_with_styled_children("A\nApple\nB\nApricot\nC\nZebra", [1, 3]);
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            shape.text.as_mut().unwrap().paragraphs[5].level = 1;
+            Ok(())
+        })
+        .unwrap();
+        let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+        s.execute("text.set", &json!({"id": id, "text": "A\nB\n\tApple\nC\n\tZebra\n\tApricot", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after, &[0, 2, 1, 4, 5, 3].map(|index| before[index].clone()));
+    }
+
+    #[test]
+    fn editing_an_outline_line_keeps_its_default_run_properties() {
+        let (mut s, id) = outline_with_two_styles("First\nSecond", 0);
+        edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+            shape.text.as_mut().unwrap().paragraphs[0].def_props.italic = Some(true);
+            Ok(())
+        })
+        .unwrap();
+        s.execute("text.set", &json!({"id": id, "text": "First!\nSecond", "outline": true})).unwrap();
+        let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+        assert_eq!(after[0].def_props.italic, Some(true));
+    }
+
+    #[test]
+    fn moving_an_outline_section_recognizes_a_heading_that_also_occurs_as_a_leaf() {
+        for (leaf_level, edited) in [(1, "B\n\tTask\nA\n\tTask\n\tB"), (0, "B\n\tTask\nA\n\tTask\nB")] {
+            let (mut s, id) = outline_with_styled_children("A\nTask\nB\nB\nTask", [1, 4]);
+            edit_shapes(&mut s, &json!({"id": id}), "text.set", |shape| {
+                shape.text.as_mut().unwrap().paragraphs[2].level = leaf_level;
+                Ok(())
+            })
+            .unwrap();
+            let mut expected = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+            expected.rotate_left(3);
+
+            s.execute("text.set", &json!({"id": id, "text": edited, "outline": true})).unwrap();
+            let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+            assert_eq!(after, &expected, "{edited:?}");
+        }
+    }
+
+    #[test]
+    fn moving_an_outline_section_keeps_edited_child_styles_and_paragraph_properties() {
+        for (original, edited, indices) in [
+            ("A\nFirst task\nB\nSecond task", "B\n\tSecond task!\nA\n\tFirst task!", [3, 1]),
+            ("A\nFirst task\nB\nSecond task", "A\n\tFirst task!\nB\n\tSecond task!", [1, 3]),
+            ("Section\nFirst task\nSection\nSecond task", "Section\n\tSecond task!\nSection\n\tFirst task!", [1, 3]),
+            ("A\nTask\nB\nTask draft", "B\n\tTask\nA\n\tTask!", [3, 1]),
+            ("A\nApple\nB\nZebra", "B\n\tLion\nA\n\tPlum", [3, 1]),
+        ] {
+            let (mut s, id) = outline_with_styled_children(original, [1, 3]);
+            let before = s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs.clone();
+
+            s.execute("text.set", &json!({"id": id, "text": edited, "outline": true})).unwrap();
+            let after = &s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs;
+            let children = edited.lines().filter_map(|line| line.strip_prefix('\t'));
+            for ((paragraph, source), text) in [&after[1], &after[3]].into_iter().zip(indices).zip(children) {
+                assert_eq!(paragraph.text(), text);
+                assert_eq!(paragraph.props, before[source].props, "{edited:?}");
+                assert!(paragraph.runs.iter().all(|run| run.props == before[source].runs[0].props), "{edited:?}");
+            }
+        }
     }
 }

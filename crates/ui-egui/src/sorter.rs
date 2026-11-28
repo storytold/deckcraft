@@ -535,7 +535,7 @@ fn outline_slide(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, i: usize, s: &deck
                 let _ = app.run("slide.go", json!({"index": i}));
             }
             if resp.lost_focus() && v != cur_text {
-                let _ = app.run("text.set", json!({"id": sh.id.0, "text": v}));
+                let _ = app.run("text.set", json!({"id": sh.id.0, "text": v, "outline": true}));
             }
             if !resp.has_focus() {
                 ui.data_mut(|d| d.remove::<String>(id));
