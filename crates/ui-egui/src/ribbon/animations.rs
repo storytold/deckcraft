@@ -1,6 +1,6 @@
 use super::{
-    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json,
-    pos2, rows, run, theme, vec2, widgets,
+    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big_button, big_button_ex, dropdown, enabled, group, icons, json, pos2,
+    rows, run, theme, vec2, widgets,
 };
 
 // ---------- Animations ----------
@@ -127,7 +127,15 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         });
-        big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
+
+        let pane_open = app.ui.pane.as_deref() == Some("animation");
+        let res = big_button_ex(ui, Icon::AnimationPane, "Animation\nPane", true, false, pane_open);
+        let res_btn = res.0.on_hover_text(super::tip("view.pane", "Animation\nPane"));
+        super::qat::ribbon_menu(app, &res_btn, Icon::AnimationPane, "Animation\nPane", "view.pane", &json!({"pane": "animation", "toggle": true}));
+        if res_btn.clicked() {
+            run(app, "view.pane", json!({"pane": "animation", "toggle": true}));
+        }
+
         let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
         egui::Popup::menu(&r).show(|ui| {
             if ui.button("On Click of… (none)").clicked() {
@@ -141,6 +149,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
         });
+
         let on = app.session.anim_painter.is_some();
         let en = enabled(app, "animation.painter");
         let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
@@ -155,6 +164,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
+
     group(ui, |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
