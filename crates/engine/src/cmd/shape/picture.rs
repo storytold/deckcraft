@@ -1,13 +1,23 @@
 use super::{NO_ID_SPACE, Result, Session, Value, bad, bool_or, bool_param, edit_geometry, edit_shapes, f64_param, json};
 
+/// `picture.crop`. By default the box follows the crop and the image keeps its size and place
+/// ([`crate::cmd::crop::crop_keeping_scale`]), as PowerPoint crops; `keepFrame: true` keeps the
+/// box and stretches what is left into it, which was the only behaviour before crop mode.
 pub(super) fn crop(s: &mut Session, p: &Value) -> Result<Value> {
     let c = [f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom")];
+    if !bool_or(p, "keepFrame", false) {
+        return crate::cmd::crop::crop_keeping_scale(s, p, c);
+    }
     edit_geometry(s, p, "picture.crop", |sh| {
         if let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind {
             for (i, v) in c.iter().enumerate() {
                 if let (Some(v), Some(slot)) = (v, fill.crop.get_mut(i)) {
                     *slot = v.clamp(-10.0, 0.95);
                 }
+            }
+            // Keep at least a sliver showing, as without keepFrame.
+            if !deckcraft_model::style::crop_shows_enough(fill.crop) {
+                return Err(bad("picture.crop", "the crop leaves nothing of the picture"));
             }
         }
         Ok(())
