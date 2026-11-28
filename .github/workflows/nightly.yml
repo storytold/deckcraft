@@ -1,8 +1,10 @@
 name: DeckCraft unsigned nightly
 
-# Enabled for supervised manual runs by the reviewed manual actor only; no schedule yet.
-# A later explicit opt-in may add a cadence (and turn on nightly-dispatch.yml with it).
+# Runs on the reviewed nightly schedule (01:00 UTC) and for supervised manual runs
+# by the reviewed manual actors. Completed scheduled runs are forwarded by nightly-dispatch.yml.
 on:
+  schedule:
+    - cron: '0 1 * * *'
   workflow_dispatch:
 
 permissions:
