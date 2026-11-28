@@ -148,6 +148,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
     ("app.smartArtPictureDialog", "Insert Picture in Diagram…", None, "{id?, index}"),
     ("app.changePictureDialog", "Change Picture…", None, "{}"),
+    ("app.changePictureFromClipboard", "Change Picture from Clipboard", None, "{}"),
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),

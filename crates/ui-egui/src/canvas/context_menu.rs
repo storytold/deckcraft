@@ -234,9 +234,19 @@ fn shape_items(app: &mut SlideApp, ui: &mut egui::Ui) {
     }
     let picture =
         app.session.active().is_some_and(|d| d.selected_shapes().iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })));
-    if picture && ui.button("Change Picture…").clicked() {
-        let _ = app.run("app.changePictureDialog", json!({}));
-        ui.close();
+    if picture {
+        ui.menu_button("Change Picture", |ui| {
+            if ui.button("From File…").clicked() {
+                let _ = app.run("app.changePictureDialog", json!({}));
+                ui.close();
+            }
+            // The web build and native Wayland cannot read a clipboard picture, so the item
+            // reports what it cannot do instead of failing on every press.
+            if ui.add_enabled(app.services.clipboard_image.is_some(), egui::Button::new("From Clipboard…")).clicked() {
+                let _ = app.run("app.changePictureFromClipboard", json!({}));
+                ui.close();
+            }
+        });
     }
     if ui.button("Link…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
