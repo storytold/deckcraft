@@ -1,4 +1,3 @@
-use super::zoom::GRID_CAP;
 use super::{
     BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle, Timeline,
     TriggerPlay, pos2, state_for, vec2,
@@ -196,25 +195,44 @@ pub(super) fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Optio
     ]
 }
 
-/// Width of a slide-show grid thumbnail, in pixels.
-const THUMB_WIDTH: f64 = 320.0;
-/// Tallest grid thumbnail, so an extreme portrait slide cannot ask for a huge raster.
-const THUMB_MAX_HEIGHT: f64 = 2048.0;
+/// Target pixel budget for all visible grid previews (64 MiB of RGBA pixels).
+const GRID_CACHE_PIXELS: usize = 16 * 1024 * 1024;
 
-/// The scale and pixel size of a grid thumbnail of a `width` x `height` slide.
-fn thumb_size(width: f64, height: f64) -> (f64, f64, f64) {
-    let (sw, sh) = (width.max(1.0), height.max(1.0));
-    let scale = (THUMB_WIDTH / sw).min(THUMB_MAX_HEIGHT / sh);
-    (scale, (sw * scale).round().max(1.0), (sh * scale).round().max(1.0))
+/// Keep extreme slide shapes, GPU limits and a large visible grid within the preview budget.
+pub(super) fn grid_thumb_size(ctx: &egui::Context, doc: &Presentation, visible: usize) -> (u32, u32) {
+    crate::textures::fit_size(grid_thumb_box(doc.slide_size.width, doc.slide_size.height, visible), crate::textures::max_side(ctx))
 }
 
-pub(super) fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usize) -> Option<TextureHandle> {
-    if show.thumbs.len() >= GRID_CAP {
+/// A grid thumbnail's pixel size before GPU limits: the longer side is at most 320, so an extreme
+/// portrait slide cannot ask for a huge raster, and all `visible` previews share the pixel budget.
+fn grid_thumb_box(width: f64, height: f64, visible: usize) -> (u32, u32) {
+    let aspect = width / height;
+    let aspect = if aspect.is_finite() && aspect > 0.0 { aspect } else { 16.0 / 9.0 };
+    let (w, h) = if aspect >= 1.0 { (320.0, (320.0 / aspect).max(1.0)) } else { ((320.0 * aspect).max(1.0), 320.0) };
+    let pixels = (GRID_CACHE_PIXELS / visible.max(1)).max(1) as u32;
+    let scale = (pixels as f64 / (w * h)).sqrt().min(1.0);
+    let w = ((w * scale).floor() as u32).clamp(1, pixels);
+    let h = ((h * scale).floor() as u32).clamp(1, (pixels / w).max(1));
+    (w, h)
+}
+
+pub(super) fn render_thumb(
+    ctx: &egui::Context,
+    show: &mut Show,
+    doc: &Presentation,
+    i: usize,
+    visible: usize,
+    size: (u32, u32),
+) -> Option<TextureHandle> {
+    doc.slides.get(i)?;
+    if show.thumbs.len() >= visible {
         return None;
     }
-    // 320 wide, unless the slide is so tall that this would pass the height limit: fit that box.
-    let (scale, w, h) = thumb_size(doc.slide_size.width, doc.slide_size.height);
-    let img = deckcraft_render::render_slide(doc, i, &RenderOpts { scale, size: Some((w as u32, h as u32)), ..Default::default() });
+    let img = deckcraft_render::render_slide(
+        doc,
+        i,
+        &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
+    );
     let tex = crate::textures::upload(ctx, format!("show-grid-{i}"), crate::textures::to_color_image(&img, false));
     show.thumbs.push((i, tex.clone()));
     Some(tex)
@@ -226,10 +244,10 @@ mod thumb_size_tests {
 
     #[test]
     fn ordinary_slides_are_320_wide_and_extreme_ones_stay_in_the_height_limit() {
-        let (scale, w, h) = thumb_size(960.0, 540.0);
-        assert_eq!((w, h), (320.0, 180.0));
-        assert!((scale - 320.0 / 960.0).abs() < 1e-12);
-        let (_, w, h) = thumb_size(1.0, 1.0e9);
-        assert!(h <= THUMB_MAX_HEIGHT && w >= 1.0);
+        assert_eq!(grid_thumb_box(960.0, 540.0, 1), (320, 180));
+        let (w, h) = grid_thumb_box(1.0, 1.0e9, 1);
+        assert!(h <= 320 && w >= 1);
+        let (w, h) = grid_thumb_box(960.0, 540.0, 10_000);
+        assert!((w as usize) * (h as usize) * 10_000 <= GRID_CACHE_PIXELS);
     }
 }
