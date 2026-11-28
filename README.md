@@ -121,8 +121,8 @@ Fonts come from [craft-fonts](https://github.com/storytold/craft-fonts): clone i
 (`../craft-fonts`) and local builds pick it up automatically; without it DeckCraft uses your system
 fonts.
 
-Each [GitHub release](https://github.com/storytold/deckcraft/releases) has ready-made builds, on Linux as
-an AppImage, a `.deb`, an `.rpm` and a tarball. On Gentoo, the community [::snakebyte
+Each [GitHub release](https://github.com/storytold/deckcraft/releases) has ready-made builds. See the
+[Linux download table](#linux) for available packages. On Gentoo, the community [::snakebyte
 overlay](https://github.com/switch87/snakebyte-overlay) packages the Linux release as
 `app-office/deckcraft-bin` (not maintained by the DeckCraft team):
 
@@ -209,7 +209,9 @@ selects the deeper-background icons recorded in
 |---|---|---|
 | x64 (64-bit Intel/AMD) | `deckcraft-<ver>-windows-x64.msi` | `deckcraft-<ver>-windows-x64-portable.zip` |
 | arm64 (Snapdragon and other ARM PCs) | `deckcraft-<ver>-windows-arm64.msi` | `deckcraft-<ver>-windows-arm64-portable.zip` |
-| x86 (32-bit) | `deckcraft-<ver>-windows-x86.msi` | `deckcraft-<ver>-windows-x86-portable.zip` |
+
+For 32-bit Windows PCs, [DeckCraft v0.16.0](https://github.com/storytold/deckcraft/releases/tag/v0.16.0) was the last
+release with an x86 installer and portable build.
 
 Installers and executables are code-signed.
 
@@ -247,9 +249,12 @@ DirectX 12 shaders are compiled with FXC, which is part of Windows, so no `dxcom
 | Flatpak | `deckcraft-<ver>-linux-x86_64.flatpak` | `deckcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
 | Debian/Ubuntu | `deckcraft-<ver>-linux-x86_64.deb` | `deckcraft-<ver>-linux-aarch64.deb` | |
 | Fedora/RHEL/openSUSE | `deckcraft-<ver>-linux-x86_64.rpm` | `deckcraft-<ver>-linux-aarch64.rpm` | |
+| Arch Linux | `deckcraft-<ver>-linux-x86_64.pkg.tar.zst` | `deckcraft-<ver>-linux-aarch64.pkg.tar.zst` | |
 | Tarball | `deckcraft-<ver>-linux-x86_64.tar.gz` | `deckcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
 
-RISC-V 64 (riscv64): `deckcraft-<ver>-linux-riscv64.tar.gz`, a tarball only (cross-compiled; needs glibc 2.39+, e.g. Ubuntu 24.04+).
+RISC-V (riscv64): `deckcraft-<ver>-linux-riscv64.deb`, `deckcraft-<ver>-linux-riscv64.rpm`, and
+`deckcraft-<ver>-linux-riscv64.tar.gz`. These cross-compiled packages require glibc 2.39+
+(e.g. Ubuntu 24.04 or later).
 
 **Runtime libraries.** The window-system, GPU and file-dialog libraries DeckCraft needs are opened
 when the app starts (`dlopen` through `x11-dl`, `xkbcommon-dl`, `ash`, `glutin` and `rfd`) instead
@@ -291,6 +296,7 @@ ALSA headers).
 | Build | File |
 |---|---|
 | x86_64 | `deckcraft-<ver>-freebsd-x86_64.tar.gz` |
+| aarch64 (ARM64) | `deckcraft-<ver>-freebsd-aarch64.tar.gz` |
 
 ### Web (WebAssembly)
 
