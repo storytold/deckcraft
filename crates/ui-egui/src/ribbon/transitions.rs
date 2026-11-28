@@ -1,7 +1,7 @@
-use super::animations::marked_options;
+use super::animations::{marked_options, paint_tile_caption};
 use super::{
-    Align2, Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, big, big_button, group, json, pos2, rows, run, theme,
-    vec2, widgets,
+    Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, big, big_button, group, json, pos2, rows, run, theme, vec2,
+    widgets,
 };
 
 // ---------- Transitions ----------
@@ -235,7 +235,7 @@ pub fn paint_transition_tile(p: &egui::Painter, r: Rect, (id, label): (&str, &st
         }
     }
     p.rect_stroke(pic, CornerRadius::same(2), Stroke::new(1.0, Color32::from_rgb(0x9B, 0xB4, 0xDB)), egui::StrokeKind::Inside);
-    p.text(pos2(r.center().x, r.max.y - 7.0), Align2::CENTER_CENTER, label, theme::font(10.0), t.text);
+    paint_tile_caption(p, r, pic.max.y, r.max.y - 7.0, label, t.text);
 }
 
 /// One row of Transitions ▸ Effect Options: the stored option and whether it is the current one.
