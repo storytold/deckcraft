@@ -148,10 +148,12 @@ fn mcp_automation_root_flags_are_checked_up_front() {
         let out = run(&full);
         assert!(out.status.success(), "{flag}: {}", String::from_utf8_lossy(&out.stderr));
     }
-    fails(&["--automation-read-root"], "needs a folder");
-    fails(&["--automation-write-root", "--sample"], "needs a folder");
+    fails(&["--automation-read-root"], "a value is required for '--automation-read-root <DIR>'");
+    fails(&["--automation-write-root", "--sample"], "a value is required for '--automation-write-root <DIR>'");
+    fails(&["--automation-read-root", "-folder"], "unexpected argument '-f'");
     fails(&["--automation-read-root", missing.to_str().unwrap()], "cannot open the automation read root");
-    fails(&["--automation-write-root="], "needs a non-empty folder");
+    fails(&["--automation-write-root="], "a folder is needed, not an empty value");
+    fails(&["--automation-read-root", dir, "--bogus"], "unexpected argument '--bogus'");
     // A file is not a folder.
     std::fs::write(base.join("f.txt"), "x").unwrap();
     fails(&["--automation-write-root", base.join("f.txt").to_str().unwrap()], "cannot open the automation write root");
