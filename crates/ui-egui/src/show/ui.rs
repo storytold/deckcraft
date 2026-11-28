@@ -617,7 +617,7 @@ fn draw_overlay(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, frame
 }
 
 fn draw_media_controls(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter) {
-    let Fr { ctx, doc, doc_uid, now, srect, .. } = *f;
+    let Fr { ctx, doc, doc_uid, now, full, srect, .. } = *f;
     let sw = doc.slide_size.width as f32;
     // Play/pause on the animated GIF under the pointer, and the audio/video bar.
     // Slide Show ▸ Show Media Controls hides both (the click still sl.plays a clip).
@@ -633,7 +633,7 @@ fn draw_media_controls(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr,
                 }
             }
         }
-        if let Some((id, clip, bar)) = media_bar_target(ctx, doc, show, srect).filter(|_| show.pointer_awake(now)) {
+        if let Some((id, clip, bar)) = media_bar_target(ctx, doc, show, srect, full).filter(|_| show.pointer_awake(now)) {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
             let action = {
                 let status = app.media.status(id);

@@ -1,4 +1,5 @@
 use super::render::fit;
+use super::zoom::tool_bar_rect;
 use super::{Click, HitShape, Hyperlink, PlacedShape, Presentation, Rect, ShapeId, Show, SlideApp, Ui, pos2, vec2};
 use deckcraft_anim::AnimState;
 
@@ -70,24 +71,39 @@ pub(super) fn shown_slide_rect(ui: &Ui, show: &Show, doc: &Presentation) -> Rect
     fit(avail, doc)
 }
 
-/// Playback bar for one clip: along the bottom inside a large shape, just under a small icon.
-fn media_bar_rect(shape: Rect) -> Rect {
+/// Playback bar for one clip: centred along the bottom inside a large shape, just under a small
+/// icon, and kept on screen. Where it would meet the show's tool bar (a clip filling the slide),
+/// it sits above it. Reading view draws no tool bar and keeps the bar's earlier place.
+fn media_bar_rect(shape: Rect, full: Rect, reading: bool) -> Rect {
     let h = 26.0f32;
     let w = shape.width().clamp(160.0, 420.0);
-    if shape.height() >= h + 16.0 && shape.width() >= 160.0 {
-        Rect::from_min_size(pos2(shape.min.x + 4.0, shape.max.y - h - 4.0), vec2((shape.width() - 8.0).min(w), h))
-    } else {
-        Rect::from_min_size(pos2(shape.center().x - w / 2.0, shape.max.y + 4.0), vec2(w, h))
+    let inside = shape.height() >= h + 16.0 && shape.width() >= 160.0;
+    let (w, y) = if inside { ((shape.width() - 8.0).min(w), shape.max.y - h - 4.0) } else { (w, shape.max.y + 4.0) };
+    if reading {
+        let x = if inside { shape.min.x + 4.0 } else { shape.center().x - w / 2.0 };
+        return Rect::from_min_size(pos2(x, y), vec2(w, h));
     }
+    // Not `clamp`: it panics when the window is narrower than the bar.
+    let x = (shape.center().x - w / 2.0).min(full.max.x - w - 4.0).max(full.min.x + 4.0);
+    let bar = Rect::from_min_size(pos2(x, y), vec2(w, h));
+    // The tool bar takes clicks 8 px around it (`reading_bar_hit`).
+    let tool = tool_bar_rect(full).expand(8.0);
+    if bar.intersects(tool) { bar.translate(vec2(0.0, tool.min.y - 4.0 - bar.max.y)) } else { bar }
 }
 
-pub(super) fn slide_media_bars(srect: Rect, doc: &Presentation, slide: usize) -> Vec<(ShapeId, deckcraft_model::MediaClip, Rect, Rect)> {
+pub(super) fn slide_media_bars(
+    srect: Rect,
+    full: Rect,
+    reading: bool,
+    doc: &Presentation,
+    slide: usize,
+) -> Vec<(ShapeId, deckcraft_model::MediaClip, Rect, Rect)> {
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
     crate::media::slide_media(doc, slide)
         .into_iter()
         .map(|(id, x, clip)| {
             let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
-            let bar = media_bar_rect(r);
+            let bar = media_bar_rect(r, full, reading);
             (id, clip, r, bar)
         })
         .collect()
@@ -99,12 +115,13 @@ pub(super) fn media_bar_target(
     doc: &Presentation,
     show: &Show,
     srect: Rect,
+    full: Rect,
 ) -> Option<(ShapeId, deckcraft_model::MediaClip, Rect)> {
     if !doc.show.show_media_controls || show.pen || show.ended || show.blank.is_some() {
         return None;
     }
     let p = ctx.input(|i| i.pointer.hover_pos())?;
-    let items = slide_media_bars(srect, doc, show.state.slide);
+    let items = slide_media_bars(srect, full, show.reading, doc, show.state.slide);
     if let Some((id, clip, _, bar)) = items.iter().rev().find(|(_, _, _, bar)| bar.contains(p)) {
         return Some((*id, clip.clone(), *bar));
     }
@@ -119,7 +136,7 @@ pub(super) fn pointer_on_media_bar(ctx: &egui::Context, ui: &Ui, doc: &Presentat
     }
     let Some(p) = ctx.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos())) else { return false };
     let srect = shown_slide_rect(ui, show, doc);
-    slide_media_bars(srect, doc, show.state.slide).iter().any(|(_, _, _, bar)| bar.contains(p))
+    slide_media_bars(srect, ui.max_rect(), show.reading, doc, show.state.slide).iter().any(|(_, _, _, bar)| bar.contains(p))
 }
 
 /// The media shape under the pointer on the shown slide.
@@ -274,6 +291,32 @@ mod hit_tests {
 
     fn shape(id: u32, parent: Option<usize>, rect: deckcraft_geom::Rect) -> PlacedShape {
         PlacedShape { id: ShapeId(id), parent, is_group: parent.is_none(), rect, link: None }
+    }
+
+    /// A clip filling the slide put its playback bar under the show's tool bar, both at the
+    /// bottom left: the bar is centred, and lifted above the tool bar where it would still meet it.
+    #[test]
+    fn media_bar_keeps_clear_of_the_tool_bar() {
+        for (w, h) in [(800.0, 600.0), (1280.0, 720.0), (1366.0, 768.0), (2560.0, 1440.0)] {
+            let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(w, h));
+            let bar = media_bar_rect(full, full, false);
+            assert!(!bar.intersects(tool_bar_rect(full).expand(8.0)), "{w}x{h}: {bar:?}");
+            assert!((bar.center().x - full.center().x).abs() < 0.5, "{w}x{h}: centred");
+        }
+        // Wide enough to clear it by centring alone: the bar stays at the bottom of the clip.
+        let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(2560.0, 1440.0));
+        assert_eq!(media_bar_rect(full, full, false).max.y, full.max.y - 4.0);
+        // Reading view draws no tool bar: the bar stays where it was, at the bottom left of the clip.
+        let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 720.0));
+        let bar = media_bar_rect(full, full, true);
+        assert_eq!(bar.max.y, full.max.y - 4.0);
+        assert!(bar.center().x < full.center().x, "reading view: left, not centred: {bar:?}");
+        // A clip running past the screen keeps its bar on screen, also in a window narrower than the bar.
+        for w in [800.0, 300.0] {
+            let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(w, 600.0));
+            let wide = Rect::from_min_max(pos2(0.0, 0.0), pos2(2400.0, 600.0));
+            assert!(media_bar_rect(wide, full, false).min.x < full.max.x, "{w}: on screen");
+        }
     }
 
     #[test]
