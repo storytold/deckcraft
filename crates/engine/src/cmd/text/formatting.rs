@@ -25,6 +25,10 @@ pub(crate) fn format_run_levels(
         // Only the levels of the paragraphs the selected range touches.
         let levels = if a == b { Vec::new() } else { master_levels(st, &t, t.ordered()) };
         edit_text(s, |body, _| {
+            // A body with no paragraph has no end mark to hold the formatting of the text typed next.
+            if body.paragraphs.is_empty() {
+                body.paragraphs.push(Default::default());
+            }
             if levels.is_empty() {
                 ed::format(body, a, b, f);
             } else {
@@ -65,6 +69,9 @@ pub(crate) fn format_run_levels(
                 for (r, row) in t.rows.iter_mut().enumerate() {
                     for (c, cell) in row.cells.iter_mut().enumerate() {
                         if crate::cmd::table::in_range(range, r, c) {
+                            if cell.text.paragraphs.is_empty() {
+                                cell.text.paragraphs.push(Default::default());
+                            }
                             ed::format_all(&mut cell.text, f);
                         }
                     }
@@ -72,6 +79,11 @@ pub(crate) fn format_run_levels(
             }
             _ => {
                 let body = sh.text.get_or_insert_with(TextBody::default);
+                // Text that is still empty keeps the formatting on an end mark, so a size set
+                // before the text lands survives it; a body with no paragraph has none.
+                if body.paragraphs.is_empty() {
+                    body.paragraphs.push(Default::default());
+                }
                 let eff = effective.iter().find(|(i, _)| *i == id).map(|(_, e)| e);
                 match eff {
                     Some(eff) => {
