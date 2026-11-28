@@ -1,10 +1,9 @@
 //! Which windowing system to start on, on Linux and the BSDs.
 //!
-//! DeckCraft prefers X11 when `DISPLAY` is set (see `main`). A stale `DISPLAY` (left over from
-//! an ended `ssh -X` session or a desktop with Xwayland turned off) used to make start-up fail
-//! with winit's "failed to open display" even though a Wayland compositor was running. When a
-//! local `DISPLAY` names an X server whose socket isn't there and Wayland is available, start on
-//! Wayland instead. With no display at all, say so plainly.
+//! In a Wayland session DeckCraft runs natively on Wayland: the patched winit it is built with
+//! reports files dragged from the file manager there (they used to need Xwayland). `DECKCRAFT_X11`
+//! forces X11 instead. Without a Wayland compositor it starts on X11, and with no display at all it
+//! says so plainly.
 
 use std::path::Path;
 
@@ -25,22 +24,15 @@ fn local_display_number(display: &str) -> Option<u32> {
     rest.split('.').next()?.parse().ok()
 }
 
-/// Choose from the environment. `socket_exists` checks an X socket path (the filesystem in
-/// [`choose_from_env`], a stub in tests).
-pub fn choose(display: Option<&str>, wayland: Option<&str>, force_wayland: bool, socket_exists: impl Fn(&Path) -> bool) -> Choice {
+/// Choose from the environment (`DISPLAY`, `WAYLAND_DISPLAY`, and whether X11 is forced).
+pub fn choose(display: Option<&str>, wayland: Option<&str>, force_x11: bool) -> Choice {
     let display = display.filter(|d| !d.is_empty());
     let wayland = wayland.is_some_and(|w| !w.is_empty());
     match display {
         None if wayland => Choice::Default,
         None => Choice::None,
-        Some(_) if force_wayland && wayland => Choice::Default,
-        Some(d) => match local_display_number(d) {
-            Some(n) if wayland && !socket_exists(&Path::new("/tmp/.X11-unix").join(format!("X{n}"))) => {
-                log::warn!("DISPLAY={d} has no X server; starting on Wayland");
-                Choice::Default
-            }
-            _ => Choice::X11,
-        },
+        Some(_) if wayland && !force_x11 => Choice::Default,
+        Some(_) => Choice::X11,
     }
 }
 
@@ -48,7 +40,7 @@ pub fn choose(display: Option<&str>, wayland: Option<&str>, force_wayland: bool,
 pub fn choose_from_env() -> Choice {
     let display = std::env::var("DISPLAY").ok();
     let wayland = std::env::var("WAYLAND_DISPLAY").ok();
-    choose(display.as_deref(), wayland.as_deref(), std::env::var_os("DECKCRAFT_WAYLAND").is_some(), |p| p.exists())
+    choose(display.as_deref(), wayland.as_deref(), std::env::var_os("DECKCRAFT_X11").is_some())
 }
 
 #[cfg(test)]
@@ -56,30 +48,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_stale_local_display_falls_back_to_wayland() {
-        let none = |_: &Path| false;
-        let all = |_: &Path| true;
-        assert_eq!(choose(Some(":1"), Some("wayland-0"), false, none), Choice::Default);
-        assert_eq!(choose(Some(":1.0"), Some("wayland-0"), false, none), Choice::Default);
-        assert_eq!(choose(Some("unix:0"), Some("wayland-0"), false, none), Choice::Default);
-        // A live X server, no Wayland, or a remote DISPLAY: X11 as before.
-        assert_eq!(choose(Some(":1"), Some("wayland-0"), false, all), Choice::X11);
-        assert_eq!(choose(Some(":1"), None, false, none), Choice::X11);
-        assert_eq!(choose(Some("host:10.0"), Some("wayland-0"), false, none), Choice::X11);
-        // The socket checked is the display's own.
-        assert_eq!(choose(Some(":3"), Some("w"), false, |p: &Path| p.ends_with("X3")), Choice::X11);
-        assert_eq!(choose(Some(":3"), Some("w"), false, |p: &Path| p.ends_with("X0")), Choice::Default);
+    fn a_wayland_session_starts_on_wayland_even_with_xwayland() {
+        assert_eq!(choose(Some(":0"), Some("wayland-0"), false), Choice::Default);
+        assert_eq!(choose(Some(":1.0"), Some("wayland-0"), false), Choice::Default);
+        assert_eq!(choose(None, Some("wayland-0"), false), Choice::Default);
+        assert_eq!(choose(Some(""), Some("wayland-0"), false), Choice::Default);
     }
 
     #[test]
-    fn wayland_only_forced_and_no_display_at_all() {
-        let all = |_: &Path| true;
-        assert_eq!(choose(None, Some("wayland-0"), false, all), Choice::Default);
-        assert_eq!(choose(Some(""), Some("wayland-0"), false, all), Choice::Default);
-        assert_eq!(choose(Some(":0"), Some("wayland-0"), true, all), Choice::Default);
-        // Forcing Wayland without a compositor keeps X11 rather than failing.
-        assert_eq!(choose(Some(":0"), None, true, all), Choice::X11);
-        assert_eq!(choose(None, None, false, all), Choice::None);
-        assert_eq!(choose(Some(""), Some(""), false, all), Choice::None);
+    fn x11_is_used_when_forced_or_when_there_is_no_compositor() {
+        assert_eq!(choose(Some(":0"), Some("wayland-0"), true), Choice::X11);
+        assert_eq!(choose(Some(":0"), None, false), Choice::X11);
+        assert_eq!(choose(Some("host:10.0"), None, false), Choice::X11);
+        // Forcing X11 with no X display at all is still Wayland rather than failing.
+        assert_eq!(choose(None, Some("wayland-0"), true), Choice::Default);
+    }
+
+    #[test]
+    fn no_display_at_all() {
+        assert_eq!(choose(None, None, false), Choice::None);
+        assert_eq!(choose(Some(""), Some(""), false), Choice::None);
     }
 }

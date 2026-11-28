@@ -2,7 +2,9 @@
 Type=Application
 Name=DeckCraft
 GenericName=Presentation
+GenericName[de]=Präsentationen
 Comment=Create and present slide decks
+Comment[de]=Präsentationen erstellen und vorführen
 Exec=deckcraft %F
 TryExec=deckcraft
 Icon=ai.storyteller.deckcraft
