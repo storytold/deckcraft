@@ -312,22 +312,69 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     {
         show.wheel_zoom(srect, p, lines);
     }
-    // A trackpad swipe (and the mouse wheel) turns the page. The pen is drawing, so a flick
-    // there stays on the slide. Pinch zoom is not a show gesture.
-    if !show.pen
-        && let Some(next) = crate::canvas::page_flick(ctx.input(|i| i.smooth_scroll_delta))
-        && now - show.last_swipe > 0.35
-    {
-        show.last_swipe = now;
-        if next {
-            if show.ended {
-                out.keep = false;
-            } else {
-                out.actions.push(show.state.next(doc));
+    // A discrete mouse-wheel notch turns one slide per line at once, without the trackpad's
+    // gesture cooldown. Point-based trackpad swipes keep their own cooldown below.
+    if !show.pen {
+        let len = doc.slides.len();
+        let wheel = ctx.input(|i| crate::canvas::wheel_steps(&i.events, len, &mut show.wheel_carry));
+        // Each completed notch is processed in arrival order. On the end screen a forward notch
+        // exits the show and a backward one resumes the last slide, as before; a mixed pair in
+        // one frame therefore does what the same two notches would do in two frames.
+        let wheel_handled = match wheel {
+            Some(steps) if !steps.is_empty() => {
+                for by in steps {
+                    if show.ended {
+                        if by > 0 {
+                            out.keep = false;
+                            break;
+                        }
+                        show.ended = false;
+                        out.actions.push(show.state.prev(doc));
+                        // `prev` resumes the last visible slide; any further lines of this notch
+                        // still step back from there.
+                        let rest = (by.unsigned_abs() as usize).saturating_sub(1);
+                        if rest > 0
+                            && let Some(target) = show.state.visible_step_clamped(doc, show.state.slide, false, rest)
+                            && target != show.state.slide
+                        {
+                            out.actions.push(show.state.goto(doc, target));
+                        }
+                        continue;
+                    }
+                    let forward = by > 0;
+                    match show.state.visible_step_clamped(doc, show.state.slide, forward, by.unsigned_abs() as usize) {
+                        Some(target) if target != show.state.slide => out.actions.push(show.state.goto(doc, target)),
+                        // A notch that cannot move further forward (the last visible slide, or a
+                        // hidden slide after it) shows the end screen instead of being swallowed.
+                        Some(_) | None if forward => {
+                            show.state.end();
+                            show.ended = true;
+                        }
+                        _ => {}
+                    }
+                }
+                true
             }
-        } else {
-            show.ended = false;
-            out.actions.push(show.state.prev(doc));
+            // A partial line (no whole notch yet): no page turn, and the trackpad path stays
+            // suppressed for the frame.
+            Some(_) => true,
+            None => false,
+        };
+        if !wheel_handled
+            && let Some(next) = crate::canvas::page_flick(ctx.input(|i| crate::canvas::trackpad_scroll(&i.events)))
+            && now - show.last_swipe > 0.35
+        {
+            show.last_swipe = now;
+            if next {
+                if show.ended {
+                    out.keep = false;
+                } else {
+                    out.actions.push(show.state.next(doc));
+                }
+            } else {
+                show.ended = false;
+                out.actions.push(show.state.prev(doc));
+            }
         }
     }
 }

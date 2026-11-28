@@ -820,9 +820,18 @@ fn wheel_zoom_reads_only_the_wheel_with_ctrl_or_cmd() {
 
 /// A running show on the first of three slides, with presenter view off.
 fn show_of_three() -> egui_kittest::Harness<'static, SlideApp> {
+    show_of_three_with_hidden(&[])
+}
+
+/// A running show on the first of `slides`, with `hidden` slides hidden.
+fn show_of_with_hidden(slides: usize, hidden: &[usize]) -> egui_kittest::Harness<'static, SlideApp> {
     let mut session = deckcraft_engine::Session::with_new();
-    session.execute("slide.new", &json!({})).unwrap();
-    session.execute("slide.new", &json!({})).unwrap();
+    for _ in 1..slides {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    for &i in hidden {
+        session.execute("slide.hide", &json!({"index": i, "hidden": true})).unwrap();
+    }
     let mut app = SlideApp::new(session, crate::Services::default());
     app.ui.presenter_view = false;
     let mut harness = egui_kittest::Harness::builder()
@@ -840,6 +849,11 @@ fn show_of_three() -> egui_kittest::Harness<'static, SlideApp> {
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
     harness
+}
+
+/// A running show on the first of three slides, with `hidden` slides hidden.
+fn show_of_three_with_hidden(hidden: &[usize]) -> egui_kittest::Harness<'static, SlideApp> {
+    show_of_with_hidden(3, hidden)
 }
 
 fn show_wheel(harness: &mut egui_kittest::Harness<'static, SlideApp>, at: Pos2, y: f32, modifiers: egui::Modifiers) {
@@ -873,8 +887,212 @@ fn ctrl_wheel_zooms_the_show_and_the_plain_wheel_turns_the_page() {
         assert!(show.zoom_view().is_none(), "{held:?}: back to the whole slide");
 
         show_wheel(&mut h, centre, -3.0, egui::Modifiers::NONE);
-        assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "the plain wheel turns the page");
+        // #1724: a -3.0 wheel event is three lines, so three slides (clamped to the last of three).
+        assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 2, "the plain wheel turns the page");
     }
+}
+
+/// #1724: two discrete wheel notches inside the trackpad's 0.35 s cooldown turn two slides.
+/// One notch is one slide; the second notch must not be dropped by the trackpad gesture gate.
+#[test]
+fn two_wheel_notches_inside_the_trackpad_cooldown_turn_two_slides() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    let notch = |harness: &mut egui_kittest::Harness<'static, SlideApp>, steps: usize| {
+        harness.input_mut().events.push(egui::Event::PointerMoved(centre));
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, -1.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(steps);
+    };
+    notch(&mut h, 4);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "one notch turns one slide");
+    notch(&mut h, 4);
+    assert_eq!(
+        h.state().show.as_ref().expect("still showing").state.slide,
+        2,
+        "a second notch inside the 0.35 s trackpad cooldown still turns the next slide"
+    );
+}
+
+/// A single point-based trackpad flick still turns exactly one page and keeps its 0.35 s
+/// cooldown, so the wheel fix does not make the trackpad skip.
+#[test]
+fn a_trackpad_point_flick_turns_exactly_one_page() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    let flick = |harness: &mut egui_kittest::Harness<'static, SlideApp>, steps: usize| {
+        harness.input_mut().events.push(egui::Event::PointerMoved(centre));
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -24.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Trackpad,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(steps);
+    };
+    flick(&mut h, 4);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "a trackpad flick turns one page");
+    flick(&mut h, 4);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "a second flick inside the cooldown waits");
+    h.run_steps(30);
+    flick(&mut h, 4);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 2, "after the cooldown it turns again");
+}
+
+/// #1724: on the end screen a discrete wheel notch keeps the old semantics: forward exits
+/// the show, back resumes the last slide instead of jumping.
+#[test]
+fn wheel_on_the_end_screen_exits_forward_and_resumes_back() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    let line = |harness: &mut egui_kittest::Harness<'static, SlideApp>, y: f32| {
+        harness.input_mut().events.push(egui::Event::PointerMoved(centre));
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(4);
+    };
+    let flick = |harness: &mut egui_kittest::Harness<'static, SlideApp>| {
+        harness.input_mut().events.push(egui::Event::PointerMoved(centre));
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -24.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Trackpad,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(4);
+    };
+    line(&mut h, -1.0);
+    line(&mut h, -1.0);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 2);
+    // A trackpad flick past the last slide reaches the end screen.
+    flick(&mut h);
+    assert!(h.state().show.as_ref().expect("still showing").ended, "past the last slide: the end screen");
+    // Back resumes the last slide instead of jumping to the one before it.
+    line(&mut h, 1.0);
+    let show = h.state().show.as_ref().expect("still showing");
+    assert!(!show.ended, "a backward notch leaves the end screen");
+    assert_eq!(show.state.slide, 2, "it resumes the last slide");
+    // Forward past the end again, then a forward notch exits.
+    h.run_steps(30);
+    flick(&mut h);
+    assert!(h.state().show.as_ref().expect("still showing").ended);
+    line(&mut h, -1.0);
+    assert!(h.state().show.is_none(), "a forward notch on the end screen exits the show");
+}
+
+/// The wheel turns slides through the show's visible order, so a hidden slide is skipped as
+/// ←/→ skip it instead of opening it through `ShowState::goto`.
+#[test]
+fn a_wheel_notch_skips_a_hidden_slide() {
+    let mut h = show_of_three_with_hidden(&[1]);
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 2, "the hidden middle slide is skipped");
+    show_wheel(&mut h, centre, 1.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 0, "back also skips it");
+}
+
+/// Two notches in one frame are applied in the order they arrived: a backward then a forward
+/// notch at the first slide still moves forward (a signed net would cancel them out).
+#[test]
+fn a_backward_then_forward_notch_in_one_frame_still_moves_forward() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    h.input_mut().events.push(egui::Event::PointerMoved(centre));
+    for y in [1.0_f32, -1.0] {
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(4);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "the forward notch still moves one slide");
+}
+
+/// A backward notch with two lines on the end screen resumes the last slide and still steps one
+/// more back, matching the per-line contract of the ordinary-slide path.
+#[test]
+fn two_backward_lines_on_the_end_screen_reach_the_penultimate_slide() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.as_ref().expect("still showing").ended, "at the end screen");
+    show_wheel(&mut h, centre, 2.0, egui::Modifiers::NONE);
+    let show = h.state().show.as_ref().expect("still showing");
+    assert!(!show.ended, "two backward lines leave the end screen");
+    assert_eq!(show.state.slide, 1, "the last slide then one more back");
+}
+
+/// A hidden slide after the last visible one has no forward neighbour; a notch there still shows
+/// the end screen instead of doing nothing.
+#[test]
+fn a_forward_notch_on_a_hidden_slide_after_the_last_visible_ones_ends_the_show() {
+    let mut h = show_of_with_hidden(4, &[3]);
+    let doc = h.state().session.active().unwrap().doc.clone();
+    h.state_mut().show.as_mut().unwrap().state.goto(&doc, 3);
+    h.run_steps(2);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 3);
+    show_wheel(&mut h, pos2(500.0, 350.0), -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.as_ref().expect("still showing").ended, "no visible slide ahead: the end screen");
+}
+
+/// On the end screen, notches are processed in arrival order too: a forward notch exits even
+/// when a backward notch follows it in the same frame (in separate frames it would exit first).
+#[test]
+fn a_forward_then_backward_notch_on_the_end_screen_still_exits() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.as_ref().expect("still showing").ended, "at the end screen");
+    h.input_mut().events.push(egui::Event::PointerMoved(centre));
+    for y in [-1.0_f32, 1.0] {
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(4);
+    assert!(h.state().show.is_none(), "the first (forward) notch exits instead of the last one resuming");
+}
+
+/// A completed forward wheel notch past the last slide reaches the end screen and then exits,
+/// the same way a trackpad flick does; a partial line still does nothing.
+#[test]
+fn a_forward_wheel_notch_past_the_last_slide_reaches_the_end_screen() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 2);
+    // A partial line on the last slide does not end the show.
+    show_wheel(&mut h, centre, -0.4, egui::Modifiers::NONE);
+    assert!(!h.state().show.as_ref().expect("still showing").ended, "a partial notch does not reach the end screen");
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.as_ref().expect("still showing").ended, "a completed forward notch reaches the end screen");
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.is_none(), "forward on the end screen exits the show");
 }
 
 #[test]

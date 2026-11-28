@@ -236,19 +236,54 @@ impl ShowState {
     }
 
     fn next_index(&self, pres: &Presentation) -> Option<usize> {
-        let order = self.visit(pres);
-        match order.iter().position(|&i| i == self.slide) {
-            Some(p) => order.get(p + 1).copied(),
-            None => order.iter().copied().find(|&i| i > self.slide),
-        }
+        self.visible_step(pres, self.slide, true, 1)
     }
 
     fn prev_index(&self, pres: &Presentation) -> Option<usize> {
-        let order = self.visit(pres);
-        match order.iter().position(|&i| i == self.slide) {
-            Some(p) => p.checked_sub(1).and_then(|q| order.get(q).copied()),
-            None => order.iter().copied().rev().find(|&i| i < self.slide),
+        self.visible_step(pres, self.slide, false, 1)
+    }
+
+    /// Show the end screen without advancing a step (the pointer wheel past the last visible
+    /// slide). A later forward input leaves the show through the end screen's own handling.
+    pub fn end(&mut self) {
+        self.ended = true;
+        self.playing = false;
+    }
+
+    /// `steps` slides after (`forward`) or before `from` in this show's visible order (the custom
+    /// show or range, hidden slides skipped), without entering them; `None` when the order ends
+    /// first. The pointer wheel turns slides through this, so it skips hidden slides as ←/→ do.
+    pub fn visible_step(&self, pres: &Presentation, from: usize, forward: bool, steps: usize) -> Option<usize> {
+        self.visible_step_in(pres, from, forward, steps, false)
+    }
+
+    /// Like [`Self::visible_step`], but stops at the first/last visible slide instead of running
+    /// past it: one fast wheel gesture lands on the end slide rather than leaving the order.
+    pub fn visible_step_clamped(&self, pres: &Presentation, from: usize, forward: bool, steps: usize) -> Option<usize> {
+        self.visible_step_in(pres, from, forward, steps, true)
+    }
+
+    fn visible_step_in(&self, pres: &Presentation, from: usize, forward: bool, steps: usize, clamp: bool) -> Option<usize> {
+        if steps == 0 {
+            return None;
         }
+        let order = self.visit(pres);
+        // A `from` that is not in the order (a hidden slide opened by number) reaches the
+        // nearest visible slide in the direction, which counts as the first step.
+        let (start, used) = match order.iter().position(|&i| i == from) {
+            Some(p) => (p, 0),
+            None if forward => (order.iter().position(|&i| i > from)?, 1),
+            None => (order.iter().rposition(|&i| i < from)?, 1),
+        };
+        let rest = steps.saturating_sub(used);
+        let q = if forward {
+            if clamp { start.saturating_add(rest).min(order.len().checked_sub(1)?) } else { start.checked_add(rest)? }
+        } else if clamp {
+            start.saturating_sub(rest)
+        } else {
+            start.checked_sub(rest)?
+        };
+        order.get(q).copied()
     }
 
     /// Click / → / Space: finish the playing step, else play the next step, else go to the next slide.
