@@ -3405,6 +3405,67 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }
 
+/// An audio clip with its own picture shows only that picture: the built-in speaker is not drawn
+/// over it (an imported .pptx stores a picture with every audio clip).
+#[test]
+fn an_audio_clips_own_picture_is_drawn_without_the_speaker_glyph() {
+    let mut png = std::io::Cursor::new(Vec::new());
+    // As large as the box, as a real icon is (a tiny picture hid the glyph drawn over it).
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(200, 200, image::Rgb([0, 160, 0])))
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let clip = |poster| Shape {
+        id: ShapeId(600),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 200.0)),
+        kind: ShapeKind::Media(deckcraft_model::MediaClip { video: false, poster, ..Default::default() }),
+        ..Default::default()
+    };
+    let mut p = deck_with(vec![]);
+    let media = p.add_media("icon.png", "image/png", png.into_inner()).expect("media");
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![clip(Some(media))];
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    // Every pixel inside the box is the picture's green: nothing drawn over it.
+    let off = (100..300).step_by(4).flat_map(|y| (100..300).step_by(4).map(move |x| (x, y))).filter(|&(x, y)| {
+        let [r, g, b, _] = img.pixel(x + 1, y + 1);
+        !(r < 20 && (140..=180).contains(&g) && b < 20)
+    });
+    assert_eq!(off.count(), 0, "only the clip's own picture inside its box");
+    // Without a picture, the built-in speaker is still drawn.
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![clip(None)];
+    let blank = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    let drawn = (100..300)
+        .step_by(4)
+        .flat_map(|y| (100..300).step_by(4).map(move |x| (x, y)))
+        .filter(|&(x, y)| blank.pixel(x, y) != [255, 255, 255, 255])
+        .count();
+    assert!(drawn > 0, "a clip without a picture shows the speaker");
+}
+
+/// An audio clip whose own picture can't be decoded keeps its speaker: the clip still plays, and
+/// without the speaker it would show only the missing-picture box.
+#[test]
+fn an_audio_clip_whose_picture_cannot_be_drawn_keeps_the_speaker_glyph() {
+    let mut p = deck_with(vec![]);
+    let media = p.add_media("icon.png", "image/png", b"not a picture".to_vec()).expect("media");
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![Shape {
+        id: ShapeId(601),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 200.0)),
+        kind: ShapeKind::Media(deckcraft_model::MediaClip { video: false, poster: Some(media), ..Default::default() }),
+        ..Default::default()
+    }];
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    // The speaker is blue; the missing-picture box is grey.
+    let blue = (100..300)
+        .step_by(2)
+        .flat_map(|y| (100..300).step_by(2).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let [r, _, b, _] = img.pixel(x, y);
+            b as i32 > r as i32 + 60
+        })
+        .count();
+    assert!(blue > 0, "the speaker is drawn when the clip's picture can't be");
+}
+
 /// A WMF without a placeable header (the frame comes from its window records) holding `records`
 /// (function, parameter bytes).
 fn wmf_bare(records: &[(u16, Vec<u8>)]) -> Vec<u8> {

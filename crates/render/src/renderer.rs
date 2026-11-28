@@ -812,16 +812,21 @@ impl Renderer {
             ShapeKind::Media(mc) => {
                 ctx.set_transform(m);
                 let bounds = Rect::new(0.0, 0.0, w, h);
-                if let Some(p) = mc.poster {
+                // A clip's own picture (a video's poster frame, an audio clip's icon) is all that
+                // shows; the built-in speaker or film glyph stands in when there is none. An audio
+                // clip whose picture can't be drawn keeps its speaker, so it can still be found.
+                let drawn = mc.poster.is_some_and(|p| {
                     let pf = deckcraft_model::style::PictureFill { media: p, crop: mc.crop, ..Default::default() };
                     ctx.push_clip_layer(outline);
-                    paint::picture(ctx, f.pres, &pf, bounds, m, None);
+                    let drawn = paint::picture(ctx, f.pres, &pf, bounds, m, None);
                     ctx.pop_layer();
-                } else if mc.video {
+                    drawn
+                });
+                if mc.poster.is_none() && mc.video {
                     ctx.set_paint(peniko::Color::from_rgba8(20, 20, 24, 255));
                     ctx.fill_rect(&bounds);
                 }
-                if !mc.video || mc.poster.is_none() {
+                if mc.poster.is_none() || (!mc.video && !drawn) {
                     paint::media_glyph(ctx, mc.video, bounds);
                 }
             }

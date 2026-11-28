@@ -184,11 +184,12 @@ pub fn circle_gradient(focus: [f64; 4], bounds: Rect, tile: Rect) -> peniko::Gra
 }
 
 /// Draw a picture fill into `bounds` (shape-local) honouring crop and stretch/tile modes; an animated
-/// GIF shows its frame at `gif_time` seconds.
-pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, bounds: Rect, m: Affine, gif_time: Option<f64>) {
+/// GIF shows its frame at `gif_time` seconds. Returns false when the picture is missing or can't
+/// be decoded (a placeholder box is drawn instead).
+pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, bounds: Rect, m: Affine, gif_time: Option<f64>) -> bool {
     let Some(item) = pres.media(pf.media) else {
         missing(ctx, bounds);
-        return;
+        return false;
     };
     let px_scale = crate::scale_of(m);
     let dest = match &pf.mode {
@@ -210,11 +211,11 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
     let frame = gif_time.and_then(|t| images::gif_pixmap(&item.data, &pf.adjust, t));
     let Some(pm) = frame.or_else(|| images::decode_for(&item.data, want, &pf.adjust)) else {
         missing(ctx, bounds);
-        return;
+        return false;
     };
     let (iw, ih) = (pm.width() as f64, pm.height() as f64);
     if iw < 1.0 || ih < 1.0 {
-        return;
+        return false;
     }
     let alpha = pf.alpha.unwrap_or(1.0).clamp(0.0, 1.0);
     let image = vello_cpu::Image {
@@ -225,7 +226,7 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
         // The tile's size: the picture's own size (96 dpi) scaled. A scale of zero or less draws
         // nothing, as in PowerPoint.
         if !(*sx > 0.0 && *sy > 0.0 && sx.is_finite() && sy.is_finite()) {
-            return;
+            return true;
         }
         let (nw, nh) = images::natural_size(&item.data).unwrap_or((iw, ih));
         // PowerPoint draws the tile at a whole number of output pixels.
@@ -236,7 +237,7 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
         let snap = |v: f64, k: f64| (v * k).round().max(1.0) / k;
         let (tile_w, tile_h) = (snap(nw * 0.75 * sx, kx), snap(nh * 0.75 * sy, ky));
         if !(tile_w > 1e-6 && tile_h > 1e-6 && tile_w.is_finite() && tile_h.is_finite()) {
-            return;
+            return true;
         }
         let o = tile_origin(bounds, align, (tile_w, tile_h), (*tx, *ty));
         // Every other tile is mirrored across the flip axes: a reflected repeat.
@@ -261,9 +262,10 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
         if alpha < 0.999 {
             ctx.pop_layer();
         }
-        return;
+        return true;
     }
     draw_image(ctx, &image, iw, ih, dest, m, alpha);
+    true
 }
 
 /// `fill`, with a tiled picture's tile size and offset moved from points to shape units, given
@@ -336,7 +338,8 @@ fn missing(ctx: &mut RenderContext, b: Rect) {
     ctx.stroke_path(&p);
 }
 
-/// The speaker / film glyph on audio and video objects without a poster.
+/// The speaker / film glyph on audio and video objects without a picture of their own (and on audio
+/// whose picture cannot be drawn).
 pub fn media_glyph(ctx: &mut RenderContext, video: bool, b: Rect) {
     let s = b.width().min(b.height());
     let c = b.center();
