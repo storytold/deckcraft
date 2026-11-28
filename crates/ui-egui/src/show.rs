@@ -215,6 +215,17 @@ pub(crate) fn viewport_visible(ctx: &egui::Context) -> bool {
 }
 
 impl Show {
+    pub(crate) fn stays_windowed(&self, doc: &Presentation, remote_presenter: bool) -> bool {
+        !show_fills_screen(self.reading, &doc.show.show_type) || (self.presenter && remote_presenter)
+    }
+
+    pub(crate) fn content_rect(&self, app: &SlideApp, ctx: &egui::Context, doc: &Presentation, mut rect: Rect) -> Rect {
+        if self.stays_windowed(doc, app.services.presenter.is_some()) && crate::ribbon::custom_frame_visible(app, ctx) {
+            rect.min.y = (rect.min.y + crate::ribbon::TITLE_H).min(rect.max.y);
+        }
+        rect
+    }
+
     /// Initialise show state at the requested slide with reading/presenter modes; an out-of-range
     /// slide starts an ended show.
     pub fn new(doc: &Presentation, from: usize, reading: bool, presenter: bool) -> Self {

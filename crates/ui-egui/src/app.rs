@@ -84,6 +84,7 @@ impl SlideApp {
             canvas_region: None,
             palette: None,
             integrated_titlebar: false,
+            window_controls: false,
             backstage: None,
             pending_urls: vec![],
             print_previews: files::PrintPreviews::default(),
@@ -305,8 +306,16 @@ impl SlideApp {
         eyedropper::tick(self, &ctx);
         self.opening_ui(&ctx);
         if self.show.is_some() {
+            let windowed = self
+                .show
+                .as_ref()
+                .zip(self.session.active())
+                .is_some_and(|(show, active)| show.stays_windowed(&active.doc, self.services.presenter.is_some()));
             self.anim_preview = None;
             show::ui(self, ui);
+            if windowed {
+                ribbon::window_frame(self, &ctx);
+            }
             doc_window::show(self, &ctx);
             self.perf.frame_ms = now_ms() - t0;
             self.ui_end(&ctx);
@@ -362,6 +371,7 @@ impl SlideApp {
         updates_ui::show(self, &ctx);
         self.framework_dialogs.run(ui);
         menus::palette(self, &ctx);
+        ribbon::window_frame(self, &ctx);
         for url in std::mem::take(&mut self.pending_urls) {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }

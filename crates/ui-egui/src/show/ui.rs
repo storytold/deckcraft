@@ -27,6 +27,8 @@ struct Fr<'a> {
     clicked: bool,
     secondary: bool,
     pointer: Option<Pos2>,
+    /// The pointer is over the slide area, not the window's own title strip (always true without chrome).
+    on_content: bool,
 }
 
 /// Whether the show goes on, and the steps input asked for.
@@ -65,6 +67,18 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     };
     let now = ctx.input(|i| i.time);
     let Some(mut show) = app.show.take() else { return };
+    let whole = ctx.content_rect();
+    let rect = show.content_rect(app, &ctx, &doc, whole);
+    let has_chrome = rect != whole;
+    let mut content;
+    let ui = if has_chrome {
+        crate::ribbon::show_title_bar(ui, Rect::from_min_max(whole.min, pos2(whole.max.x, rect.min.y)));
+        content = ui.new_child(egui::UiBuilder::new().id_salt("windowed_show").max_rect(rect));
+        content.set_clip_rect(content.clip_rect().intersect(rect));
+        &mut content
+    } else {
+        ui
+    };
     if !viewport_visible(&ctx) {
         // A forced hidden paint (for example a pending screenshot) draws the current frame;
         // the show clocks are advanced by logic, not by this draw, so it must not advance them a
@@ -124,10 +138,13 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, &doc);
     let pointer = ctx.input(|i| i.pointer.interact_pos());
+    // The show reads raw clicks; egui's caption and drag widgets do not consume those.
+    let on_content = !has_chrome || pointer.is_some_and(|p| full.contains(p));
+    let (clicked, secondary) = (clicked && on_content, secondary && on_content);
     show.expire_goto(now);
     // The clock of the triggered animations runs before anything reacts to the pointer.
     show.tick_triggers(&doc, now);
-    let f = Fr { ctx: &ctx, doc: &doc, doc_uid, now, full, srect, clicked, secondary, pointer };
+    let f = Fr { ctx: &ctx, doc: &doc, doc_uid, now, full, srect, clicked, secondary, pointer, on_content };
     let pointing = handle_clicks(app, ui, &mut show, &f, &mut out);
     handle_wheel_and_swipe(&mut show, &f, &mut out);
     advance(app, &mut show, &f, &mut out);
@@ -228,7 +245,7 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
 }
 
 fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: &mut Out) -> bool {
-    let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer } = *f;
+    let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer, .. } = *f;
     let on_slide = !show.grid
         && !show.pen
         && !show.laser
@@ -300,7 +317,7 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
 }
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
-    let Fr { ctx, doc, now, srect, pointer, .. } = *f;
+    let Fr { ctx, doc, now, srect, pointer, on_content, .. } = *f;
     // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
     // keeps it out of `smooth_scroll_delta`, so it does not also turn the page below.
     let line_points = ctx.options(|o| o.input_options.line_scroll_speed);
@@ -313,8 +330,10 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
         show.wheel_zoom(srect, p, lines);
     }
     // A trackpad swipe (and the mouse wheel) turns the page. The pen is drawing, so a flick
-    // there stays on the slide. Pinch zoom is not a show gesture.
+    // there stays on the slide. Pinch zoom is not a show gesture. Over the window's own title
+    // strip a scroll is not a page turn.
     if !show.pen
+        && on_content
         && let Some(next) = crate::canvas::page_flick(ctx.input(|i| i.smooth_scroll_delta))
         && now - show.last_swipe > 0.35
     {

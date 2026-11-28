@@ -1761,6 +1761,151 @@ fn show_start_refuses_a_from_that_is_not_a_slide() {
 }
 
 #[test]
+fn windowed_shows_keep_window_actions_out_of_slide_navigation() {
+    use egui::{ViewportCommand, ViewportId, accesskit::Role, pos2};
+    for reading in [true, false] {
+        let mut h = flick_harness();
+        h.state_mut().window_controls = true;
+        h.state_mut().session.execute("slide.new", &json!({})).unwrap();
+        h.state_mut().session.execute("show.setup", &json!({"type": "browsed"})).unwrap();
+        h.state_mut().start_show(0, reading);
+        h.run_steps(4);
+        let commands = |h: &egui_kittest::Harness<'_, SlideApp>| h.output().viewport_output[&ViewportId::ROOT].commands.clone();
+        let at = pos2(300.0, 18.0);
+        h.hover_at(at);
+        h.run_steps(1);
+        h.drag_at(at);
+        h.run_steps(1);
+        h.hover_at(at + egui::vec2(40.0, 0.0));
+        h.run_steps(1);
+        assert!(commands(&h).iter().any(|command| matches!(command, ViewportCommand::StartDrag)), "windowed show can move");
+        h.drop_at(at + egui::vec2(40.0, 0.0));
+        h.run_steps(2);
+
+        h.get_by_role_and_label(Role::Button, "Minimize").click();
+        let mut sent = Vec::new();
+        for _ in 0..3 {
+            h.run_steps(1);
+            sent.extend(commands(&h));
+        }
+        assert!(sent.iter().any(|c| matches!(c, ViewportCommand::Minimized(true))));
+        assert_eq!(h.state().show.as_ref().map(|s| s.state.slide), Some(0), "caption click does not advance the show");
+
+        let at = pos2(300.0, 1.0);
+        h.hover_at(at);
+        h.run_steps(1);
+        h.drag_at(at);
+        h.run_steps(1);
+        assert!(commands(&h).iter().any(|c| matches!(c, ViewportCommand::BeginResize(egui::ResizeDirection::North))));
+        assert!(!commands(&h).iter().any(|c| matches!(c, ViewportCommand::StartDrag)), "a resize press does not also move");
+        h.hover_at(at + egui::vec2(40.0, 0.0));
+        h.run_steps(1);
+        assert!(!commands(&h).iter().any(|c| matches!(c, ViewportCommand::StartDrag)), "a resize does not also move");
+        h.drop_at(at);
+        h.input_mut().viewports.get_mut(&ViewportId::ROOT).unwrap().fullscreen = Some(true);
+        h.run_steps(3);
+        assert!(h.query_by_role_and_label(Role::Button, "Minimize").is_none(), "fullscreen hides caption controls");
+    }
+}
+
+/// A windowed Reading View on a frameless window, with two slides.
+fn frameless_windowed_show() -> egui_kittest::Harness<'static, SlideApp> {
+    let mut h = flick_harness();
+    h.state_mut().window_controls = true;
+    h.state_mut().session.execute("slide.new", &json!({})).unwrap();
+    h.state_mut().session.execute("slide.go", &json!({"index": 0})).unwrap();
+    h.state_mut().start_show(0, true);
+    h.run_steps(4);
+    h
+}
+
+/// The viewport commands one click-and-release at `at` produces.
+fn press_commands(h: &mut egui_kittest::Harness<'static, SlideApp>, at: egui::Pos2) -> Vec<egui::ViewportCommand> {
+    use egui::ViewportId;
+    h.hover_at(at);
+    h.run_steps(1);
+    h.drag_at(at);
+    let mut sent = Vec::new();
+    for _ in 0..2 {
+        h.run_steps(1);
+        sent.extend(h.output().viewport_output[&ViewportId::ROOT].commands.clone());
+    }
+    h.drop_at(at);
+    for _ in 0..2 {
+        h.run_steps(1);
+        sent.extend(h.output().viewport_output[&ViewportId::ROOT].commands.clone());
+    }
+    sent
+}
+
+#[test]
+fn a_restored_frameless_window_resizes_from_its_top_right_corner_and_edges() {
+    use egui::{ResizeDirection as D, ViewportCommand as C};
+    let mut h = frameless_windowed_show();
+    let screen = h.ctx.content_rect();
+    // Inside the caption buttons' rectangle, on the outer band that belongs to the resize.
+    for (at, want) in [
+        (egui::pos2(screen.max.x - 2.0, screen.min.y + 2.0), D::NorthEast),
+        (egui::pos2(screen.max.x - 2.0, screen.min.y + 30.0), D::East),
+        (egui::pos2(screen.max.x - 60.0, screen.min.y + 1.0), D::North),
+    ] {
+        let mut h = frameless_windowed_show();
+        let sent = press_commands(&mut h, at);
+        assert!(sent.iter().any(|c| matches!(c, C::BeginResize(d) if *d == want)), "{at:?} resizes {want:?}: {sent:?}");
+        assert!(!sent.iter().any(|c| matches!(c, C::StartDrag | C::Close | C::Minimized(_) | C::Maximized(_))), "{at:?}: {sent:?}");
+    }
+    // The buttons keep the rest of their area: a press on one is a click, not a resize.
+    let close = egui::pos2(screen.max.x - 23.0, screen.min.y + 19.0);
+    let sent = press_commands(&mut h, close);
+    assert!(!sent.iter().any(|c| matches!(c, C::BeginResize(_))), "a caption button press starts no resize: {sent:?}");
+    let mut h = frameless_windowed_show();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Minimize").click();
+    let mut sent = Vec::new();
+    for _ in 0..3 {
+        h.run_steps(1);
+        sent.extend(h.output().viewport_output[&egui::ViewportId::ROOT].commands.clone());
+    }
+    assert!(sent.iter().any(|c| matches!(c, C::Minimized(true))), "and still acts: {sent:?}");
+}
+
+#[test]
+fn a_maximized_frameless_window_does_not_resize_from_its_corner() {
+    use egui::{ViewportCommand as C, ViewportId};
+    let mut h = frameless_windowed_show();
+    h.input_mut().viewports.get_mut(&ViewportId::ROOT).unwrap().maximized = Some(true);
+    h.run_steps(2);
+    let screen = h.ctx.content_rect();
+    let sent = press_commands(&mut h, egui::pos2(screen.max.x - 2.0, screen.min.y + 2.0));
+    assert!(!sent.iter().any(|c| matches!(c, C::BeginResize(_))), "{sent:?}");
+}
+
+/// A wheel over the show's own title strip is not a page turn; over the slide it is.
+#[test]
+fn a_wheel_over_the_windowed_show_title_strip_does_not_turn_the_page() {
+    fn wheel_at(h: &mut egui_kittest::Harness<'static, SlideApp>, at: egui::Pos2) {
+        let input = h.input_mut();
+        input.events.push(egui::Event::PointerMoved(at));
+        for _ in 0..4 {
+            input.events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(-6.0, 0.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Trackpad,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.run_steps(1);
+    }
+    let mut h = frameless_windowed_show();
+    let screen = h.ctx.content_rect();
+    wheel_at(&mut h, egui::pos2(300.0, screen.min.y + 18.0));
+    assert_eq!(h.state().show.as_ref().map(|s| s.state.slide), Some(0), "title strip");
+    h.run_steps(30);
+    wheel_at(&mut h, screen.center());
+    assert_eq!(h.state().show.as_ref().map(|s| s.state.slide), Some(1), "slide area");
+}
+
+#[test]
 fn a_swipe_during_the_show_turns_the_page() {
     let mut harness = flick_harness();
     harness.state_mut().session.execute("slide.new", &json!({})).unwrap();

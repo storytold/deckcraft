@@ -81,6 +81,197 @@ fn run(app: &mut SlideApp, id: &str, p: Value) {
     let _ = app.run(id, p);
 }
 
+/// Width of one window-control button on the title bar.
+pub const CONTROL_W: f32 = 46.0;
+/// How far in from a frameless window's edge the pointer resizes it.
+const RESIZE_BAND: f32 = 5.0;
+/// How far along an edge from a corner the pointer resizes diagonally.
+const RESIZE_CORNER: f32 = 14.0;
+
+/// The window manager keeps the release after a move or resize, so egui would wait for it and
+/// drop the next press (emilk/egui#7959).
+fn handed_to_os(ctx: &egui::Context) {
+    ctx.stop_dragging();
+    ctx.input_mut(|i| i.pointer = Default::default());
+}
+
+pub(crate) fn custom_frame_visible(app: &SlideApp, ctx: &egui::Context) -> bool {
+    app.window_controls && !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false))
+}
+
+fn caption_rect(screen: Rect) -> Rect {
+    Rect::from_min_size(pos2(screen.max.x - 3.0 * CONTROL_W, screen.min.y), vec2(3.0 * CONTROL_W, TITLE_H))
+}
+
+fn window_drag(ui: &mut Ui, mut rect: Rect, frameless: bool) {
+    let ctx = ui.ctx();
+    let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+    let screen = ctx.content_rect();
+    if frameless {
+        rect.max.x = rect.max.x.min(caption_rect(screen).min.x);
+        if !maximized {
+            // Leave the corners and edge available to resize, even within egui's hit radius.
+            rect.min.x = rect.min.x.max(screen.min.x + RESIZE_BAND);
+            rect.min.y = rect.min.y.max(screen.min.y + RESIZE_BAND);
+        }
+    }
+    let drag = ui.interact(rect, ui.scope_id().with("titledrag"), Sense::click_and_drag());
+    drag.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Window, true, "Window title bar"));
+    let from_resize = frameless && !maximized && ctx.input(|i| i.pointer.press_origin()).is_some_and(|p| resize_hit(screen, p).is_some());
+    if drag.drag_started() && !from_resize {
+        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        if frameless {
+            handed_to_os(ctx);
+        }
+    }
+    if drag.double_clicked() && drag.interact_pointer_pos().is_some_and(|p| rect.contains(p)) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    }
+}
+
+/// Leave actual space above the presentation for window actions, rather than overlaying a slide.
+pub(crate) fn show_title_bar(ui: &mut Ui, rect: Rect) {
+    let ctx = ui.ctx();
+    ctx.layer_painter(ui.layer_id()).rect_filled(rect, 0.0, Tokens::get(ctx).chrome);
+    let mut drag_rect = rect;
+    drag_rect.max.x = drag_rect.max.x.min(caption_rect(ctx.content_rect()).min.x);
+    // Show overlays can register their own drag zones on the middle layer. Neither those
+    // zones nor the slide's raw pointer input owns this foreground strip.
+    egui::Area::new(egui::Id::unique("dc_show_title_drag")).order(egui::Order::Foreground).fixed_pos(drag_rect.min).constrain(false).show(
+        ctx,
+        |ui| {
+            ui.set_min_size(drag_rect.size());
+            window_drag(ui, drag_rect, true);
+        },
+    );
+}
+
+/// A frameless window (`SlideApp::window_controls`): minimize, maximize/restore and close at the
+/// top right, resizing from the edges and corners, and a hairline border. Drawn above everything,
+/// so the controls stay reachable whatever covers the title bar.
+pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
+    if !custom_frame_visible(app, ctx) {
+        return;
+    }
+    let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+    let t = Tokens::get(ctx);
+    let screen = ctx.content_rect();
+    let controls = caption_rect(screen);
+    egui::Area::new(egui::Id::unique("dc_window_controls")).order(egui::Order::Foreground).fixed_pos(controls.min).constrain(false).show(ctx, |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+        ui.horizontal(|ui| {
+            for kind in ["minimize", "maximize", "close"] {
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(CONTROL_W, TITLE_H), egui::Sense::click());
+                let close = kind == "close";
+                // The outer band of the window belongs to the resize, not to the button under it.
+                let on_band = |p: Option<egui::Pos2>| !maximized && p.is_some_and(|p| resize_hit(screen, p).is_some());
+                let hovered = resp.hovered() && !on_band(resp.hover_pos());
+                let pressed = resp.is_pointer_button_down_on() && !on_band(ctx.input(|i| i.pointer.press_origin()));
+                let hot = hovered || pressed;
+                let c = if close && hot {
+                    ui.painter().rect_filled(r, 0.0, egui::Color32::from_rgb(0xC4, 0x2B, 0x1C));
+                    egui::Color32::WHITE
+                } else {
+                    if hot {
+                        ui.painter().rect_filled(r, 0.0, if pressed { t.pressed } else { t.hover });
+                    }
+                    t.text
+                };
+                let stroke = egui::Stroke::new(1.0, c);
+                let m = r.center();
+                let p = ui.painter();
+                let tip = match kind {
+                    "minimize" => {
+                        p.line_segment([egui::pos2(m.x - 5.0, m.y), egui::pos2(m.x + 5.0, m.y)], stroke);
+                        "Minimize"
+                    }
+                    "maximize" if maximized => {
+                        // Restore Down: a window in front of another.
+                        let front = egui::Rect::from_min_size(egui::pos2(m.x - 5.0, m.y - 3.0), egui::vec2(8.0, 8.0));
+                        p.rect_stroke(front, 0.0, stroke, egui::StrokeKind::Inside);
+                        p.line_segment([egui::pos2(m.x - 3.0, m.y - 5.0), egui::pos2(m.x + 5.0, m.y - 5.0)], stroke);
+                        p.line_segment([egui::pos2(m.x + 5.0, m.y - 5.0), egui::pos2(m.x + 5.0, m.y + 3.0)], stroke);
+                        "Restore Down"
+                    }
+                    "maximize" => {
+                        p.rect_stroke(egui::Rect::from_center_size(m, egui::vec2(10.0, 10.0)), 0.0, stroke, egui::StrokeKind::Inside);
+                        "Maximize"
+                    }
+                    _ => {
+                        p.line_segment([egui::pos2(m.x - 5.0, m.y - 5.0), egui::pos2(m.x + 5.0, m.y + 5.0)], stroke);
+                        p.line_segment([egui::pos2(m.x - 5.0, m.y + 5.0), egui::pos2(m.x + 5.0, m.y - 5.0)], stroke);
+                        "Close"
+                    }
+                };
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+                let released_on_band = on_band(resp.interact_pointer_pos());
+                if resp.on_hover_text(tip).clicked() && !released_on_band {
+                    ctx.send_viewport_cmd(match kind {
+                        "minimize" => egui::ViewportCommand::Minimized(true),
+                        "maximize" => egui::ViewportCommand::Maximized(!maximized),
+                        // Goes through the same unsaved-changes check as the window manager's close.
+                        _ => egui::ViewportCommand::Close,
+                    });
+                }
+            }
+        });
+    });
+    let pointer = ctx.input(|i| i.pointer.latest_pos());
+    if app.show.is_some() && pointer.is_some_and(|p| p.y < screen.min.y + TITLE_H) {
+        ctx.set_cursor_icon(egui::CursorIcon::Default);
+    }
+    if maximized {
+        return;
+    }
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("dc_window_border"))).rect_stroke(
+        screen,
+        0.0,
+        egui::Stroke::new(1.0, t.border),
+        egui::StrokeKind::Inside,
+    );
+    if let Some((dir, icon)) = pointer.and_then(|p| resize_hit(screen, p)) {
+        ctx.set_cursor_icon(icon);
+        if ctx.input(|i| i.pointer.primary_pressed()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+            handed_to_os(ctx);
+        }
+    }
+}
+
+/// The resize direction at `pos`: the outer band and corners of the window. It reaches into the
+/// caption buttons' rectangle too, so the top-right corner and the right and top edges resize like
+/// the rest; the buttons keep everything inside that band.
+fn resize_hit(screen: Rect, pos: egui::Pos2) -> Option<(egui::ResizeDirection, egui::CursorIcon)> {
+    if !screen.contains(pos) {
+        return None;
+    }
+    let near = |d: f32, band: f32| d < band;
+    let (dl, dr, dt, db) = (pos.x - screen.min.x, screen.max.x - pos.x, pos.y - screen.min.y, screen.max.y - pos.y);
+    let (w, e, n, s) = (near(dl, RESIZE_BAND), near(dr, RESIZE_BAND), near(dt, RESIZE_BAND), near(db, RESIZE_BAND));
+    // Corners reach a little along each edge, so they're easy to hit.
+    let (cw, ce, cn, cs) = (near(dl, RESIZE_CORNER), near(dr, RESIZE_CORNER), near(dt, RESIZE_CORNER), near(db, RESIZE_CORNER));
+    use egui::{CursorIcon, ResizeDirection};
+    if (n && cw) || (w && cn) {
+        Some((ResizeDirection::NorthWest, CursorIcon::ResizeNorthWest))
+    } else if (n && ce) || (e && cn) {
+        Some((ResizeDirection::NorthEast, CursorIcon::ResizeNorthEast))
+    } else if (s && cw) || (w && cs) {
+        Some((ResizeDirection::SouthWest, CursorIcon::ResizeSouthWest))
+    } else if (s && ce) || (e && cs) {
+        Some((ResizeDirection::SouthEast, CursorIcon::ResizeSouthEast))
+    } else if n {
+        Some((ResizeDirection::North, CursorIcon::ResizeNorth))
+    } else if s {
+        Some((ResizeDirection::South, CursorIcon::ResizeSouth))
+    } else if w {
+        Some((ResizeDirection::West, CursorIcon::ResizeWest))
+    } else if e {
+        Some((ResizeDirection::East, CursorIcon::ResizeEast))
+    } else {
+        None
+    }
+}
+
 /// Which contextual tabs apply to the selection.
 fn contextual(app: &SlideApp) -> Vec<&'static str> {
     let mut v = vec![];
