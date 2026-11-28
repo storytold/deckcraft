@@ -379,11 +379,13 @@ pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
 }
 
 /// The `.txt` outline bytes: CRLF for the reference app, without doubling a CR that is
-/// already in the text. `TextBody::from_text` normalizes CR and CRLF (`text.rs:739`), but
-/// imported text can still carry one, so normalize before adding CRLF. Crate-visible so the
-/// regression test can feed it a CRLF string directly.
+/// already in the text. A lone CR is an in-paragraph character, not a line break, so it becomes
+/// a space (as `slides_to_outline` does for a vertical tab): writing it as CRLF would split the
+/// paragraph into an unindented line on re-import. `TextBody::from_text` normalizes CR and CRLF
+/// (`text.rs:739`), but imported text can still carry one, so normalize before adding CRLF.
+/// Crate-visible so the regression test can feed it a CRLF string directly.
 pub(crate) fn outline_txt_bytes(text: &str) -> Vec<u8> {
-    text.replace("\r\n", "\n").replace('\n', "\r\n").into_bytes()
+    text.replace("\r\n", "\n").replace('\r', " ").replace('\n', "\r\n").into_bytes()
 }
 
 /// Paper sizes for notes and handouts, for the UI's Print page.

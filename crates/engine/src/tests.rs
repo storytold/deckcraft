@@ -1394,6 +1394,25 @@ fn txt_export_does_not_double_existing_crlf() {
 }
 
 #[test]
+fn txt_export_replaces_a_lone_cr_with_a_space() {
+    // A `.txt` import can leave a lone CR inside a body paragraph (`str::lines` splits on LF only).
+    let mut p = deckcraft_model::defaults::new_presentation(None);
+    p.slides.clear();
+    assert_eq!(deckcraft_format::outline_to_slides(&mut p, "Title\n\tGamma\rDelta\n"), 1);
+    let text = String::from_utf8(crate::cmd::file::save_bytes(&p, "txt").unwrap()).unwrap();
+    assert!(!text.replace("\r\n", "").contains('\r'), "a bare CR is a line terminator: {text:?}");
+    assert!(text.contains("\tGamma Delta\r\n"), "{text:?}");
+
+    // The paragraph must stay one line: the CR is not turned into a second outline line.
+    let mut q = deckcraft_model::defaults::new_presentation(None);
+    q.slides.clear();
+    assert_eq!(deckcraft_format::outline_to_slides(&mut q, &text), 1);
+    assert_eq!(q.slides[0].title(), "Title");
+    let body: String = q.slides[0].shapes.iter().filter_map(|sh| sh.text.as_ref()).map(|t| t.text()).collect::<Vec<_>>().join(" ");
+    assert!(body.contains("Gamma Delta"), "{body:?}");
+}
+
+#[test]
 fn save_as_txt_uses_crlf() {
     let dir = std::env::temp_dir().join(format!("deckcraft-save-txt-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
